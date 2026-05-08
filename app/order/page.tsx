@@ -83,7 +83,14 @@ export default function OrderPage() {
   useEffect(() => {
     fetch('/api/menus/current').then(r => r.json()).then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
     const s = loadSaved();
-    if (s?.babyName && s?.phone) setSavedInfo(s);
+    if (s?.babyName && s?.phone) {
+      // 이전 정보 있으면 자동으로 채우고 Step 3(메뉴 선택)으로 바로 이동
+      setBabyName(s.babyName); setMonths(s.months);
+      setPhone(s.phone); setAddress(s.address);
+      setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
+      setSavedInfo(s);
+      setStep(3);
+    }
   }, []);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
@@ -247,7 +254,20 @@ export default function OrderPage() {
       {/* ── Step 3 주문 구성 ─────────────────────── */}
       {step === 3 && (
         <div>
-          <h2 className="text-lg font-bold text-stone-900 mb-1">주문 구성</h2>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-bold text-stone-900">주문 구성</h2>
+            {savedInfo && (
+              <button onClick={() => { setSavedInfo(null); setStep(1); }}
+                className="text-xs text-amber-600 underline underline-offset-2">
+                정보 수정
+              </button>
+            )}
+          </div>
+          {savedInfo && (
+            <div className="text-xs text-stone-500 mb-3 bg-amber-50 rounded-lg px-3 py-2">
+              {savedInfo.babyName} · {savedInfo.address}
+            </div>
+          )}
           <p className="text-xs text-stone-500 mb-4">날짜별로 다르게 · 한 날짜에 여러 단계·용량 가능</p>
 
           <div className="space-y-4">
