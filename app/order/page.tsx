@@ -151,7 +151,34 @@ export default function OrderPage() {
     }
   }, []);
 
-  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
+
+  // ── 뒤로가기 처리 ────────────────────────────────────────────────
+  // 앱 진입 시 기준 히스토리 + 상태 변경 시 push → popstate로 이전 상태 복원
+  useEffect(() => {
+    // 초기 상태 replace
+    window.history.replaceState({ mode: 'home', step: 1 }, '');
+
+    function onPop(e: PopStateEvent) {
+      const st = e.state as { mode?: AppMode; step?: number } | null;
+      if (!st) return;
+      if (st.mode) setMode(st.mode as AppMode);
+      if (st.step) setStep(st.step as Step);
+    }
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // mode/step 변경 시 history push
+  function goMode(m: AppMode) {
+    window.history.pushState({ mode: m, step: 1 }, '');
+    setMode(m);
+    setStep(1);
+  }
+  function goStep(s: Step) {
+    window.history.pushState({ mode: 'order', step: s }, '');
+    setStep(s);
+  }
 
   function applySaved() {
     if (!savedInfo) return;
@@ -284,7 +311,7 @@ export default function OrderPage() {
         </div>
         <div className="flex flex-col gap-3">
           <button
-            onClick={() => setMode('menu')}
+            onClick={() => goMode('menu')}
             className="w-full py-5 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-base shadow-sm hover:border-amber-400 transition"
           >
             <div className="text-2xl mb-1">📋</div>
@@ -292,7 +319,7 @@ export default function OrderPage() {
             <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
           </button>
           <button
-            onClick={() => setMode('order')}
+            onClick={() => goMode('order')}
             className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
           >
             <div className="text-2xl mb-1">✏️</div>
@@ -339,14 +366,14 @@ export default function OrderPage() {
       if (orders.length === 0) return;
       setDateOrders(orders);
       setMode('order');
-      setStep(savedInfo ? 4 : 1); // 정보 있으면 바로 확인으로
+      goStep(savedInfo ? 4 : 1); // 정보 있으면 바로 확인으로
     }
 
     return (
       <Wrap>
         {/* 헤더 */}
         <div className="flex items-center gap-3 mb-4">
-          <button onClick={() => setMode('home')} className="text-stone-400 text-lg">←</button>
+          <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
           <h1 className="text-lg font-bold text-stone-900 flex-1">메뉴 보기 · 주문</h1>
           <div className="flex gap-1">
             {[0,1].map(w => (
@@ -495,7 +522,7 @@ export default function OrderPage() {
   return (
     <Wrap>
       <header className="mb-5">
-        <button onClick={() => setMode('home')} className="text-stone-400 text-sm mb-2 block">← 처음으로</button>
+        <button onClick={() => goMode('home')} className="text-stone-400 text-sm mb-2 block">← 처음으로</button>
         <h1 className="text-2xl font-bold text-stone-900">이유식 주문</h1>
         <StepBar current={step} total={4} />
       </header>
@@ -532,7 +559,7 @@ export default function OrderPage() {
             </div>
             <div className="flex justify-end mt-5">
               <button
-                onClick={()=>setStep(2)}
+                onClick={()=>goStep(2)}
                 disabled={!babyName.trim()||!months||parseInt(months)<=0}
                 className="px-10 py-4 bg-amber-500 text-white font-bold text-base rounded-2xl shadow-sm active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 transition"
               >
@@ -551,8 +578,8 @@ export default function OrderPage() {
           <Field label="상세주소"><input value={addressDetail} onChange={e=>setAddressDetail(e.target.value)} placeholder="동·호수 등" className={iCls}/></Field>
           <Field label="현관 비밀번호 (선택)"><input value={doorPw} onChange={e=>setDoorPw(e.target.value)} placeholder="예: #1234*" className={iCls}/></Field>
           <Row2>
-            <BackBtn onClick={()=>setStep(1)}/>
-            <PrimaryBtn onClick={()=>setStep(3)} disabled={!phone.replace(/\D/g,'').match(/^\d{10,11}$/)||!address.trim()}>다음</PrimaryBtn>
+            <BackBtn onClick={()=>goStep(1)}/>
+            <PrimaryBtn onClick={()=>goStep(3)} disabled={!phone.replace(/\D/g,'').match(/^\d{10,11}$/)||!address.trim()}>다음</PrimaryBtn>
           </Row2>
         </Section>
       )}
@@ -563,7 +590,7 @@ export default function OrderPage() {
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-lg font-bold text-stone-900">주문 구성</h2>
             {savedInfo && (
-              <button onClick={() => { setSavedInfo(null); setStep(1); }}
+              <button onClick={() => { setSavedInfo(null); goStep(1); }}
                 className="text-xs text-amber-600 underline underline-offset-2">정보 수정</button>
             )}
           </div>
@@ -678,7 +705,7 @@ export default function OrderPage() {
                         // 한우에 전체 qty 넣기 (관리자가 실제 배분 — 간단주문 특성)
                         return { ...o, sets: o.sets.map(s => ({ ...s, menus: { 한우: 0, 닭: 0, 기타단백질: it.qty } })) };
                       }));
-                      setStep(4);
+                      goStep(4);
                     }}
                     disabled={!simpleValid}
                   >주문 확인</PrimaryBtn>
@@ -896,8 +923,8 @@ export default function OrderPage() {
           )}
 
           <Row2>
-            <BackBtn onClick={()=>setStep(2)}/>
-            <PrimaryBtn onClick={()=>setStep(4)} disabled={!isStep3Valid()}>주문 확인</PrimaryBtn>
+            <BackBtn onClick={()=>goStep(2)}/>
+            <PrimaryBtn onClick={()=>goStep(4)} disabled={!isStep3Valid()}>주문 확인</PrimaryBtn>
           </Row2>
           </>)}
         </div>
@@ -922,7 +949,7 @@ export default function OrderPage() {
             </div>
             {doorPw && <div className="flex justify-between py-1 border-b border-stone-50"><span className="text-stone-400">현관비번</span><span className="text-stone-900 font-medium">{doorPw}</span></div>}
             <button
-              onClick={()=>setStep(2)}
+              onClick={()=>goStep(2)}
               className="w-full mt-1 py-2 text-xs text-amber-700 border border-amber-200 rounded-lg bg-amber-50 font-medium"
             >
               주소 수정하기
@@ -956,7 +983,7 @@ export default function OrderPage() {
                 }))
               };
               setDateOrders(prev => [...prev, copied]);
-              setStep(3); // 날짜 선택 화면으로
+              goStep(3); // 날짜 선택 화면으로
             }}
             className="w-full mb-3 py-3 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-bold rounded-xl"
           >
@@ -971,7 +998,7 @@ export default function OrderPage() {
           {serverError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{serverError}</div>}
 
           <Row2>
-            <BackBtn onClick={()=>setStep(3)}/>
+            <BackBtn onClick={()=>goStep(3)}/>
             <PrimaryBtn onClick={submit} disabled={submitting}>{submitting?'접수 중…':'주문 완료'}</PrimaryBtn>
           </Row2>
         </Section>
