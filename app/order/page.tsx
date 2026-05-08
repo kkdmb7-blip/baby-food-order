@@ -4,7 +4,7 @@ import {
   STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice,
   type StageType, type MenuType
 } from '@/lib/supabase';
-import { weekDateOptions, weekMonday, formatPhone } from '@/lib/dates';
+import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone } from '@/lib/dates';
 
 // ── 타입 ─────────────────────────────────────────────────────────
 type AppMode = 'home' | 'menu' | 'order';
@@ -321,24 +321,14 @@ export default function OrderPage() {
             이번 주 메뉴 보기
             <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
           </button>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => { setSimpleMode(true); goMode('order'); }}
-              className="w-full py-4 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-sm shadow-sm hover:border-amber-400 transition"
-            >
-              <div className="text-xl mb-1">⚡</div>
-              간단 주문
-              <div className="text-xs text-stone-400 font-normal mt-0.5">요일·팩수만 선택</div>
-            </button>
-            <button
-              onClick={() => { setSimpleMode(false); goMode('order'); }}
-              className="w-full py-4 bg-amber-500 rounded-2xl text-white font-bold text-sm shadow-sm active:bg-amber-600 transition"
-            >
-              <div className="text-xl mb-1">✏️</div>
-              상세 주문
-              <div className="text-xs text-amber-100 font-normal mt-0.5">메뉴별 선택</div>
-            </button>
-          </div>
+          <button
+            onClick={() => goMode('order')}
+            className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
+          >
+            <div className="text-2xl mb-1">✏️</div>
+            주문하기
+            <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
+          </button>
         </div>
       </Wrap>
     );
@@ -627,7 +617,8 @@ export default function OrderPage() {
 
           {/* ── 간단 주문 ────────────────────────────── */}
           {simpleMode && (() => {
-            const opts = weekDateOptions(weekOffset).filter(o => !o.past);
+            // 간단주문: 이번주/다음주 구분 없이 가까운 날짜부터 표시
+            const opts = deliveryDateOptions();
             function updSimple(date: string, fn: (it: SimpleItem) => SimpleItem) {
               setSimpleItems(prev => {
                 const exist = prev.find(i => i.delivery_date === date);
