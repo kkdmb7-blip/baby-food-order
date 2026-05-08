@@ -84,6 +84,8 @@ export default function OrderPage() {
   const [combinedDelivery, setCombinedDelivery] = useState(false); // 합배송 모드
   const [dateOrders, setDateOrders] = useState<DateOrder[]>([newDate()]);
 
+  // 날짜별 열린 세트 ID (dateId → setId)
+  const [openSetId, setOpenSetId] = useState<Record<string, string | null>>({});
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
   const [dayMenus, setDayMenus] = useState<DayMenu[]>([]); // 메뉴보기용 일별 메뉴
   const [weekOffset, setWeekOffset] = useState(0);
@@ -607,72 +609,101 @@ export default function OrderPage() {
                     </div>
                   </div>
 
-                  {/* 단계·용량·메뉴 세트 */}
-                  {d.sets.map((s, si) => (
-                    <div key={s.id} className="border border-amber-100 rounded-xl p-3 bg-amber-50">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-amber-700 font-bold">세트 {si+1}</span>
-                        {d.sets.length > 1 && (
-                          <button onClick={()=>updDate(d.id, x=>({...x, sets:x.sets.filter(ss=>ss.id!==s.id)}))}
-                            className="text-stone-400 text-sm">✕</button>
+                  {/* 단계·용량·메뉴 세트 — 아코디언 */}
+                  {d.sets.map((s, si) => {
+                    const isSetOpen = (openSetId[d.id] ?? d.sets[0]?.id) === s.id;
+                    const setQtyTotal = Object.values(s.menus).reduce((a,b)=>a+b,0);
+                    const setSummary = s.stage && s.volume
+                      ? `${s.stage} ${s.volume}g${setQtyTotal > 0 ? ` · ${setQtyTotal}팩` : ''}`
+                      : '단계·용량 미선택';
+                    return (
+                      <div key={s.id} className="border border-amber-100 rounded-xl overflow-hidden bg-amber-50">
+                        {/* 세트 헤더 — 탭으로 열기/닫기 */}
+                        <button
+                          className="w-full flex items-center justify-between px-3 py-2.5 text-left"
+                          onClick={() => setOpenSetId(prev => ({
+                            ...prev,
+                            [d.id]: isSetOpen ? null : s.id
+                          }))}
+                        >
+                          <span className="text-xs text-amber-700 font-bold">
+                            세트 {si+1}
+                            <span className="ml-2 font-normal text-stone-600">{setSummary}</span>
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {d.sets.length > 1 && (
+                              <span
+                                onClick={e => { e.stopPropagation(); updDate(d.id, x=>({...x, sets:x.sets.filter(ss=>ss.id!==s.id)})); }}
+                                className="text-stone-300 text-sm px-1">✕</span>
+                            )}
+                            <span className="text-stone-400 text-sm">{isSetOpen ? '∧' : '∨'}</span>
+                          </div>
+                        </button>
+
+                        {isSetOpen && (
+                          <div className="px-3 pb-3 border-t border-amber-100">
+                            {/* 단계 선택 */}
+                            <div className="mb-2 mt-2">
+                              <div className="text-[11px] text-stone-500 mb-1.5">단계</div>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {STAGES.map(st => (
+                                  <button key={st}
+                                    onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null}))}
+                                    className={`py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                    {st}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* 용량 선택 */}
+                            {s.stage && (
+                              <div className="mb-2">
+                                <div className="text-[11px] text-stone-500 mb-1.5">용량</div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  {STAGE_OPTIONS[s.stage].map(opt => (
+                                    <button key={opt.volume}
+                                      onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume}))}
+                                      className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                      {opt.volume}g · {opt.price.toLocaleString()}원
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 메뉴별 수량 */}
+                            {s.stage && s.volume && (
+                              <div>
+                                <div className="text-[11px] text-stone-500 mb-1.5">메뉴별 수량</div>
+                                <div className="space-y-2">
+                                  {MENU_TYPES.map(menu => {
+                                    const wm = weeklyMenus.find(m=>m.menu_type===menu);
+                                    return (
+                                      <div key={menu} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
+                                        <div>
+                                          <div className="text-sm font-bold text-stone-900">{menu}</div>
+                                          {wm && <div className="text-[10px] text-stone-400">{wm.vegetables}</div>}
+                                        </div>
+                                        <QtyCtrl value={s.menus[menu]} onChange={v=>updSet(d.id, s.id, x=>setQty(x, menu, v))}/>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
+                    );
+                  })}
 
-                      {/* 단계 선택 */}
-                      <div className="mb-2">
-                        <div className="text-[11px] text-stone-500 mb-1.5">단계</div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {STAGES.map(st => (
-                            <button key={st}
-                              onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null}))}
-                              className={`py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                              {st}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 용량 선택 */}
-                      {s.stage && (
-                        <div className="mb-2">
-                          <div className="text-[11px] text-stone-500 mb-1.5">용량</div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {STAGE_OPTIONS[s.stage].map(opt => (
-                              <button key={opt.volume}
-                                onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume}))}
-                                className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                {opt.volume}g · {opt.price.toLocaleString()}원
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 메뉴별 수량 */}
-                      {s.stage && s.volume && (
-                        <div>
-                          <div className="text-[11px] text-stone-500 mb-1.5">메뉴별 수량</div>
-                          <div className="space-y-2">
-                            {MENU_TYPES.map(menu => {
-                              const wm = weeklyMenus.find(m=>m.menu_type===menu);
-                              return (
-                                <div key={menu} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
-                                  <div>
-                                    <div className="text-sm font-bold text-stone-900">{menu}</div>
-                                    {wm && <div className="text-[10px] text-stone-400">{wm.vegetables}</div>}
-                                  </div>
-                                  <QtyCtrl value={s.menus[menu]} onChange={v=>updSet(d.id, s.id, x=>setQty(x, menu, v))}/>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* + 다른 단계·용량 추가 */}
-                  <button onClick={()=>updDate(d.id, x=>({...x, sets:[...x.sets, newSet()]}))}
+                  {/* + 다른 단계·용량 추가 — 추가 시 새 세트 자동 오픈 */}
+                  <button onClick={() => {
+                    const newS = newSet();
+                    updDate(d.id, x=>({...x, sets:[...x.sets, newS]}));
+                    setOpenSetId(prev => ({ ...prev, [d.id]: newS.id }));
+                  }}
                     className="w-full py-2.5 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-medium rounded-xl hover:bg-amber-50">
                     + 다른 단계·용량 추가
                   </button>
