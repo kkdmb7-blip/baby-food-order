@@ -7,6 +7,7 @@ import {
 import { weekDateOptions, weekMonday, formatPhone } from '@/lib/dates';
 
 // ── 타입 ─────────────────────────────────────────────────────────
+type AppMode = 'home' | 'menu' | 'order';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -56,7 +57,16 @@ function datePrice(d: DateOrder): number {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// ── 메뉴보기 전용 타입 ────────────────────────────────────────────
+type DayMenu = {
+  date: string;
+  label: string;
+  dow: number;
+  menus: { name: string; type: string; ingredients: string }[];
+};
+
 export default function OrderPage() {
+  const [mode, setMode] = useState<AppMode>('home');
   const [step, setStep] = useState<Step>(1);
   const [savedInfo, setSavedInfo] = useState<SavedInfo | null>(null);
 
@@ -75,6 +85,7 @@ export default function OrderPage() {
   const [dateOrders, setDateOrders] = useState<DateOrder[]>([newDate()]);
 
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
+  const [dayMenus, setDayMenus] = useState<DayMenu[]>([]); // 메뉴보기용 일별 메뉴
   const [weekOffset, setWeekOffset] = useState(0); // 0=이번주, 1=다음주
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -84,16 +95,41 @@ export default function OrderPage() {
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
 
   useEffect(() => {
+    // 주차별 메뉴 fetch (요약 + 일별 스케줄)
     fetch(`/api/menus/current?week=${currentWeekStart}`)
-      .then(r => r.json()).then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
+      .then(r => r.json())
+      .then(d => {
+        if (d.menus) setWeeklyMenus(d.menus);
+      }).catch(() => {});
+
+    // 메뉴보기용 kkakung_history 일별 스케줄 fetch
+    const SB_URL = 'https://ymghmfkqctckxxysxkvy.supabase.co';
+    const KEY = 'sb_publishable_3-9zobXqx6Nv36LzmNMBpA_fohZqA5x';
+    fetch(`${SB_URL}/rest/v1/kkakung_history?id=eq.${currentWeekStart}&select=id,yusik`, {
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
+    }).then(r => r.json()).then(rows => {
+      if (!rows?.[0]?.yusik?.schedule) { setDayMenus([]); return; }
+      const schedule: any[] = rows[0].yusik.schedule;
+      const TYPE_KOR: Record<string, string> = { hanwoo:'한우', chicken:'닭', p3:'기타단백질' };
+      const opts = weekDateOptions(weekOffset);
+      const days: DayMenu[] = opts.filter(o => !o.past).map(opt => {
+        const dayData = schedule.find((s:any) => s.date === opt.value);
+        const menus = (dayData?.menus || []).map((m:any) => ({
+          name: m.name || '',
+          type: TYPE_KOR[m.type] || m.type,
+          ingredients: m.ingredients || ''
+        }));
+        return { date: opt.value, label: opt.label, dow: opt.dow, menus };
+      });
+      setDayMenus(days);
+    }).catch(() => setDayMenus([]));
     const s = loadSaved();
     if (s?.babyName && s?.phone) {
-      // 이전 정보 있으면 자동으로 채우고 Step 3(메뉴 선택)으로 바로 이동
       setBabyName(s.babyName); setMonths(s.months);
       setPhone(s.phone); setAddress(s.address);
       setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
       setSavedInfo(s);
-      setStep(3);
+      // 홈화면 유지 — 메뉴보기/주문하기 선택하게
     }
   }, []);
 
@@ -213,6 +249,115 @@ export default function OrderPage() {
     finally { setSubmitting(false); }
   }
 
+  // ── 홈 화면 ─────────────────────────────────────────────────────
+  if (mode === 'home') {
+    return (
+      <Wrap>
+        <div className="text-center mb-8 pt-4">
+          <div className="text-3xl mb-2">🍱</div>
+          <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
+          <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => setMode('menu')}
+            className="w-full py-5 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-base shadow-sm hover:border-amber-400 transition"
+          >
+            <div className="text-2xl mb-1">📋</div>
+            이번 주 메뉴 보기
+            <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
+          </button>
+          <button
+            onClick={() => setMode('order')}
+            className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
+          >
+            <div className="text-2xl mb-1">✏️</div>
+            주문하기
+            <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
+          </button>
+        </div>
+      </Wrap>
+    );
+  }
+
+  // ── 메뉴보기 화면 ─────────────────────────────────────────────
+  if (mode === 'menu') {
+    return (
+      <Wrap>
+        <div className="flex items-center gap-3 mb-5">
+          <button onClick={() => setMode('home')} className="text-stone-400 text-lg">←</button>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">이번 주 메뉴</h1>
+          <div className="flex gap-1">
+            {[0,1].map(w => (
+              <button key={w} onClick={() => setWeekOffset(w)}
+                className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
+                {w===0?'이번 주':'다음 주'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {dayMenus.length === 0 ? (
+          <div className="text-center py-16 text-stone-400 text-sm">
+            이번 주 메뉴가 아직 등록되지 않았어요
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {dayMenus.map(day => (
+              <div key={day.date} className="bg-white rounded-2xl border border-amber-100 overflow-hidden">
+                <div className="bg-amber-50 px-4 py-2.5 flex items-center justify-between">
+                  <span className="font-bold text-amber-800 text-sm">{day.label}</span>
+                  <button
+                    onClick={() => {
+                      // 해당 날짜 미리 세팅 후 주문 화면으로
+                      const preDate: DateOrder = {
+                        id: uid(),
+                        delivery_date: day.date,
+                        sets: [newSet()]
+                      };
+                      setDateOrders([preDate]);
+                      setMode('order');
+                      setStep(savedInfo ? 3 : 1);
+                    }}
+                    className="text-xs px-3 py-1.5 bg-amber-500 text-white rounded-lg font-bold"
+                  >
+                    주문하기
+                  </button>
+                </div>
+                <div className="divide-y divide-stone-50">
+                  {day.menus.length === 0 ? (
+                    <div className="px-4 py-3 text-xs text-stone-400">메뉴 정보 없음</div>
+                  ) : day.menus.map((m, i) => (
+                    <div key={i} className="px-4 py-2.5">
+                      <div className="flex items-start gap-2">
+                        <span className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full mt-0.5 ${
+                          m.type==='한우' ? 'bg-amber-100 text-amber-800' :
+                          m.type==='닭' ? 'bg-emerald-100 text-emerald-800' :
+                          'bg-violet-100 text-violet-800'
+                        }`}>{m.type}</span>
+                        <div>
+                          <div className="text-sm font-medium text-stone-900">{m.name}</div>
+                          <div className="text-[11px] text-stone-400 mt-0.5">{m.ingredients}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={() => { setMode('order'); setStep(savedInfo ? 3 : 1); }}
+          className="w-full mt-5 py-4 bg-amber-500 text-white font-bold rounded-2xl text-sm"
+        >
+          직접 선택해서 주문하기 →
+        </button>
+      </Wrap>
+    );
+  }
+
   // ── 완료 화면 ─────────────────────────────────────────────────
   if (step === 5 && completedId) {
     const totalQty = dateOrders.reduce((s, d) => s + dateQty(d), 0);
@@ -244,10 +389,12 @@ export default function OrderPage() {
     );
   }
 
+  if (mode !== 'order') return null; // 안전장치
+
   return (
     <Wrap>
       <header className="mb-5">
-        <div className="text-[11px] tracking-[0.3em] text-amber-600 font-bold mb-1">BABY FOOD ORDER</div>
+        <button onClick={() => setMode('home')} className="text-stone-400 text-sm mb-2 block">← 처음으로</button>
         <h1 className="text-2xl font-bold text-stone-900">이유식 주문</h1>
         <StepBar current={step} total={4} />
       </header>
@@ -268,7 +415,7 @@ export default function OrderPage() {
               <button onClick={() => setSavedInfo(null)} className="w-full text-xs text-stone-400 py-1">새로 입력할게요</button>
             </div>
           )}
-          <Section title="아기 정보를 알려주세요">
+          <Section title={savedInfo ? `안녕하세요, ${savedInfo.babyName} 보호자님` : '아기 정보를 알려주세요'}>
             <div className="flex gap-3 items-end mb-3">
               <label className="flex-1">
                 <span className="text-xs text-stone-600 font-medium mb-1.5 block">아기 이름</span>
