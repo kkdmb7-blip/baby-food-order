@@ -700,13 +700,6 @@ export default function OrderPage() {
                   </div>
                 )}
 
-                {totalSimpleQty > 0 && (
-                  <div className="mt-3 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
-                    <span>합계 {totalSimpleQty}팩</span>
-                    <span>{totalSimplePrice.toLocaleString()}원</span>
-                  </div>
-                )}
-
                 <Row2>
                   <BackBtn onClick={() => setStep(2)}/>
                   <PrimaryBtn
