@@ -73,9 +73,23 @@ export function weekMonday(weekOffset = 0): string {
   return kstDateStr(monTs);
 }
 
-// 레거시 호환 (기존 사용처)
+// 가까운 조리 가능 날짜 8개 (주 경계 무관 — 간단주문·레거시용)
 export function deliveryDateOptions(): { value: string; label: string; dow: number }[] {
-  return weekDateOptions(0).filter(d => !d.past);
+  const nowKST = Date.now() + 9 * 3600 * 1000;
+  const todayStr = kstDateStr(nowKST);
+  const out: { value: string; label: string; dow: number }[] = [];
+  for (let i = 1; i <= 21 && out.length < 8; i++) {
+    const ts = nowKST + i * 86400000;
+    const d = new Date(ts);
+    const dow = d.getUTCDay();
+    if (!(COOKING_DAYS as readonly number[]).includes(dow)) continue;
+    const value = kstDateStr(ts);
+    if (value <= todayStr) continue;
+    const m = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    out.push({ value, label: `${m}/${day} (${COOKING_DAY_KOR[dow]})`, dow });
+  }
+  return out;
 }
 
 export function formatPhone(p: string) {
