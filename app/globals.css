@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white !important; }
+  .page-break { page-break-after: always; }
+}
+
+/* iOS Safari 폼 줌 방지 */
+input, select, textarea { font-size: 16px; }

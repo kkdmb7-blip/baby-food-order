@@ -1,0 +1,113 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseService, STAGES, MIN_ORDER_QTY, getPrice, type StageType } from '@/lib/supabase';
+import { isAdminAuthed } from '@/lib/auth';
+import { kstToday } from '@/lib/dates';
+
+// POST — 신규 주문 (클라이언트 → service_role 경유)
+export async function POST(req: NextRequest) {
+  try {
+    const b = await req.json();
+    const baby_name = String(b.baby_name || '').trim().slice(0, 20);
+    const months = parseInt(b.months);
+    const customer_phone = String(b.customer_phone || '').replace(/\D/g, '');
+    const address = String(b.address || '').trim().slice(0, 200);
+    const address_detail = String(b.address_detail || '').trim().slice(0, 100) || null;
+    const door_password = String(b.door_password || '').trim().slice(0, 30) || null;
+    const stage = String(b.stage || '') as StageType;
+    const volume = Number(b.volume);
+    const items = Array.isArray(b.items) ? b.items : [];
+    const total_qty = Number(b.total_qty);
+    const delivery_date = String(b.delivery_date || '');
+    const order_type = String(b.order_type || '일반');
+
+    // 검증
+    if (!baby_name) return bad('아기 이름이 필요합니다');
+    if (!months || months <= 0) return bad('개월수를 확인해주세요');
+    if (!/^\d{10,11}$/.test(customer_phone)) return bad('연락처를 확인해주세요');
+    if (!address) return bad('주소가 필요합니다');
+    if (!STAGES.includes(stage)) return bad('이유식 단계가 잘못됐습니다');
+    if (![230, 240, 300, 310].includes(volume)) return bad('용량이 잘못됐습니다');
+    if (total_qty < MIN_ORDER_QTY) return bad(`최소 ${MIN_ORDER_QTY}팩 이상 주문 가능합니다`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
+    if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
+
+    const pricePerPack = getPrice(stage, volume);
+    if (!pricePerPack) return bad('가격 정보 오류');
+    const total_price = total_qty * pricePerPack;
+
+    const sb = supabaseService();
+
+    // 선결제 고객이면 잔여 차감
+    let customer_id: string | null = null;
+    if (order_type === '선결제') {
+      const { data: cust } = await sb
+        .from('baby_food_customers')
+        .select('id, prepaid_balance')
+        .eq('customer_phone', customer_phone)
+        .single();
+      if (!cust) return bad('선결제 고객 정보를 찾을 수 없습니다');
+      if (cust.prepaid_balance < total_qty)
+        return bad(`잔여 팩이 부족합니다 (잔여: ${cust.prepaid_balance}팩, 필요: ${total_qty}팩)`);
+      const { error: ue } = await sb
+        .from('baby_food_customers')
+        .update({ prepaid_balance: cust.prepaid_balance - total_qty })
+        .eq('id', cust.id);
+      if (ue) return NextResponse.json({ ok: false, error: '잔여 차감 실패' }, { status: 500 });
+      customer_id = cust.id;
+    }
+
+    const { data, error } = await sb
+      .from('baby_food_orders')
+      .insert({
+        baby_name, months, customer_phone, address, address_detail, door_password,
+        stage, volume, items, total_qty, total_price, delivery_date,
+        order_type, status: '접수', customer_id
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('[orders POST]', error);
+      return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
+    }
+
+    // 이메일 알림 (실패 무시)
+    void fetch(new URL('/api/notify', req.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price, customer_phone, address })
+    }).catch(() => {});
+
+    return NextResponse.json({ ok: true, id: data.id });
+  } catch (e: any) {
+    console.error(e);
+    return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
+  }
+}
+
+// GET — 관리자 조회
+export async function GET(req: NextRequest) {
+  if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  const p = new URL(req.url).searchParams;
+  const from = p.get('from');
+  const to = p.get('to');
+  const date = p.get('date');
+  const status = p.get('status');
+
+  const sb = supabaseService();
+  let q = sb.from('baby_food_orders').select('*').order('delivery_date').order('created_at', { ascending: false });
+  if (date) q = q.eq('delivery_date', date);
+  else {
+    if (from) q = q.gte('delivery_date', from);
+    if (to) q = q.lte('delivery_date', to);
+  }
+  if (status) q = q.eq('status', status);
+
+  const { data, error } = await q.limit(500);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ orders: data });
+}
+
+function bad(msg: string) {
+  return NextResponse.json({ ok: false, error: msg }, { status: 400 });
+}
