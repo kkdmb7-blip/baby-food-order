@@ -409,13 +409,30 @@ export default function OrderPage() {
       {/* ── Step 4 확인 ──────────────────────────── */}
       {step === 4 && (
         <Section title="주문 내용을 확인해주세요">
+          {/* 배송 정보 + 수정 버튼 */}
           <div className="bg-white rounded-xl border border-amber-100 p-4 text-sm space-y-2 mb-4">
-            <SRow k="아기" v={`${babyName} (${months}개월)`}/>
-            <SRow k="연락처" v={formatPhone(phone)}/>
-            <SRow k="주소" v={`${address}${addressDetail?' '+addressDetail:''}`}/>
-            {doorPw && <SRow k="현관비번" v={doorPw}/>}
+            <div className="flex items-center justify-between pb-1 border-b border-stone-50">
+              <span className="text-stone-400">아기</span>
+              <span className="text-stone-900 font-medium">{babyName} ({months}개월)</span>
+            </div>
+            <div className="flex items-center justify-between py-1 border-b border-stone-50">
+              <span className="text-stone-400">연락처</span>
+              <span className="text-stone-900 font-medium">{formatPhone(phone)}</span>
+            </div>
+            <div className="flex items-start justify-between py-1 border-b border-stone-50 gap-2">
+              <span className="text-stone-400 flex-shrink-0">주소</span>
+              <span className="text-stone-900 font-medium text-right">{address}{addressDetail?' '+addressDetail:''}</span>
+            </div>
+            {doorPw && <div className="flex justify-between py-1 border-b border-stone-50"><span className="text-stone-400">현관비번</span><span className="text-stone-900 font-medium">{doorPw}</span></div>}
+            <button
+              onClick={()=>setStep(2)}
+              className="w-full mt-1 py-2 text-xs text-amber-700 border border-amber-200 rounded-lg bg-amber-50 font-medium"
+            >
+              주소 수정하기
+            </button>
           </div>
 
+          {/* 날짜별 주문 내역 */}
           {dateOrders.map((d, di) => (
             <div key={d.id} className="bg-white rounded-xl border border-amber-200 p-4 mb-3 text-sm">
               <div className="font-bold text-amber-700 mb-2">{di+1}번째 — {d.delivery_date} ({dateQty(d)}팩 · {datePrice(d).toLocaleString()}원)</div>
@@ -427,6 +444,27 @@ export default function OrderPage() {
               ))}
             </div>
           ))}
+
+          {/* 같은 내용으로 다른 날짜 추가 */}
+          <button
+            onClick={() => {
+              // 현재 dateOrders의 첫 번째(또는 전체) 세트를 복사해 날짜만 비운 새 항목 추가
+              const copied: DateOrder = {
+                id: uid(),
+                delivery_date: '',
+                sets: dateOrders[dateOrders.length - 1].sets.map(s => ({
+                  ...s,
+                  id: uid(),
+                  menus: { ...s.menus }
+                }))
+              };
+              setDateOrders(prev => [...prev, copied]);
+              setStep(3); // 날짜 선택 화면으로
+            }}
+            className="w-full mb-3 py-3 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-bold rounded-xl"
+          >
+            + 같은 내용으로 다른 날짜 추가
+          </button>
 
           <div className="bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold mb-4">
             <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
