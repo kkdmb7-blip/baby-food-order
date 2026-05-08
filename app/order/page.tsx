@@ -14,6 +14,7 @@ type OrderSet = {
   stage: StageType | null;
   volume: number | null;
   menus: MenuSel;
+  _simpleQty?: number; // 간단주문: 팩수만 저장, 메뉴 미선택
 };
 type DateOrder = {
   id: string;
@@ -48,15 +49,16 @@ function newDate(): DateOrder { return { id: uid(), delivery_date: '', sets: [ne
 function setQty(s: OrderSet, menu: MenuType, val: number): OrderSet {
   return { ...s, menus: { ...s.menus, [menu]: Math.max(0, Math.min(10, val)) } };
 }
+function setQtyTotal(s: OrderSet): number {
+  return s._simpleQty ?? Object.values(s.menus).reduce((a, b) => a + b, 0);
+}
 function dateQty(d: DateOrder): number {
-  return d.sets.reduce((sum, s) => sum + Object.values(s.menus).reduce((a, b) => a + b, 0), 0);
+  return d.sets.reduce((sum, s) => sum + setQtyTotal(s), 0);
 }
 function datePrice(d: DateOrder): number {
   return d.sets.reduce((sum, s) => {
     if (!s.stage || !s.volume) return sum;
-    const p = getPrice(s.stage, s.volume);
-    const q = Object.values(s.menus).reduce((a, b) => a + b, 0);
-    return sum + p * q;
+    return sum + getPrice(s.stage, s.volume) * setQtyTotal(s);
   }, 0);
 }
 
@@ -198,7 +200,7 @@ export default function OrderPage() {
 
   // ── 완성된 세트만 필터 (stage+volume+메뉴 1개 이상) ─────────────
   function completeSets(d: DateOrder) {
-    return d.sets.filter(s => s.stage && s.volume && Object.values(s.menus).some(v => v > 0));
+    return d.sets.filter(s => s.stage && s.volume && setQtyTotal(s) > 0);
   }
 
   // 날짜 → 배송 그룹 (월+화=A / 목+금=B / 나머지=날짜 자체)
@@ -259,12 +261,13 @@ export default function OrderPage() {
 
     const itemsPayload = dateOrders.map(d => ({
       delivery_date: d.delivery_date,
-      sets: d.sets.filter(s => s.stage && s.volume).map(s => ({
+      sets: d.sets.filter(s => s.stage && s.volume && setQtyTotal(s) > 0).map(s => ({
         stage: s.stage, volume: s.volume,
         price_per: getPrice(s.stage!, s.volume!),
-        menus: MENU_TYPES.filter(m => s.menus[m] > 0).map(m => ({ menu: m, qty: s.menus[m] })),
-        qty: Object.values(s.menus).reduce((a, b) => a + b, 0),
-        subtotal: getPrice(s.stage!, s.volume!) * Object.values(s.menus).reduce((a, b) => a + b, 0)
+        simple: !!s._simpleQty,
+        menus: s._simpleQty ? [] : MENU_TYPES.filter(m => s.menus[m] > 0).map(m => ({ menu: m, qty: s.menus[m] })),
+        qty: setQtyTotal(s),
+        subtotal: getPrice(s.stage!, s.volume!) * setQtyTotal(s)
       })),
       date_qty: dateQty(d),
       date_price: datePrice(d)
@@ -502,7 +505,7 @@ export default function OrderPage() {
                 <div className="font-bold text-amber-700">{d.delivery_date} ({dateQty(d)}팩)</div>
                 {d.sets.filter(s=>s.stage&&s.volume).map(s => (
                   <div key={s.id} className="pl-3">
-                    {s.stage} {s.volume}g — {MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}`).join(' / ')}
+                    {s.stage} {s.volume}g — {s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}`).join(' / ')}
                   </div>
                 ))}
               </div>
@@ -698,12 +701,11 @@ export default function OrderPage() {
                         } as any)
                       );
                       if (orders.length === 0) return;
-                      // 간단주문은 qty 직접 total로
+                      // 간단주문: _simpleQty 플래그로 저장, 메뉴 빈 채로
                       setDateOrders(orders.map(o => {
                         const it = simpleItems.find(i => i.delivery_date === o.delivery_date);
                         if (!it) return o;
-                        // 한우에 전체 qty 넣기 (관리자가 실제 배분 — 간단주문 특성)
-                        return { ...o, sets: o.sets.map(s => ({ ...s, menus: { 한우: 0, 닭: 0, 기타단백질: it.qty } })) };
+                        return { ...o, sets: o.sets.map(s => ({ ...s, menus: emptyMenus(), _simpleQty: it.qty })) };
                       }));
                       goStep(4);
                     }}
@@ -963,7 +965,7 @@ export default function OrderPage() {
               {d.sets.filter(s=>s.stage&&s.volume).map(s => (
                 <div key={s.id} className="pl-3 mb-1 text-stone-700">
                   <span className="font-medium">{s.stage} {s.volume}g</span> —{' '}
-                  {MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}
+                  {s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}
                 </div>
               ))}
             </div>
