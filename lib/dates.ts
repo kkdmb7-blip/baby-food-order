@@ -29,25 +29,53 @@ export function thisWeekMonday(): string {
   return mon.toISOString().slice(0, 10);
 }
 
-// 조리일 옵션: 오늘 이후 조리 가능 요일 (월/화/목/금)
-// KST 기준 날짜 문자열을 직접 계산 — fmtDate 미사용 (이중 오프셋 방지)
-export function deliveryDateOptions(): { value: string; label: string; dow: number }[] {
-  const out: { value: string; label: string; dow: number }[] = [];
-  const nowKST = Date.now() + 9 * 3600 * 1000; // KST ms (UTC 내부값)
-  for (let i = 1; i <= 14 && out.length < 8; i++) {
-    const ts = nowKST + i * 86400000;
+// KST 날짜 문자열 생성 (이중 오프셋 없음)
+function kstDateStr(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+}
+
+// 특정 주(月요일 기준)의 조리 가능 날짜 반환
+export function weekDateOptions(weekOffset = 0): { value: string; label: string; dow: number; past: boolean }[] {
+  const nowKST = Date.now() + 9 * 3600 * 1000;
+  const todayStr = kstDateStr(nowKST);
+
+  // 이번 주 월요일 찾기
+  const nowD = new Date(nowKST);
+  const todayDow = nowD.getUTCDay(); // 0=Sun
+  const diffToMon = todayDow === 0 ? -6 : 1 - todayDow;
+  const thisMon = nowKST + diffToMon * 86400000 + weekOffset * 7 * 86400000;
+
+  const out: { value: string; label: string; dow: number; past: boolean }[] = [];
+  // 월(1) 화(2) 목(4) 금(5)
+  for (const offset of [0, 1, 3, 4]) {
+    const ts = thisMon + offset * 86400000;
     const d = new Date(ts);
-    const dow = d.getUTCDay(); // KST 기준 요일
+    const dow = d.getUTCDay();
     if (!(COOKING_DAYS as readonly number[]).includes(dow)) continue;
-    // YYYY-MM-DD — UTC 메서드로 읽으면 KST 날짜
-    const y = d.getUTCFullYear();
     const m = d.getUTCMonth() + 1;
     const day = d.getUTCDate();
-    const value = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const value = kstDateStr(ts);
     const label = `${m}/${day} (${COOKING_DAY_KOR[dow]})`;
-    out.push({ value, label, dow });
+    const past = value < todayStr;
+    out.push({ value, label, dow, past });
   }
   return out;
+}
+
+// 이번 주 월요일
+export function weekMonday(weekOffset = 0): string {
+  const nowKST = Date.now() + 9 * 3600 * 1000;
+  const nowD = new Date(nowKST);
+  const todayDow = nowD.getUTCDay();
+  const diffToMon = todayDow === 0 ? -6 : 1 - todayDow;
+  const monTs = nowKST + diffToMon * 86400000 + weekOffset * 7 * 86400000;
+  return kstDateStr(monTs);
+}
+
+// 레거시 호환 (기존 사용처)
+export function deliveryDateOptions(): { value: string; label: string; dow: number }[] {
+  return weekDateOptions(0).filter(d => !d.past);
 }
 
 export function formatPhone(p: string) {

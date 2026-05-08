@@ -4,7 +4,7 @@ import {
   STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice,
   type StageType, type MenuType
 } from '@/lib/supabase';
-import { deliveryDateOptions, formatPhone } from '@/lib/dates';
+import { weekDateOptions, weekMonday, formatPhone } from '@/lib/dates';
 
 // ── 타입 ─────────────────────────────────────────────────────────
 type MenuSel = Record<MenuType, number>;
@@ -75,14 +75,17 @@ export default function OrderPage() {
   const [dateOrders, setDateOrders] = useState<DateOrder[]>([newDate()]);
 
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
+  const [weekOffset, setWeekOffset] = useState(0); // 0=이번주, 1=다음주
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [completedId, setCompletedId] = useState<string | null>(null);
 
-  const dateOpts = useMemo(() => deliveryDateOptions(), []);
+  const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
+  const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
 
   useEffect(() => {
-    fetch('/api/menus/current').then(r => r.json()).then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
+    fetch(`/api/menus/current?week=${currentWeekStart}`)
+      .then(r => r.json()).then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
     const s = loadSaved();
     if (s?.babyName && s?.phone) {
       // 이전 정보 있으면 자동으로 채우고 Step 3(메뉴 선택)으로 바로 이동
@@ -341,15 +344,34 @@ export default function OrderPage() {
                 </div>
 
                 <div className="p-4 space-y-4">
-                  {/* 조리일 선택 */}
+                  {/* 조리일 선택 — 주 단위 탭 */}
                   <div>
-                    <div className="text-xs text-stone-500 font-medium mb-2">조리일 선택 (월·화·목·금)</div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-stone-500 font-medium">조리일 선택 (월·화·목·금)</div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={()=>setWeekOffset(0)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===0?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
+                          이번 주
+                        </button>
+                        <button
+                          onClick={()=>setWeekOffset(1)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===1?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
+                          다음 주
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
                       {dateOpts.map(opt => (
                         <button key={opt.value}
-                          onClick={()=>updDate(d.id, x=>({...x, delivery_date: opt.value}))}
-                          className={`py-2.5 rounded-xl border text-sm font-medium transition ${d.delivery_date===opt.value?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700 hover:border-amber-400'}`}>
+                          onClick={()=>{ if(!opt.past) updDate(d.id, x=>({...x, delivery_date: opt.value})); }}
+                          disabled={opt.past}
+                          className={`py-2.5 rounded-xl border text-sm font-medium transition
+                            ${d.delivery_date===opt.value ? 'bg-amber-500 border-amber-500 text-white'
+                            : opt.past ? 'bg-stone-50 border-stone-100 text-stone-300 cursor-not-allowed'
+                            : 'bg-white border-amber-100 text-stone-700 hover:border-amber-400'}`}>
                           {opt.label}
+                          {opt.past && <span className="block text-[10px]">마감</span>}
                         </button>
                       ))}
                     </div>
