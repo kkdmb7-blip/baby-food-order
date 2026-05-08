@@ -29,19 +29,22 @@ export function thisWeekMonday(): string {
   return mon.toISOString().slice(0, 10);
 }
 
-// 조리일 옵션: 오늘 이후 최대 7일 내 조리 가능 요일 (월/화/목/금)
+// 조리일 옵션: 오늘 이후 조리 가능 요일 (월/화/목/금)
+// KST 기준 날짜 문자열을 직접 계산 — fmtDate 미사용 (이중 오프셋 방지)
 export function deliveryDateOptions(): { value: string; label: string; dow: number }[] {
   const out: { value: string; label: string; dow: number }[] = [];
-  const base = kstNow();
-  // 당일 오전 9시 이전이면 오늘도 가능, 이후면 내일부터
-  const hour = base.getUTCHours();
-  const startOffset = hour < 0 ? 0 : 1; // 당일 주문 사전 마감 없으면 0, 아니면 1
-  for (let i = startOffset; i <= 14 && out.length < 8; i++) {
-    const d = new Date(base.getTime() + i * 86400000);
-    const dow = d.getUTCDay();
+  const nowKST = Date.now() + 9 * 3600 * 1000; // KST ms (UTC 내부값)
+  for (let i = 1; i <= 14 && out.length < 8; i++) {
+    const ts = nowKST + i * 86400000;
+    const d = new Date(ts);
+    const dow = d.getUTCDay(); // KST 기준 요일
     if (!(COOKING_DAYS as readonly number[]).includes(dow)) continue;
-    const value = fmtDate(d);
-    const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()} (${COOKING_DAY_KOR[dow]})`;
+    // YYYY-MM-DD — UTC 메서드로 읽으면 KST 날짜
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    const value = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const label = `${m}/${day} (${COOKING_DAY_KOR[dow]})`;
     out.push({ value, label, dow });
   }
   return out;
