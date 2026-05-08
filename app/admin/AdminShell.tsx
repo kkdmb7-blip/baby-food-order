@@ -48,8 +48,43 @@ export default function AdminShell({
     router.push('/admin/login');
   }
 
+  // 복합 주문(delivery_sets 구조) 또는 구형(단순 배열) 모두 지원
+  function isMultiOrder(order: Order) {
+    const items = order.items as any[];
+    return items.length > 0 && items[0].delivery_date !== undefined;
+  }
+
   function getQty(order: Order, menu: MenuType) {
-    return (order.items as any[]).find(i => i.menu === menu)?.qty || 0;
+    const items = order.items as any[];
+    if (isMultiOrder(order)) {
+      return items.reduce((sum: number, d: any) =>
+        sum + (d.sets || []).reduce((s2: number, s: any) =>
+          s2 + ((s.menus || []).find((m: any) => m.menu === menu)?.qty || 0), 0), 0);
+    }
+    return items.find(i => i.menu === menu)?.qty || 0;
+  }
+
+  function renderOrderDetail(order: Order) {
+    const items = order.items as any[];
+    if (isMultiOrder(order)) {
+      return items.map((d: any, di: number) => (
+        <div key={di} className="text-xs text-stone-600 mt-1">
+          <span className="font-bold text-amber-700">{d.delivery_date}</span>{' '}
+          {(d.sets || []).map((s: any, si: number) => (
+            <span key={si}>
+              {s.stage} {s.volume}g:[{(s.menus||[]).filter((m:any)=>m.qty>0).map((m:any)=>`${m.menu} ${m.qty}`).join('·')}]{' '}
+            </span>
+          ))}
+          <span className="text-amber-700 font-bold">{d.date_qty}팩</span>
+        </div>
+      ));
+    }
+    return (
+      <div className="text-sm text-stone-700">
+        {order.stage} · {order.volume}g ·{' '}
+        {MENU_TYPES.filter(m => getQty(order, m) > 0).map(m => `${m} ${getQty(order, m)}팩`).join(' · ')}
+      </div>
+    );
   }
 
   const tabs: Tab[] = ['오늘주문', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
@@ -96,10 +131,9 @@ export default function AdminShell({
                     {o.status} →
                   </button>
                 </div>
-                <div className="text-sm text-stone-700 mb-1">
-                  {o.stage} · {o.volume}g ·{' '}
-                  {MENU_TYPES.filter(m => getQty(o, m) > 0).map(m => `${m} ${getQty(o, m)}팩`).join(' · ')}
-                  <span className="ml-2 font-bold text-amber-700">총 {o.total_qty}팩 / {o.total_price.toLocaleString()}원</span>
+                <div className="mb-1">
+                  {renderOrderDetail(o)}
+                  <span className="text-xs font-bold text-amber-700">총 {o.total_qty}팩 / {o.total_price.toLocaleString()}원</span>
                 </div>
                 <div className="text-xs text-stone-500">
                   📍 {o.address}{o.address_detail ? ' ' + o.address_detail : ''}

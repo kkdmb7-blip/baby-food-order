@@ -25,11 +25,16 @@ export async function POST(req: NextRequest) {
     if (!months || months <= 0) return bad('개월수를 확인해주세요');
     if (!/^\d{10,11}$/.test(customer_phone)) return bad('연락처를 확인해주세요');
     if (!address) return bad('주소가 필요합니다');
-    if (!STAGES.includes(stage)) return bad('이유식 단계가 잘못됐습니다');
-    if (![230, 240, 300, 310].includes(volume)) return bad('용량이 잘못됐습니다');
-    if (total_qty < MIN_ORDER_QTY) return bad(`최소 ${MIN_ORDER_QTY}팩 이상 주문 가능합니다`);
+    if (total_qty < 1) return bad('수량 오류');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
+
+    // 복합 주문: items 배열의 각 날짜별 최소 3팩 검증
+    if (Array.isArray(items) && items.length > 0 && items[0].delivery_date) {
+      for (const d of items) {
+        if (d.date_qty < MIN_ORDER_QTY) return bad(`${d.delivery_date} 날짜는 최소 ${MIN_ORDER_QTY}팩 이상이어야 합니다`);
+      }
+    }
 
     const pricePerPack = getPrice(stage, volume);
     if (!pricePerPack) return bad('가격 정보 오류');
