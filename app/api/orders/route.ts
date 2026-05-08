@@ -29,10 +29,19 @@ export async function POST(req: NextRequest) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
 
-    // 복합 주문: items 배열의 각 날짜별 최소 3팩 검증
+    // 복합 주문: 배송 그룹(월화/목금)별 합산 최소 3팩 검증
     if (Array.isArray(items) && items.length > 0 && items[0].delivery_date) {
+      const groupQty: Record<string, number> = {};
       for (const d of items) {
-        if (d.date_qty < MIN_ORDER_QTY) return bad(`${d.delivery_date} 날짜는 최소 ${MIN_ORDER_QTY}팩 이상이어야 합니다`);
+        const dow = new Date(d.delivery_date + 'T00:00:00Z').getUTCDay();
+        const key = (dow === 1 || dow === 2) ? 'A' : (dow === 4 || dow === 5) ? 'B' : d.delivery_date;
+        groupQty[key] = (groupQty[key] || 0) + (d.date_qty || 0);
+      }
+      for (const [key, qty] of Object.entries(groupQty)) {
+        if (qty < MIN_ORDER_QTY) {
+          const label = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
+          return bad(`${label} ${qty}팩 — 1회 배송 최소 ${MIN_ORDER_QTY}팩 이상이어야 합니다`);
+        }
       }
     }
 

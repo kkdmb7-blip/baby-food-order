@@ -111,14 +111,50 @@ export default function OrderPage() {
     updDate(dateId, d => ({ ...d, sets: d.sets.map(s => s.id === setId ? fn(s) : s) }));
   }
 
+  // ── 완성된 세트만 필터 (stage+volume+메뉴 1개 이상) ─────────────
+  function completeSets(d: DateOrder) {
+    return d.sets.filter(s => s.stage && s.volume && Object.values(s.menus).some(v => v > 0));
+  }
+
+  // 날짜 → 배송 그룹 (월+화=A / 목+금=B / 나머지=날짜 자체)
+  function deliveryGroup(date: string): string {
+    const dow = new Date(date + 'T00:00:00Z').getUTCDay();
+    if (dow === 1 || dow === 2) return 'A'; // 월화
+    if (dow === 4 || dow === 5) return 'B'; // 목금
+    return date;
+  }
+
+  // 배송 그룹별 합산 팩수
+  function groupQtys(): Record<string, number> {
+    const g: Record<string, number> = {};
+    for (const d of dateOrders) {
+      if (!d.delivery_date) continue;
+      const key = deliveryGroup(d.delivery_date);
+      const qty = completeSets(d).reduce((s, cs) => s + Object.values(cs.menus).reduce((a, b) => a + b, 0), 0);
+      g[key] = (g[key] || 0) + qty;
+    }
+    return g;
+  }
+
   // ── 검증 ──────────────────────────────────────────────────────
   function isStep3Valid(): boolean {
-    return dateOrders.every(d => {
-      if (!d.delivery_date) return false;
-      const qty = dateQty(d);
-      if (qty < MIN_ORDER_QTY) return false;
-      return d.sets.every(s => s.stage && s.volume && Object.values(s.menus).some(v => v > 0));
-    });
+    // 날짜 미선택인 항목 있으면 false
+    if (dateOrders.some(d => !d.delivery_date)) return false;
+    // 완성된 세트가 하나도 없는 날짜 있으면 false
+    if (dateOrders.some(d => completeSets(d).length === 0)) return false;
+    // 배송 그룹별 합계가 모두 3팩 이상이어야 함
+    const gq = groupQtys();
+    return Object.values(gq).every(q => q >= MIN_ORDER_QTY);
+  }
+
+  // 현재 배송 그룹 경고 메시지
+  function groupWarning(): string | null {
+    const gq = groupQtys();
+    const shortGroup = Object.entries(gq).find(([, q]) => q < MIN_ORDER_QTY);
+    if (!shortGroup) return null;
+    const [key, qty] = shortGroup;
+    const groupName = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
+    return `${groupName} ${qty}팩 — 1회 배송 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
   }
 
   // ── 제출 ──────────────────────────────────────────────────────
@@ -371,14 +407,11 @@ export default function OrderPage() {
                   </button>
 
                   {/* 날짜 소계 */}
-                  {dateQty(d) > 0 && (
-                    <div className={`flex justify-between text-sm font-bold px-3 py-2 rounded-xl ${dateQty(d)>=MIN_ORDER_QTY?'bg-amber-500 text-white':'bg-amber-100 text-amber-800'}`}>
+                  {completeSets(d).length > 0 && (
+                    <div className="flex justify-between text-sm font-bold px-3 py-2 rounded-xl bg-amber-100 text-amber-800">
                       <span>{d.delivery_date || '날짜 미선택'} 소계 · {dateQty(d)}팩</span>
                       <span>{datePrice(d).toLocaleString()}원</span>
                     </div>
-                  )}
-                  {dateQty(d) > 0 && dateQty(d) < MIN_ORDER_QTY && (
-                    <div className="text-xs text-red-600">날짜별 최소 {MIN_ORDER_QTY}팩 이상이어야 해요 (현재 {dateQty(d)}팩)</div>
                   )}
                 </div>
               </div>
@@ -391,12 +424,19 @@ export default function OrderPage() {
             + 다른 날짜 추가
           </button>
 
-          {/* 전체 합계 */}
-          {dateOrders.some(d=>dateQty(d)>0) && (
-            <div className="mt-3 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
-              <span>전체 합계 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
-              <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
-            </div>
+          {/* 전체 합계 + 그룹 경고 */}
+          {dateOrders.some(d=>completeSets(d).length>0) && (
+            <>
+              {groupWarning() && (
+                <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  ⚠ {groupWarning()}
+                </div>
+              )}
+              <div className="mt-2 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
+                <span>전체 합계 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
+                <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
+              </div>
+            </>
           )}
 
           <Row2>
