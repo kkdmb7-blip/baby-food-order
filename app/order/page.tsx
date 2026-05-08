@@ -71,6 +71,7 @@ export default function OrderPage() {
   const [doorPw, setDoorPw] = useState('');
 
   // Step 3 — 복합 주문
+  const [combinedDelivery, setCombinedDelivery] = useState(false); // 합배송 모드
   const [dateOrders, setDateOrders] = useState<DateOrder[]>([newDate()]);
 
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
@@ -138,23 +139,29 @@ export default function OrderPage() {
 
   // ── 검증 ──────────────────────────────────────────────────────
   function isStep3Valid(): boolean {
-    // 날짜 미선택인 항목 있으면 false
     if (dateOrders.some(d => !d.delivery_date)) return false;
-    // 완성된 세트가 하나도 없는 날짜 있으면 false
     if (dateOrders.some(d => completeSets(d).length === 0)) return false;
-    // 배송 그룹별 합계가 모두 3팩 이상이어야 함
-    const gq = groupQtys();
-    return Object.values(gq).every(q => q >= MIN_ORDER_QTY);
+    if (combinedDelivery) {
+      // 합배송 모드: 그룹별 합산 >= 3
+      return Object.values(groupQtys()).every(q => q >= MIN_ORDER_QTY);
+    } else {
+      // 기본 모드: 날짜별 >= 3
+      return dateOrders.every(d => dateQty(d) >= MIN_ORDER_QTY);
+    }
   }
 
-  // 현재 배송 그룹 경고 메시지
-  function groupWarning(): string | null {
-    const gq = groupQtys();
-    const shortGroup = Object.entries(gq).find(([, q]) => q < MIN_ORDER_QTY);
-    if (!shortGroup) return null;
-    const [key, qty] = shortGroup;
-    const groupName = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
-    return `${groupName} ${qty}팩 — 1회 배송 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
+  function qtyWarning(): string | null {
+    if (combinedDelivery) {
+      const gq = groupQtys();
+      const short = Object.entries(gq).find(([, q]) => q < MIN_ORDER_QTY);
+      if (!short) return null;
+      const label = short[0] === 'A' ? '월·화 합산' : short[0] === 'B' ? '목·금 합산' : short[0];
+      return `${label} ${short[1]}팩 — 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
+    } else {
+      const short = dateOrders.find(d => completeSets(d).length > 0 && dateQty(d) < MIN_ORDER_QTY);
+      if (!short) return null;
+      return `${short.delivery_date || '선택한 날짜'} ${dateQty(short)}팩 — 날짜별 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
+    }
   }
 
   // ── 제출 ──────────────────────────────────────────────────────
@@ -259,16 +266,28 @@ export default function OrderPage() {
             </div>
           )}
           <Section title="아기 정보를 알려주세요">
-            <Field label="아기 이름">
-              <input value={babyName} onChange={e=>setBabyName(e.target.value)} maxLength={15} placeholder="예: 리안이" className={iCls}/>
-            </Field>
-            <Field label="개월수">
-              <div className="flex items-center gap-3">
-                <input value={months} onChange={e=>setMonths(e.target.value.replace(/\D/g,''))} inputMode="numeric" maxLength={2} placeholder="예: 7" className={`${iCls} w-24`}/>
-                <span className="text-stone-500 text-sm">개월</span>
-              </div>
-            </Field>
-            <PrimaryBtn onClick={()=>setStep(2)} disabled={!babyName.trim()||!months||parseInt(months)<=0}>다음</PrimaryBtn>
+            <div className="flex gap-3 items-end mb-3">
+              <label className="flex-1">
+                <span className="text-xs text-stone-600 font-medium mb-1.5 block">아기 이름</span>
+                <input value={babyName} onChange={e=>setBabyName(e.target.value)} maxLength={15} placeholder="예: 리안이" className={iSmCls}/>
+              </label>
+              <label className="w-28">
+                <span className="text-xs text-stone-600 font-medium mb-1.5 block">개월수</span>
+                <div className="flex items-center gap-1.5">
+                  <input value={months} onChange={e=>setMonths(e.target.value.replace(/\D/g,''))} inputMode="numeric" maxLength={2} placeholder="7" className={`${iSmCls} w-14 text-center`}/>
+                  <span className="text-stone-500 text-sm flex-shrink-0">개월</span>
+                </div>
+              </label>
+            </div>
+            <div className="flex justify-end mt-5">
+              <button
+                onClick={()=>setStep(2)}
+                disabled={!babyName.trim()||!months||parseInt(months)<=0}
+                className="px-10 py-4 bg-amber-500 text-white font-bold text-base rounded-2xl shadow-sm active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 transition"
+              >
+                다음 →
+              </button>
+            </div>
           </Section>
         </>
       )}
@@ -424,18 +443,25 @@ export default function OrderPage() {
             + 다른 날짜 추가
           </button>
 
-          {/* 전체 합계 + 그룹 경고 */}
+          {/* 전체 합계 + 경고 + 합배송 */}
           {dateOrders.some(d=>completeSets(d).length>0) && (
             <>
-              {groupWarning() && (
+              {qtyWarning() && (
                 <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                  ⚠ {groupWarning()}
+                  ⚠ {qtyWarning()}
                 </div>
               )}
               <div className="mt-2 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
-                <span>전체 합계 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
+                <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
                 <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
               </div>
+              {/* 합배송 토글 — 눈에 잘 안 띄게 작게 */}
+              <button
+                onClick={() => setCombinedDelivery(v => !v)}
+                className={`mt-2 w-full py-2 text-xs rounded-lg border transition ${combinedDelivery ? 'bg-amber-100 border-amber-300 text-amber-800 font-bold' : 'bg-white border-stone-200 text-stone-400'}`}
+              >
+                {combinedDelivery ? '✓ 합배송 적용 중 (월+화 / 목+금 묶음)' : '합배송 신청 (월+화 또는 목+금 묶어서 1회 배송)'}
+              </button>
             </>
           )}
 
@@ -556,3 +582,4 @@ function QtyCtrl({ value, onChange }: { value:number; onChange:(v:number)=>void 
   </div>;
 }
 const iCls = 'w-full px-3.5 py-3 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
+const iSmCls = 'w-full px-3 py-2.5 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
