@@ -211,14 +211,13 @@ export default function OrderPage() {
     return date;
   }
 
-  // 배송 그룹별 합산 팩수
+  // 배송 그룹별 합산 팩수 (_simpleQty 포함)
   function groupQtys(): Record<string, number> {
     const g: Record<string, number> = {};
     for (const d of dateOrders) {
       if (!d.delivery_date) continue;
       const key = deliveryGroup(d.delivery_date);
-      const qty = completeSets(d).reduce((s, cs) => s + Object.values(cs.menus).reduce((a, b) => a + b, 0), 0);
-      g[key] = (g[key] || 0) + qty;
+      g[key] = (g[key] || 0) + dateQty(d);
     }
     return g;
   }
@@ -987,7 +986,6 @@ export default function OrderPage() {
           {/* 같은 내용으로 다른 날짜 추가 */}
           <button
             onClick={() => {
-              // 현재 dateOrders의 첫 번째(또는 전체) 세트를 복사해 날짜만 비운 새 항목 추가
               const copied: DateOrder = {
                 id: uid(),
                 delivery_date: '',
@@ -998,7 +996,8 @@ export default function OrderPage() {
                 }))
               };
               setDateOrders(prev => [...prev, copied]);
-              goStep(3); // 날짜 선택 화면으로
+              setOpenDateId(copied.id); // 새 날짜 카드 자동 오픈
+              goStep(3);
             }}
             className="w-full mb-3 py-3 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-bold rounded-xl"
           >
