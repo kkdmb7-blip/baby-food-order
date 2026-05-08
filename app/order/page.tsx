@@ -86,7 +86,13 @@ export default function OrderPage() {
 
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
   const [dayMenus, setDayMenus] = useState<DayMenu[]>([]); // 메뉴보기용 일별 메뉴
-  const [weekOffset, setWeekOffset] = useState(0); // 0=이번주, 1=다음주
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  // ── 메뉴보기 전용 상태 ───────────────────────────────────────────
+  const [menuStage, setMenuStage] = useState<StageType | null>(null);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  type MenuSel2 = { volume: number | null; qtys: Record<MenuType, number> };
+  const [menuSels, setMenuSels] = useState<Record<string, MenuSel2>>({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [completedId, setCompletedId] = useState<string | null>(null);
@@ -282,78 +288,155 @@ export default function OrderPage() {
 
   // ── 메뉴보기 화면 ─────────────────────────────────────────────
   if (mode === 'menu') {
+    const volOpts = menuStage ? STAGE_OPTIONS[menuStage] : [];
+    const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
+      s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0);
+    const totalMenuPrice = Object.values(menuSels).reduce((s, sel) => {
+      if (!sel.volume || !menuStage) return s;
+      const p = getPrice(menuStage, sel.volume);
+      return s + p * Object.values(sel.qtys).reduce((a, b) => a + b, 0);
+    }, 0);
+
+    function setMenuQty(date: string, menu: MenuType, v: number) {
+      setMenuSels(prev => ({
+        ...prev,
+        [date]: { ...prev[date], qtys: { ...(prev[date]?.qtys ?? emptyMenus()), [menu]: Math.max(0, Math.min(10, v)) } }
+      }));
+    }
+    function setMenuVol(date: string, vol: number) {
+      setMenuSels(prev => ({
+        ...prev,
+        [date]: { volume: vol, qtys: prev[date]?.qtys ?? emptyMenus() }
+      }));
+    }
+
+    function goOrderFromMenu() {
+      const orders: DateOrder[] = Object.entries(menuSels)
+        .filter(([, sel]) => sel.volume && Object.values(sel.qtys).some(q => q > 0))
+        .map(([date, sel]) => ({
+          id: uid(),
+          delivery_date: date,
+          sets: [{ id: uid(), stage: menuStage!, volume: sel.volume!, menus: sel.qtys }]
+        }));
+      if (orders.length === 0) return;
+      setDateOrders(orders);
+      setMode('order');
+      setStep(savedInfo ? 4 : 1); // 정보 있으면 바로 확인으로
+    }
+
     return (
       <Wrap>
-        <div className="flex items-center gap-3 mb-5">
+        {/* 헤더 */}
+        <div className="flex items-center gap-3 mb-4">
           <button onClick={() => setMode('home')} className="text-stone-400 text-lg">←</button>
-          <h1 className="text-lg font-bold text-stone-900 flex-1">이번 주 메뉴</h1>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">메뉴 보기 · 주문</h1>
           <div className="flex gap-1">
             {[0,1].map(w => (
-              <button key={w} onClick={() => setWeekOffset(w)}
-                className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
-                {w===0?'이번 주':'다음 주'}
+              <button key={w} onClick={() => { setWeekOffset(w); setExpandedDate(null); setMenuSels({}); }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
+                {w===0?'이번주':'다음주'}
               </button>
             ))}
           </div>
         </div>
 
-        {dayMenus.length === 0 ? (
-          <div className="text-center py-16 text-stone-400 text-sm">
-            이번 주 메뉴가 아직 등록되지 않았어요
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {dayMenus.map(day => (
-              <div key={day.date} className="bg-white rounded-2xl border border-amber-100 overflow-hidden">
-                <div className="bg-amber-50 px-4 py-2.5 flex items-center justify-between">
-                  <span className="font-bold text-amber-800 text-sm">{day.label}</span>
-                  <button
-                    onClick={() => {
-                      // 해당 날짜 미리 세팅 후 주문 화면으로
-                      const preDate: DateOrder = {
-                        id: uid(),
-                        delivery_date: day.date,
-                        sets: [newSet()]
-                      };
-                      setDateOrders([preDate]);
-                      setMode('order');
-                      setStep(savedInfo ? 3 : 1);
-                    }}
-                    className="text-xs px-3 py-1.5 bg-amber-500 text-white rounded-lg font-bold"
-                  >
-                    주문하기
-                  </button>
-                </div>
-                <div className="divide-y divide-stone-50">
-                  {day.menus.length === 0 ? (
-                    <div className="px-4 py-3 text-xs text-stone-400">메뉴 정보 없음</div>
-                  ) : day.menus.map((m, i) => (
-                    <div key={i} className="px-4 py-2.5">
-                      <div className="flex items-start gap-2">
-                        <span className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full mt-0.5 ${
-                          m.type==='한우' ? 'bg-amber-100 text-amber-800' :
-                          m.type==='닭' ? 'bg-emerald-100 text-emerald-800' :
-                          'bg-violet-100 text-violet-800'
-                        }`}>{m.type}</span>
-                        <div>
-                          <div className="text-sm font-medium text-stone-900">{m.name}</div>
-                          <div className="text-[11px] text-stone-400 mt-0.5">{m.ingredients}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+        {/* 단계 선택 */}
+        <div className="mb-4 bg-white rounded-xl border border-amber-100 p-3">
+          <div className="text-xs text-stone-500 mb-2">아기 단계 선택</div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {STAGES.map(st => (
+              <button key={st} onClick={() => { setMenuStage(st); setMenuSels({}); setExpandedDate(null); }}
+                className={`py-2 rounded-lg text-xs font-bold border transition ${menuStage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                {st.replace('단계','').replace('기1','기1').replace('기2','기2')}
+              </button>
             ))}
+          </div>
+        </div>
+
+        {!menuStage ? (
+          <div className="text-center py-10 text-stone-400 text-sm">단계를 먼저 선택해주세요</div>
+        ) : dayMenus.length === 0 ? (
+          <div className="text-center py-10 text-stone-400 text-sm">이번 주 메뉴가 아직 등록되지 않았어요</div>
+        ) : (
+          <div className="space-y-2">
+            {dayMenus.map(day => {
+              const isOpen = expandedDate === day.date;
+              const sel = menuSels[day.date];
+              const dayQty = sel ? Object.values(sel.qtys).reduce((a,b)=>a+b,0) : 0;
+              const dayPrice = sel?.volume ? getPrice(menuStage, sel.volume) * dayQty : 0;
+              return (
+                <div key={day.date} className="bg-white rounded-xl border border-amber-100 overflow-hidden">
+                  {/* 날짜 헤더 — 클릭으로 열기/닫기 */}
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-3 text-left"
+                    onClick={() => setExpandedDate(isOpen ? null : day.date)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-stone-900 text-sm">{day.label}</span>
+                      {dayQty > 0 && (
+                        <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">
+                          {dayQty}팩 · {dayPrice.toLocaleString()}원
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-stone-400 text-lg">{isOpen ? '∧' : '∨'}</span>
+                  </button>
+
+                  {/* 펼쳐진 내용 */}
+                  {isOpen && (
+                    <div className="px-4 pb-4 border-t border-amber-50 pt-3 space-y-3">
+                      {/* 용량 선택 */}
+                      <div className="flex gap-2">
+                        {volOpts.map(opt => (
+                          <button key={opt.volume}
+                            onClick={() => setMenuVol(day.date, opt.volume)}
+                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel?.volume===opt.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                            {opt.volume}g<br/>
+                            <span className="font-normal">{opt.price.toLocaleString()}원</span>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 메뉴별 수량 */}
+                      {sel?.volume && day.menus.map((m, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                                m.type==='한우'?'bg-amber-100 text-amber-800':m.type==='닭'?'bg-emerald-100 text-emerald-800':'bg-violet-100 text-violet-800'}`}>
+                                {m.type}
+                              </span>
+                              <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
+                            </div>
+                            <div className="text-[10px] text-stone-400 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
+                          </div>
+                          <QtyCtrl
+                            value={sel.qtys[m.type as MenuType] ?? 0}
+                            onChange={v => setMenuQty(day.date, m.type as MenuType, v)}
+                          />
+                        </div>
+                      ))}
+                      {!sel?.volume && (
+                        <div className="text-xs text-stone-400">용량을 먼저 선택해주세요</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        <button
-          onClick={() => { setMode('order'); setStep(savedInfo ? 3 : 1); }}
-          className="w-full mt-5 py-4 bg-amber-500 text-white font-bold rounded-2xl text-sm"
-        >
-          직접 선택해서 주문하기 →
-        </button>
+        {/* 하단 주문 버튼 */}
+        {totalMenuQty > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
+            <button onClick={goOrderFromMenu}
+              className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg text-sm">
+              {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
+            </button>
+          </div>
+        )}
+        <div className="h-24" />
       </Wrap>
     );
   }
