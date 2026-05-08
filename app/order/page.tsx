@@ -617,8 +617,8 @@ export default function OrderPage() {
 
           {/* ── 간단 주문 ────────────────────────────── */}
           {simpleMode && (() => {
-            // 간단주문: 이번주/다음주 구분 없이 가까운 날짜부터 표시
-            const opts = deliveryDateOptions();
+            // 이번주/다음주 탭 — past 포함해 표시, past는 비활성
+            const opts = weekDateOptions(weekOffset);
             function updSimple(date: string, fn: (it: SimpleItem) => SimpleItem) {
               setSimpleItems(prev => {
                 const exist = prev.find(i => i.delivery_date === date);
@@ -640,18 +640,30 @@ export default function OrderPage() {
 
             return (
               <div>
-                <p className="text-xs text-stone-500 mb-3">요일 선택 → 단계·용량 → 팩수</p>
+                {/* 이번주 / 다음주 탭 */}
+                <div className="flex gap-2 mb-3">
+                  {[0,1].map(w => (
+                    <button key={w} onClick={() => setWeekOffset(w)}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-600'}`}>
+                      {w===0?'이번 주':'다음 주'}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="space-y-2">
                   {opts.map(opt => {
                     const it = getSimple(opt.value);
                     const isActive = it.qty > 0;
+                    const isPast = opt.past;
                     return (
-                      <div key={opt.value} className={`bg-white rounded-xl border overflow-hidden ${isActive?'border-amber-400':'border-amber-100'}`}>
+                      <div key={opt.value} className={`bg-white rounded-xl border overflow-hidden ${isPast?'opacity-40':isActive?'border-amber-400':'border-amber-100'}`}>
                         {/* 요일 헤더 */}
                         <div className="flex items-center justify-between px-4 py-3">
-                          <span className={`font-bold text-sm ${isActive?'text-amber-700':'text-stone-700'}`}>{opt.label}</span>
-                          {isActive && <span className="text-xs text-amber-600 font-bold">{it.qty}팩 · {it.stage} {it.volume}g</span>}
-                          <QtyCtrl value={it.qty} onChange={v => updSimple(opt.value, i => ({ ...i, qty: v }))} />
+                          <div>
+                            <span className={`font-bold text-sm ${isActive?'text-amber-700':'text-stone-700'}`}>{opt.label}</span>
+                            {isActive && <span className="ml-2 text-xs text-amber-600 font-bold">{it.stage} {it.volume}g</span>}
+                          </div>
+                          <QtyCtrl value={it.qty} onChange={v => { if(!isPast) updSimple(opt.value, i => ({ ...i, qty: v })); }} />
                         </div>
                         {/* 팩 > 0이면 단계·용량 선택 */}
                         {it.qty > 0 && (
@@ -680,6 +692,13 @@ export default function OrderPage() {
                     );
                   })}
                 </div>
+
+                {totalSimpleQty > 0 && (
+                  <div className="mt-3 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
+                    <span>합계 {totalSimpleQty}팩</span>
+                    <span>{totalSimplePrice.toLocaleString()}원</span>
+                  </div>
+                )}
 
                 {totalSimpleQty > 0 && (
                   <div className="mt-3 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
