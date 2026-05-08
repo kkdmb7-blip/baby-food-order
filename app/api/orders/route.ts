@@ -45,9 +45,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const pricePerPack = getPrice(stage, volume);
-    if (!pricePerPack) return bad('가격 정보 오류');
-    const total_price = total_qty * pricePerPack;
+    // 복합 주문(mixed)은 클라이언트 계산 total_price 사용, 단일은 서버 재계산
+    let total_price: number;
+    const isMulti = Array.isArray(items) && items.length > 0 && items[0].delivery_date;
+    if (isMulti) {
+      // 아이템별 소계 합산으로 서버 재계산
+      total_price = items.reduce((sum: number, d: any) =>
+        sum + (d.sets || []).reduce((s2: number, s: any) =>
+          s2 + (getPrice(s.stage as StageType, s.volume) || 0) * (s.qty || 0), 0), 0);
+      if (total_price <= 0) return bad('가격 계산 오류');
+    } else {
+      const pricePerPack = getPrice(stage, volume);
+      if (!pricePerPack) return bad('가격 정보 오류');
+      total_price = total_qty * pricePerPack;
+    }
 
     const sb = supabaseService();
 
