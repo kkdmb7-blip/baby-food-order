@@ -6,12 +6,33 @@ import {
 } from '@/lib/supabase';
 import { deliveryDateOptions, formatPhone } from '@/lib/dates';
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8; // 8 = 완료
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 type WeeklyMenu = { menu_type: MenuType; vegetables: string };
 
+const SAVED_KEY = 'bfo_saved_info';
+
+type SavedInfo = {
+  babyName: string; months: string;
+  phone: string; address: string; addressDetail: string; doorPw: string;
+  stage: StageType | null; volume: number | null;
+};
+
+function loadSaved(): SavedInfo | null {
+  try {
+    const s = localStorage.getItem(SAVED_KEY);
+    return s ? JSON.parse(s) : null;
+  } catch { return null; }
+}
+
+function saveInfo(info: SavedInfo) {
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(info)); } catch {}
+}
+
 export default function OrderPage() {
   const [step, setStep] = useState<Step>(1);
+  const [savedInfo, setSavedInfo] = useState<SavedInfo | null>(null);
+  const [usedSaved, setUsedSaved] = useState(false);
 
   // ── 입력값 ─────────────────────────────────────────────────────
   const [babyName, setBabyName] = useState('');
@@ -28,7 +49,27 @@ export default function OrderPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [completedId, setCompletedId] = useState<string | null>(null);
 
-  // ── 이번 주 메뉴 (anon fetch) ─────────────────────────────────
+  // ── 저장된 정보 로드 ─────────────────────────────────────────────
+  useEffect(() => {
+    const s = loadSaved();
+    if (s?.babyName && s?.phone) setSavedInfo(s);
+  }, []);
+
+  function applySaved() {
+    if (!savedInfo) return;
+    setBabyName(savedInfo.babyName);
+    setMonths(savedInfo.months);
+    setPhone(savedInfo.phone);
+    setAddress(savedInfo.address);
+    setAddressDetail(savedInfo.addressDetail);
+    setDoorPw(savedInfo.doorPw);
+    if (savedInfo.stage) setStage(savedInfo.stage);
+    if (savedInfo.volume) setVolume(savedInfo.volume);
+    setUsedSaved(true);
+    setStep(2); // 배송정보 단계로 바로 이동
+  }
+
+  // ── 이번 주 메뉴 ───────────────────────────────────────────────
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
   useEffect(() => {
     fetch('/api/menus/current')
@@ -47,8 +88,7 @@ export default function OrderPage() {
   const totalPrice = totalQty * pricePerPack;
   const dateOpts = useMemo(() => deliveryDateOptions(), []);
 
-  // step 4 → volume 초기화 (단계 바뀌면)
-  useEffect(() => { setVolume(null); }, [stage]);
+  useEffect(() => { if (!usedSaved) setVolume(null); }, [stage]);
 
   function setQty(menu: MenuType, val: number) {
     setQtys(prev => ({ ...prev, [menu]: Math.max(0, Math.min(10, val)) }));
@@ -72,17 +112,16 @@ export default function OrderPage() {
           address: address.trim(),
           address_detail: addressDetail.trim(),
           door_password: doorPw.trim(),
-          stage,
-          volume,
-          items,
-          total_qty: totalQty,
-          total_price: totalPrice,
-          delivery_date: deliveryDate,
-          order_type: '일반'
+          stage, volume, items, total_qty: totalQty, total_price: totalPrice,
+          delivery_date: deliveryDate, order_type: '일반'
         })
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
+      // 다음 주문을 위해 저장
+      saveInfo({ babyName: babyName.trim(), months, phone: phone.replace(/[^\d]/g,''),
+        address: address.trim(), addressDetail: addressDetail.trim(), doorPw: doorPw.trim(),
+        stage, volume });
       setCompletedId(d.id);
       setStep(8);
     } catch (e: any) {
@@ -124,6 +163,29 @@ export default function OrderPage() {
         <h1 className="text-2xl font-bold text-stone-900">이유식 주문</h1>
         <StepBar current={step as number} total={7} />
       </header>
+
+      {/* 이전 정보 배너 */}
+      {step === 1 && savedInfo && (
+        <div className="mb-5 bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="text-xs text-amber-700 font-bold mb-1">이전 주문 정보가 있어요</div>
+          <div className="text-sm text-stone-700 mb-3">
+            <span className="font-bold">{savedInfo.babyName}</span> · {formatPhone(savedInfo.phone)}<br />
+            <span className="text-xs text-stone-500">{savedInfo.address}</span>
+          </div>
+          <button
+            onClick={applySaved}
+            className="w-full py-3 bg-amber-500 text-white font-bold rounded-xl text-sm"
+          >
+            이 정보로 바로 주문하기 →
+          </button>
+          <button
+            onClick={() => setSavedInfo(null)}
+            className="w-full mt-2 text-xs text-stone-400 py-1"
+          >
+            새로 입력할게요
+          </button>
+        </div>
+      )}
 
       {/* Step 1 — 아기 정보 */}
       {step === 1 && (
