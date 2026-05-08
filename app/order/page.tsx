@@ -546,7 +546,7 @@ export default function OrderPage() {
               <button onClick={() => setSavedInfo(null)} className="w-full text-xs text-stone-400 py-1">새로 입력할게요</button>
             </div>
           )}
-          <Section title={savedInfo ? `안녕하세요, ${savedInfo.babyName} 보호자님` : '아기 정보를 알려주세요'}>
+          <Section title="아기 정보를 알려주세요">
             <div className="flex gap-3 items-end mb-3">
               <label className="flex-1">
                 <span className="text-xs text-stone-600 font-medium mb-1.5 block">아기 이름</span>
