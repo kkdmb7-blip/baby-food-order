@@ -321,14 +321,24 @@ export default function OrderPage() {
             이번 주 메뉴 보기
             <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
           </button>
-          <button
-            onClick={() => goMode('order')}
-            className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
-          >
-            <div className="text-2xl mb-1">✏️</div>
-            주문하기
-            <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
-          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => { setSimpleMode(true); goMode('order'); }}
+              className="w-full py-4 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-sm shadow-sm hover:border-amber-400 transition"
+            >
+              <div className="text-xl mb-1">⚡</div>
+              간단 주문
+              <div className="text-xs text-stone-400 font-normal mt-0.5">요일·팩수만 선택</div>
+            </button>
+            <button
+              onClick={() => { setSimpleMode(false); goMode('order'); }}
+              className="w-full py-4 bg-amber-500 rounded-2xl text-white font-bold text-sm shadow-sm active:bg-amber-600 transition"
+            >
+              <div className="text-xl mb-1">✏️</div>
+              상세 주문
+              <div className="text-xs text-amber-100 font-normal mt-0.5">메뉴별 선택</div>
+            </button>
+          </div>
         </div>
       </Wrap>
     );
