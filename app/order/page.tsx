@@ -131,13 +131,34 @@ export default function OrderPage() {
       if (!rows?.[0]?.yusik?.schedule) { setDayMenus([]); return; }
       const schedule: any[] = rows[0].yusik.schedule;
       const TYPE_KOR: Record<string, string> = { hanwoo:'한우', chicken:'닭', p3:'기타단백질' };
+      const FIXED_SUFFIX: Record<string, string[]> = {
+        hanwoo: ['한우육수','양파','채소상탕'],
+        chicken: ['닭육수','양파','채소상탕'],
+        p3: ['양파','채소상탕']
+      };
+      const MAIN_PROTEIN: Record<string, string[]> = {
+        hanwoo: ['한우'], chicken: ['닭가슴살','닭']
+      };
+      function normalizeIngr(raw: string, type: string): string {
+        const all = raw.split(',').map((s:string)=>s.trim()).filter(Boolean);
+        const suffix = FIXED_SUFFIX[type] ?? [];
+        const mainList = MAIN_PROTEIN[type] ?? [];
+        const withoutSuffix = all.filter((s:string) => !suffix.includes(s));
+        let mainItem = '';
+        const middle: string[] = [];
+        for (const s of withoutSuffix) {
+          if (!mainItem && (mainList.includes(s) || (type==='p3' && !mainItem))) { mainItem=s; }
+          else { middle.push(s); }
+        }
+        return [mainItem, ...middle, ...suffix].filter(Boolean).join(', ');
+      }
       const opts = weekDateOptions(weekOffset);
       const days: DayMenu[] = opts.filter(o => !o.past).map(opt => {
         const dayData = schedule.find((s:any) => s.date === opt.value);
         const menus = (dayData?.menus || []).map((m:any) => ({
           name: m.name || '',
           type: TYPE_KOR[m.type] || m.type,
-          ingredients: m.ingredients || ''
+          ingredients: normalizeIngr(m.ingredients || '', m.type || '')
         }));
         return { date: opt.value, label: opt.label, dow: opt.dow, menus };
       });
