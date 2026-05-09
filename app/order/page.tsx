@@ -532,43 +532,50 @@ export default function OrderPage() {
       {/* ── Step 1 아기 정보 ─────────────────────── */}
       {step === 1 && (
         <>
-          {savedInfo && (
-            <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+          {savedInfo ? (
+            /* 저장된 정보 있음 — 바로 주문하기만 표시, 폼 숨김 */
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
               <div className="text-xs text-amber-700 font-bold mb-1">이전 주문 정보가 있어요</div>
-              <div className="text-sm text-stone-700 mb-3 leading-relaxed">
+              <div className="text-sm text-stone-700 mb-4 leading-relaxed">
                 <span className="font-bold">{savedInfo.babyName}</span> · {formatPhone(savedInfo.phone)}<br/>
                 <span className="text-xs text-stone-500">{savedInfo.address}</span>
               </div>
-              <button onClick={applySaved} className="w-full py-3 bg-amber-500 text-white font-bold rounded-xl text-sm mb-2">
+              <button onClick={applySaved}
+                className="w-full py-4 bg-amber-500 text-white font-bold rounded-xl text-base mb-3 shadow-sm active:bg-amber-600">
                 이 정보로 바로 주문하기 →
               </button>
-              <button onClick={() => setSavedInfo(null)} className="w-full text-xs text-stone-400 py-1">새로 입력할게요</button>
-            </div>
-          )}
-          <Section title="아기 정보를 알려주세요">
-            <div className="flex gap-3 items-end mb-3">
-              <label className="flex-1">
-                <span className="text-xs text-stone-600 font-medium mb-1.5 block">아기 이름</span>
-                <input value={babyName} onChange={e=>setBabyName(e.target.value)} maxLength={15} placeholder="예: 리안이" className={iSmCls}/>
-              </label>
-              <label className="w-28">
-                <span className="text-xs text-stone-600 font-medium mb-1.5 block">개월수</span>
-                <div className="flex items-center gap-1.5">
-                  <input value={months} onChange={e=>setMonths(e.target.value.replace(/\D/g,''))} inputMode="numeric" maxLength={2} placeholder="7" className={`${iSmCls} w-14 text-center`}/>
-                  <span className="text-stone-500 text-sm flex-shrink-0">개월</span>
-                </div>
-              </label>
-            </div>
-            <div className="flex justify-end mt-5">
-              <button
-                onClick={()=>goStep(2)}
-                disabled={!babyName.trim()||!months||parseInt(months)<=0}
-                className="px-10 py-4 bg-amber-500 text-white font-bold text-base rounded-2xl shadow-sm active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 transition"
-              >
-                다음 →
+              <button onClick={() => setSavedInfo(null)}
+                className="w-full py-2.5 border border-amber-300 text-amber-700 text-sm font-medium rounded-xl bg-white">
+                새로 입력할게요
               </button>
             </div>
-          </Section>
+          ) : (
+            /* 저장 정보 없음 or 새로 입력 선택 — 폼 표시 */
+            <Section title="아기 정보를 알려주세요">
+              <div className="flex gap-3 items-end mb-3">
+                <label className="flex-1">
+                  <span className="text-xs text-stone-600 font-medium mb-1.5 block">아기 이름</span>
+                  <input value={babyName} onChange={e=>setBabyName(e.target.value)} maxLength={15} placeholder="예: 리안이" className={iSmCls}/>
+                </label>
+                <label className="w-28">
+                  <span className="text-xs text-stone-600 font-medium mb-1.5 block">개월수</span>
+                  <div className="flex items-center gap-1.5">
+                    <input value={months} onChange={e=>setMonths(e.target.value.replace(/\D/g,''))} inputMode="numeric" maxLength={2} placeholder="7" className={`${iSmCls} w-14 text-center`}/>
+                    <span className="text-stone-500 text-sm flex-shrink-0">개월</span>
+                  </div>
+                </label>
+              </div>
+              <div className="flex justify-end mt-5">
+                <button
+                  onClick={()=>goStep(2)}
+                  disabled={!babyName.trim()||!months||parseInt(months)<=0}
+                  className="px-10 py-4 bg-amber-500 text-white font-bold text-base rounded-2xl shadow-sm active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 transition"
+                >
+                  다음 →
+                </button>
+              </div>
+            </Section>
+          )}
         </>
       )}
 
