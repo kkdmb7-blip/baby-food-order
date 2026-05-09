@@ -21,10 +21,11 @@ export function fmtDateTime(iso: string): string {
 }
 
 // 이번 주 월요일 (KST 기준)
+// 일요일 자정 기준으로 주 전환 — 일요일이면 다음 주 월요일 반환
 export function thisWeekMonday(): string {
   const now = kstNow();
   const dow = now.getUTCDay(); // 0=Sun
-  const diffToMon = dow === 0 ? -6 : 1 - dow;
+  const diffToMon = dow === 0 ? 1 : 1 - dow; // 일=+1(다음월요일), 나머지=이번주 월요일
   const mon = new Date(now.getTime() + diffToMon * 86400000);
   return mon.toISOString().slice(0, 10);
 }
@@ -40,10 +41,10 @@ export function weekDateOptions(weekOffset = 0): { value: string; label: string;
   const nowKST = Date.now() + 9 * 3600 * 1000;
   const todayStr = kstDateStr(nowKST);
 
-  // 이번 주 월요일 찾기
+  // 이번 주 월요일 찾기 (일요일 자정 기준 — 일요일은 다음 주로 취급)
   const nowD = new Date(nowKST);
   const todayDow = nowD.getUTCDay(); // 0=Sun
-  const diffToMon = todayDow === 0 ? -6 : 1 - todayDow;
+  const diffToMon = todayDow === 0 ? 1 : 1 - todayDow;
   const thisMon = nowKST + diffToMon * 86400000 + weekOffset * 7 * 86400000;
 
   const out: { value: string; label: string; dow: number; past: boolean }[] = [];
@@ -63,12 +64,12 @@ export function weekDateOptions(weekOffset = 0): { value: string; label: string;
   return out;
 }
 
-// 이번 주 월요일
+// 이번 주 월요일 (일요일 자정 기준)
 export function weekMonday(weekOffset = 0): string {
   const nowKST = Date.now() + 9 * 3600 * 1000;
   const nowD = new Date(nowKST);
   const todayDow = nowD.getUTCDay();
-  const diffToMon = todayDow === 0 ? -6 : 1 - todayDow;
+  const diffToMon = todayDow === 0 ? 1 : 1 - todayDow;
   const monTs = nowKST + diffToMon * 86400000 + weekOffset * 7 * 86400000;
   return kstDateStr(monTs);
 }
