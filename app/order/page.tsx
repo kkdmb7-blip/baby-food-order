@@ -103,9 +103,10 @@ export default function OrderPage() {
   const [weekOffset, setWeekOffset] = useState(0);
 
   // ── 메뉴보기 전용 상태 ───────────────────────────────────────────
-  const [menuStage, setMenuStage] = useState<StageType | null>(null);
+  const [menuStage, setMenuStage] = useState<StageType | null>(null); // 레거시 (미사용)
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
-  type MenuSel2 = { volume: number | null; qtys: Record<MenuType, number> };
+  // 날짜별 독립 단계 선택 가능
+  type MenuSel2 = { stage: StageType | null; volume: number | null; qtys: Record<MenuType, number> };
   const [menuSels, setMenuSels] = useState<Record<string, MenuSel2>>({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -356,41 +357,32 @@ export default function OrderPage() {
 
   // ── 메뉴보기 화면 ─────────────────────────────────────────────
   if (mode === 'menu') {
-    const volOpts = menuStage ? STAGE_OPTIONS[menuStage] : [];
+    // 날짜별 독립 helpers
+    const menuSelOf = (date: string): MenuSel2 =>
+      menuSels[date] ?? { stage: null, volume: null, qtys: emptyMenus() };
+    const updMenuSel = (date: string, fn: (s: MenuSel2) => MenuSel2) =>
+      setMenuSels(prev => ({ ...prev, [date]: fn(prev[date] ?? { stage: null, volume: null, qtys: emptyMenus() }) }));
+
     const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
       s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0);
     const totalMenuPrice = Object.values(menuSels).reduce((s, sel) => {
-      if (!sel.volume || !menuStage) return s;
-      const p = getPrice(menuStage, sel.volume);
-      return s + p * Object.values(sel.qtys).reduce((a, b) => a + b, 0);
+      if (!sel.stage || !sel.volume) return s;
+      return s + getPrice(sel.stage, sel.volume) * Object.values(sel.qtys).reduce((a, b) => a + b, 0);
     }, 0);
 
-    function setMenuQty(date: string, menu: MenuType, v: number) {
-      setMenuSels(prev => ({
-        ...prev,
-        [date]: { ...prev[date], qtys: { ...(prev[date]?.qtys ?? emptyMenus()), [menu]: Math.max(0, Math.min(10, v)) } }
-      }));
-    }
-    function setMenuVol(date: string, vol: number) {
-      setMenuSels(prev => ({
-        ...prev,
-        [date]: { volume: vol, qtys: prev[date]?.qtys ?? emptyMenus() }
-      }));
-    }
-
-    function goOrderFromMenu() {
+    const goOrderFromMenu = () => {
       const orders: DateOrder[] = Object.entries(menuSels)
-        .filter(([, sel]) => sel.volume && Object.values(sel.qtys).some(q => q > 0))
+        .filter(([, sel]) => sel.stage && sel.volume && Object.values(sel.qtys).some(q => q > 0))
         .map(([date, sel]) => ({
           id: uid(),
           delivery_date: date,
-          sets: [{ id: uid(), stage: menuStage!, volume: sel.volume!, menus: sel.qtys }]
+          sets: [{ id: uid(), stage: sel.stage!, volume: sel.volume!, menus: sel.qtys }]
         }));
       if (orders.length === 0) return;
       setDateOrders(orders);
-      setMode('order');
-      goStep(savedInfo ? 4 : 1); // 정보 있으면 바로 확인으로
-    }
+      goMode('order');
+      goStep(savedInfo ? 4 : 1);
+    };
 
     return (
       <Wrap>
@@ -408,39 +400,28 @@ export default function OrderPage() {
           </div>
         </div>
 
-        {/* 단계 선택 */}
-        <div className="mb-4 bg-white rounded-xl border border-amber-100 p-3">
-          <div className="text-xs text-stone-500 mb-2">아기 단계 선택</div>
-          <div className="grid grid-cols-4 gap-1.5">
-            {STAGES.map(st => (
-              <button key={st} onClick={() => { setMenuStage(st); setMenuSels({}); setExpandedDate(null); }}
-                className={`py-2 rounded-lg text-xs font-bold border transition ${menuStage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                {st.replace('단계','').replace('기1','기1').replace('기2','기2')}
-              </button>
-            ))}
-          </div>
-        </div>
+        <p className="text-xs text-stone-500 mb-3">날짜 탭 → 단계·용량 선택 → 메뉴별 수량 · 날짜마다 다른 단계·용량 가능</p>
 
-        {!menuStage ? (
-          <div className="text-center py-10 text-stone-400 text-sm">단계를 먼저 선택해주세요</div>
-        ) : dayMenus.length === 0 ? (
+        {dayMenus.length === 0 ? (
           <div className="text-center py-10 text-stone-400 text-sm">이번 주 메뉴가 아직 등록되지 않았어요</div>
         ) : (
           <div className="space-y-2">
             {dayMenus.map(day => {
               const isOpen = expandedDate === day.date;
-              const sel = menuSels[day.date];
-              const dayQty = sel ? Object.values(sel.qtys).reduce((a,b)=>a+b,0) : 0;
-              const dayPrice = sel?.volume ? getPrice(menuStage, sel.volume) * dayQty : 0;
+              const sel = menuSelOf(day.date);
+              const dayQty = Object.values(sel.qtys).reduce((a,b)=>a+b,0);
+              const dayPrice = sel.stage && sel.volume ? getPrice(sel.stage, sel.volume) * dayQty : 0;
+              const selVolOpts = sel.stage ? STAGE_OPTIONS[sel.stage] : [];
               return (
                 <div key={day.date} className="bg-white rounded-xl border border-amber-100 overflow-hidden">
-                  {/* 날짜 헤더 — 클릭으로 열기/닫기 */}
+                  {/* 날짜 헤더 */}
                   <button
                     className="w-full flex items-center justify-between px-4 py-3 text-left"
                     onClick={() => setExpandedDate(isOpen ? null : day.date)}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-stone-900 text-sm">{day.label}</span>
+                      {sel.stage && <span className="text-[10px] text-stone-500">{sel.stage}{sel.volume ? ` ${sel.volume}g` : ''}</span>}
                       {dayQty > 0 && (
                         <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">
                           {dayQty}팩 · {dayPrice.toLocaleString()}원
@@ -450,23 +431,41 @@ export default function OrderPage() {
                     <span className="text-stone-400 text-lg">{isOpen ? '∧' : '∨'}</span>
                   </button>
 
-                  {/* 펼쳐진 내용 */}
                   {isOpen && (
                     <div className="px-4 pb-4 border-t border-amber-50 pt-3 space-y-3">
-                      {/* 용량 선택 */}
-                      <div className="flex gap-2">
-                        {volOpts.map(opt => (
-                          <button key={opt.volume}
-                            onClick={() => setMenuVol(day.date, opt.volume)}
-                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel?.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                            {opt.volume}g<br/>
-                            <span className="font-normal">{opt.price.toLocaleString()}원</span>
-                          </button>
-                        ))}
+                      {/* 단계 선택 (날짜별 독립) */}
+                      <div>
+                        <div className="text-[11px] text-stone-500 mb-1.5">단계</div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {STAGES.map(st => (
+                            <button key={st}
+                              onClick={() => updMenuSel(day.date, s => ({ ...s, stage: st, volume: null, qtys: emptyMenus() }))}
+                              className={`py-2 rounded-lg text-xs font-bold border transition ${sel.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                              {st.replace('중기1단계','중1').replace('중기2단계','중2').replace('후기','후기').replace('완료기','완료')}
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
+                      {/* 용량 선택 */}
+                      {sel.stage && (
+                        <div>
+                          <div className="text-[11px] text-stone-500 mb-1.5">용량</div>
+                          <div className="flex gap-2">
+                            {selVolOpts.map(opt => (
+                              <button key={opt.volume}
+                                onClick={() => updMenuSel(day.date, s => ({ ...s, volume: opt.volume, qtys: emptyMenus() }))}
+                                className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                {opt.volume}g<br/>
+                                <span className="font-normal">{opt.price.toLocaleString()}원</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* 메뉴별 수량 */}
-                      {sel?.volume && day.menus.map((m, i) => (
+                      {sel.volume && day.menus.map((m, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
@@ -480,12 +479,12 @@ export default function OrderPage() {
                           </div>
                           <QtyCtrl
                             value={sel.qtys[m.type as MenuType] ?? 0}
-                            onChange={v => setMenuQty(day.date, m.type as MenuType, v)}
+                            onChange={v => updMenuSel(day.date, s => ({ ...s, qtys: { ...s.qtys, [m.type as MenuType]: Math.max(0, Math.min(10, v)) } }))}
                           />
                         </div>
                       ))}
-                      {!sel?.volume && (
-                        <div className="text-xs text-stone-400">용량을 먼저 선택해주세요</div>
+                      {!sel.volume && (
+                        <div className="text-xs text-stone-400">단계와 용량을 먼저 선택해주세요</div>
                       )}
                     </div>
                   )}
