@@ -644,8 +644,8 @@ export default function OrderPage() {
 
           {/* ── 간단 주문 ────────────────────────────── */}
           {simpleMode && (() => {
-            // 이번주/다음주 탭 — past 포함해 표시, past는 비활성
-            const opts = weekDateOptions(weekOffset);
+            // dateOpts: useMemo로 weekOffset 변경 시 자동 갱신 (IIFE 내 직접 계산 금지)
+            const opts = dateOpts;
             function updSimple(date: string, fn: (it: SimpleItem) => SimpleItem) {
               setSimpleItems(prev => {
                 const exist = prev.find(i => i.delivery_date === date);
