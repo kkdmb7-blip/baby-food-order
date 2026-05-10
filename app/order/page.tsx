@@ -458,7 +458,7 @@ export default function OrderPage() {
                         {volOpts.map(opt => (
                           <button key={opt.volume}
                             onClick={() => setMenuVol(day.date, opt.volume)}
-                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel?.volume===opt.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                            className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel?.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                             {opt.volume}g<br/>
                             <span className="font-normal">{opt.price.toLocaleString()}원</span>
                           </button>
@@ -476,7 +476,7 @@ export default function OrderPage() {
                               </span>
                               <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
                             </div>
-                            <div className="text-[10px] text-stone-400 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
+                            <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
                           </div>
                           <QtyCtrl
                             value={sel.qtys[m.type as MenuType] ?? 0}
@@ -707,7 +707,7 @@ export default function OrderPage() {
                               <div className="grid grid-cols-2 gap-1">
                                 {STAGE_OPTIONS[it.stage].map(opt2 => (
                                   <button key={opt2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: opt2.volume }))}
-                                    className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                    className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                     {opt2.volume}g · {opt2.price.toLocaleString()}원
                                   </button>
                                 ))}
@@ -875,7 +875,7 @@ export default function OrderPage() {
                                   {STAGE_OPTIONS[s.stage].map(opt => (
                                     <button key={opt.volume}
                                       onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume}))}
-                                      className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-stone-800 border-stone-800 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                      className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                       {opt.volume}g · {opt.price.toLocaleString()}원
                                     </button>
                                   ))}
@@ -894,7 +894,7 @@ export default function OrderPage() {
                                       <div key={menu} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
                                         <div>
                                           <div className="text-sm font-bold text-stone-900">{menu}</div>
-                                          {wm && <div className="text-[10px] text-stone-400">{wm.vegetables}</div>}
+                                          {wm && <div className="text-[11px] text-stone-500">{wm.vegetables}</div>}
                                         </div>
                                         <QtyCtrl value={s.menus[menu]} onChange={v=>updSet(d.id, s.id, x=>setQty(x, menu, v))}/>
                                       </div>
@@ -915,7 +915,7 @@ export default function OrderPage() {
                     updDate(d.id, x=>({...x, sets:[...x.sets, newS]}));
                     setOpenSetId(prev => ({ ...prev, [d.id]: newS.id }));
                   }}
-                    className="w-full py-2.5 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-medium rounded-xl hover:bg-amber-50">
+                    className="w-full py-2.5 border border-amber-300 text-amber-700 text-sm font-medium rounded-xl bg-white shadow-sm active:shadow-none">
                     + 다른 단계·용량 추가
                   </button>
 
@@ -938,7 +938,7 @@ export default function OrderPage() {
             setDateOrders(prev => [...prev, nd]);
             setOpenDateId(nd.id);
           }}
-            className="w-full mt-3 py-3.5 border-2 border-dashed border-amber-300 text-amber-700 font-bold rounded-2xl hover:bg-amber-50">
+            className="w-full mt-3 py-3.5 border border-amber-300 text-amber-700 font-bold rounded-2xl bg-white shadow-sm active:shadow-none">
             + 다른 날짜 추가
           </button>
 
@@ -954,13 +954,23 @@ export default function OrderPage() {
                 <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
                 <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
               </div>
-              {/* 합배송 토글 — 눈에 잘 안 띄게 작게 */}
-              <button
-                onClick={() => setCombinedDelivery(v => !v)}
-                className={`mt-2 w-full py-2 text-xs rounded-lg border transition ${combinedDelivery ? 'bg-amber-100 border-amber-300 text-amber-800 font-bold' : 'bg-white border-stone-200 text-stone-400'}`}
-              >
-                {combinedDelivery ? '✓ 합배송 적용 중 (월+화 / 목+금 묶음)' : '합배송 신청 (월+화 또는 목+금 묶어서 1회 배송)'}
-              </button>
+              {/* 합배송 토글 */}
+              {(() => {
+                const canCombine = dateOrders.filter(d => d.delivery_date).length >= 2;
+                return (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => canCombine && setCombinedDelivery(v => !v)}
+                      className={`w-full py-2 text-xs rounded-lg border transition ${combinedDelivery ? 'bg-amber-100 border-amber-300 text-amber-800 font-bold' : canCombine ? 'bg-white border-stone-200 text-stone-500 hover:border-amber-300' : 'bg-white border-stone-100 text-stone-300 cursor-not-allowed'}`}
+                    >
+                      {combinedDelivery ? '✓ 합배송 적용 중 (월+화 / 목+금 묶음)' : '합배송 신청 (월+화 또는 목+금 묶어서 1회 배송)'}
+                    </button>
+                    {!canCombine && (
+                      <p className="text-[10px] text-stone-400 text-center mt-1">날짜를 2개 이상 선택해야 활성화됩니다</p>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
 
@@ -1027,7 +1037,7 @@ export default function OrderPage() {
               setOpenDateId(copied.id); // 새 날짜 카드 자동 오픈
               goStep(3);
             }}
-            className="w-full mb-3 py-3 border-2 border-dashed border-amber-300 text-amber-700 text-sm font-bold rounded-xl"
+            className="w-full mb-3 py-3 border border-amber-300 text-amber-700 text-sm font-bold rounded-xl bg-white shadow-sm"
           >
             + 같은 내용으로 다른 날짜 추가
           </button>
@@ -1051,7 +1061,7 @@ export default function OrderPage() {
 
 // ── 공통 컴포넌트 ─────────────────────────────────────────────────
 function Wrap({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-md mx-auto px-4 py-6 pb-28">{children}</div>;
+  return <div className="max-w-md mx-auto px-4 py-6 pb-36">{children}</div>;
 }
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <section><h2 className="text-lg font-bold text-stone-900 mb-4">{title}</h2>{children}</section>;
@@ -1076,9 +1086,9 @@ function Row2({ children }: { children: React.ReactNode }) {
 }
 function QtyCtrl({ value, onChange }: { value:number; onChange:(v:number)=>void }) {
   return <div className="flex items-center gap-2">
-    <button onClick={()=>onChange(value-1)} disabled={value<=0} className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-bold text-lg disabled:opacity-30">−</button>
-    <span className="w-6 text-center font-bold text-stone-900">{value}</span>
-    <button onClick={()=>onChange(value+1)} disabled={value>=10} className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 font-bold text-lg disabled:opacity-30">+</button>
+    <button onClick={()=>onChange(value-1)} disabled={value<=0} className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-30 flex items-center justify-center">−</button>
+    <span className="w-7 text-center font-bold text-stone-900 text-base">{value}</span>
+    <button onClick={()=>onChange(value+1)} disabled={value>=10} className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-30 flex items-center justify-center">+</button>
   </div>;
 }
 const iCls = 'w-full px-3.5 py-3 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
