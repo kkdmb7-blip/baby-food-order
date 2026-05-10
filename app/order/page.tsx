@@ -93,6 +93,7 @@ export default function OrderPage() {
   // 아코디언 상태
   const [openSetId, setOpenSetId] = useState<Record<string, string | null>>({});
   const [openDateId, setOpenDateId] = useState<string | null>(null); // 날짜 아코디언
+  const [copyMode, setCopyMode] = useState(false); // 같은내용 날짜추가 모드
 
   // 간단주문 상태
   type SimpleItem = { delivery_date: string; stage: StageType | null; volume: number | null; qty: number };
@@ -613,8 +614,69 @@ export default function OrderPage() {
         </Section>
       )}
 
+      {/* ── Step 3 copyMode: 날짜만 선택 ─────────── */}
+      {step === 3 && copyMode && (() => {
+            const source = dateOrders[dateOrders.length - 1];
+            const usedDates = new Set(dateOrders.map(d => d.delivery_date));
+            const available = dateOpts.filter(o => !o.past && !usedDates.has(o.value));
+
+            // 기존 주문 요약
+            const summaryText = (o: DateOrder) => {
+              const qs = o.sets.map(s => {
+                const q = setQtyTotal(s);
+                return s.stage ? `${s.stage} ${s.volume}g ${q}팩` : `${q}팩`;
+              }).join(' · ');
+              return `${o.delivery_date} · ${qs}`;
+            };
+
+            return (
+              <div>
+                <h2 className="text-lg font-bold text-stone-900 mb-3">날짜 추가</h2>
+                {/* 기존 주문 접힌 요약 */}
+                <div className="space-y-1.5 mb-4">
+                  {dateOrders.map(o => (
+                    <div key={o.id} className="bg-amber-50 rounded-lg px-3 py-2 text-xs text-stone-600 flex items-center justify-between">
+                      <span>{summaryText(o)}</span>
+                      <span className="text-amber-500 font-bold">{datePrice(o).toLocaleString()}원</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 날짜 선택 — 탭하면 즉시 추가 */}
+                <div className="text-xs text-stone-500 mb-2">추가할 날짜를 선택해주세요</div>
+                {available.length === 0 ? (
+                  <div className="text-sm text-stone-400 text-center py-6">추가 가능한 날짜가 없어요</div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {available.map(opt => (
+                      <button key={opt.value}
+                        onClick={() => {
+                          const copied: DateOrder = {
+                            id: uid(),
+                            delivery_date: opt.value,
+                            sets: source.sets.map(s => ({ ...s, id: uid(), menus: { ...s.menus } }))
+                          };
+                          setDateOrders(prev => [...prev, copied]);
+                          setCopyMode(false);
+                          goStep(4); // 바로 확인으로
+                        }}
+                        className="py-3 bg-white border border-amber-200 rounded-xl text-sm font-bold text-stone-900 hover:bg-amber-50 hover:border-amber-400 transition">
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <button onClick={() => { setCopyMode(false); goStep(4); }}
+                  className="w-full mt-4 py-3 text-sm text-stone-500 border border-stone-200 rounded-xl">
+                  취소 — 확인 화면으로 돌아가기
+                </button>
+              </div>
+            );
+      })()}
+
       {/* ── Step 3 주문 구성 ─────────────────────── */}
-      {step === 3 && (
+      {step === 3 && !copyMode && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-lg font-bold text-stone-900">주문 구성</h2>
@@ -1023,17 +1085,7 @@ export default function OrderPage() {
           {/* 같은 내용으로 다른 날짜 추가 */}
           <button
             onClick={() => {
-              const copied: DateOrder = {
-                id: uid(),
-                delivery_date: '',
-                sets: dateOrders[dateOrders.length - 1].sets.map(s => ({
-                  ...s,
-                  id: uid(),
-                  menus: { ...s.menus }
-                }))
-              };
-              setDateOrders(prev => [...prev, copied]);
-              setOpenDateId(copied.id); // 새 날짜 카드 자동 오픈
+              setCopyMode(true);
               goStep(3);
             }}
             className="w-full mb-3 py-3 border border-amber-300 text-amber-700 text-sm font-bold rounded-xl bg-white shadow-sm"
