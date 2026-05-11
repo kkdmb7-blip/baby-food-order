@@ -487,6 +487,11 @@ export default function OrderPage() {
                       {!sel.volume && (
                         <div className="text-xs text-stone-400">단계와 용량을 먼저 선택해주세요</div>
                       )}
+                      {sel.volume && dayQty > 0 && dayQty < MIN_ORDER_QTY && (
+                        <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-1.5">
+                          최소 {MIN_ORDER_QTY}팩 이상이어야 해요 (현재 {dayQty}팩)
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -496,14 +501,32 @@ export default function OrderPage() {
         )}
 
         {/* 하단 주문 버튼 */}
-        {totalMenuQty > 0 && (
-          <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
-            <button onClick={goOrderFromMenu}
-              className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg text-sm">
-              {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
-            </button>
-          </div>
-        )}
+        {totalMenuQty > 0 && (() => {
+          // 날짜별 최소 3팩 검증
+          const dateQtys = Object.entries(menuSels).map(([date, sel]) => ({
+            date, qty: Object.values(sel.qtys).reduce((a,b)=>a+b,0)
+          })).filter(d => d.qty > 0);
+          const underMin = dateQtys.find(d => d.qty < MIN_ORDER_QTY);
+          const canOrder = !underMin && dateQtys.every(d => {
+            const s = menuSels[d.date];
+            return s.stage && s.volume;
+          });
+          return (
+            <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
+              {underMin && (
+                <p className="text-xs text-red-600 text-center mb-2 bg-white rounded-lg py-1.5 px-3 shadow-sm">
+                  ⚠ {underMin.date} — 하루 최소 {MIN_ORDER_QTY}팩 이상이어야 해요 (현재 {underMin.qty}팩)
+                </p>
+              )}
+              <button
+                onClick={canOrder ? goOrderFromMenu : undefined}
+                disabled={!canOrder}
+                className={`w-full max-w-md mx-auto block py-4 rounded-2xl shadow-lg text-sm font-bold ${canOrder ? 'bg-amber-500 text-white' : 'bg-stone-200 text-stone-400 cursor-not-allowed'}`}>
+                {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
+              </button>
+            </div>
+          );
+        })()}
         <div className="h-24" />
       </Wrap>
     );
