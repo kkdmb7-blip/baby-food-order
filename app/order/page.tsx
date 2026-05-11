@@ -487,11 +487,6 @@ export default function OrderPage() {
                       {!sel.volume && (
                         <div className="text-xs text-stone-400">단계와 용량을 먼저 선택해주세요</div>
                       )}
-                      {sel.volume && dayQty > 0 && dayQty < MIN_ORDER_QTY && (
-                        <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-1.5">
-                          최소 {MIN_ORDER_QTY}팩 이상이어야 해요 (현재 {dayQty}팩)
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -501,32 +496,14 @@ export default function OrderPage() {
         )}
 
         {/* 하단 주문 버튼 */}
-        {totalMenuQty > 0 && (() => {
-          // 날짜별 최소 3팩 검증
-          const dateQtys = Object.entries(menuSels).map(([date, sel]) => ({
-            date, qty: Object.values(sel.qtys).reduce((a,b)=>a+b,0)
-          })).filter(d => d.qty > 0);
-          const underMin = dateQtys.find(d => d.qty < MIN_ORDER_QTY);
-          const canOrder = !underMin && dateQtys.every(d => {
-            const s = menuSels[d.date];
-            return s.stage && s.volume;
-          });
-          return (
-            <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
-              {underMin && (
-                <p className="text-xs text-red-600 text-center mb-2 bg-white rounded-lg py-1.5 px-3 shadow-sm">
-                  ⚠ {underMin.date} — 하루 최소 {MIN_ORDER_QTY}팩 이상이어야 해요 (현재 {underMin.qty}팩)
-                </p>
-              )}
-              <button
-                onClick={canOrder ? goOrderFromMenu : undefined}
-                disabled={!canOrder}
-                className={`w-full max-w-md mx-auto block py-4 rounded-2xl shadow-lg text-sm font-bold ${canOrder ? 'bg-amber-500 text-white' : 'bg-stone-200 text-stone-400 cursor-not-allowed'}`}>
-                {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
-              </button>
-            </div>
-          );
-        })()}
+        {totalMenuQty > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
+            <button onClick={goOrderFromMenu}
+              className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg text-sm">
+              {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
+            </button>
+          </div>
+        )}
         <div className="h-24" />
       </Wrap>
     );
@@ -714,60 +691,85 @@ export default function OrderPage() {
             </div>
           )}
 
-          {/* 주 선택 탭 */}
-          <div className="flex gap-2 mb-3">
-            {[0,1].map(w => (
-              <button key={w} onClick={() => setWeekOffset(w)}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-600'}`}>
-                {w===0?'이번 주':'다음 주'}
-              </button>
-            ))}
+          {/* 주문 방식 탭 */}
+          <div className="flex gap-2 mb-4">
+            <button onClick={() => setSimpleMode(false)}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition ${!simpleMode?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-600'}`}>
+              상세 주문
+            </button>
+            <button onClick={() => setSimpleMode(true)}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition ${simpleMode?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-600'}`}>
+              간단 주문
+            </button>
           </div>
 
-          {/* 날짜별 주문 */}
-          {(() => {
-            const updSimple = (date: string, fn: (it: SimpleItem) => SimpleItem) =>
+          {/* ── 간단 주문 ────────────────────────────── */}
+          {simpleMode && (() => {
+            // dateOpts: useMemo로 weekOffset 변경 시 자동 갱신 (IIFE 내 직접 계산 금지)
+            const opts = dateOpts;
+            function updSimple(date: string, fn: (it: SimpleItem) => SimpleItem) {
               setSimpleItems(prev => {
                 const exist = prev.find(i => i.delivery_date === date);
                 if (exist) return prev.map(i => i.delivery_date === date ? fn(i) : i);
-                return [...prev, fn({ delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 })];
+                const def: SimpleItem = { delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 };
+                return [...prev, fn(def)];
               });
-            const getSimple = (date: string): SimpleItem =>
-              simpleItems.find(i => i.delivery_date === date) ?? { delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 };
+            }
+            function getSimple(date: string): SimpleItem {
+              return simpleItems.find(i => i.delivery_date === date) ?? { delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 };
+            }
             const totalSimpleQty = simpleItems.reduce((s, i) => s + i.qty, 0);
-            const totalSimplePrice = simpleItems.reduce((s, i) => (!i.stage || !i.volume) ? s : s + getPrice(i.stage, i.volume) * i.qty, 0);
+            const totalSimplePrice = simpleItems.reduce((s, i) => {
+              if (!i.stage || !i.volume) return s;
+              return s + getPrice(i.stage, i.volume) * i.qty;
+            }, 0);
+            // 간단주문 유효성: 선택된 날짜별 3팩+, stage/volume 있음
             const simpleValid = simpleItems.some(i => i.qty >= MIN_ORDER_QTY && i.stage && i.volume);
+
             return (
-              <>
+              <div>
+                {/* 이번주 / 다음주 탭 */}
+                <div className="flex gap-2 mb-3">
+                  {[0,1].map(w => (
+                    <button key={w} onClick={() => setWeekOffset(w)}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-600'}`}>
+                      {w===0?'이번 주':'다음 주'}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="space-y-2">
-                  {dateOpts.map(opt => {
+                  {opts.map(opt => {
                     const it = getSimple(opt.value);
+                    const isActive = it.qty > 0;
                     const isPast = opt.past;
                     return (
-                      <div key={opt.value} className={`bg-white rounded-xl border overflow-hidden ${isPast?'opacity-40':it.qty>0?'border-amber-400':'border-amber-100'}`}>
+                      <div key={opt.value} className={`bg-white rounded-xl border overflow-hidden ${isPast?'opacity-40':isActive?'border-amber-400':'border-amber-100'}`}>
+                        {/* 요일 헤더 */}
                         <div className="flex items-center justify-between px-4 py-3">
                           <div>
-                            <span className={`font-bold text-sm ${it.qty>0?'text-amber-700':'text-stone-700'}`}>{opt.label}</span>
-                            {it.qty > 0 && it.stage && it.volume && <span className="ml-2 text-xs text-stone-500">{it.stage} {it.volume}g</span>}
+                            <span className={`font-bold text-sm ${isActive?'text-amber-700':'text-stone-700'}`}>{opt.label}</span>
+                            {isActive && <span className="ml-2 text-xs text-amber-600 font-bold">{it.stage} {it.volume}g</span>}
                           </div>
-                          <QtyCtrl value={it.qty} onChange={v => { if (!isPast) updSimple(opt.value, i => ({ ...i, qty: v })); }} />
+                          <QtyCtrl value={it.qty} onChange={v => { if(!isPast) updSimple(opt.value, i => ({ ...i, qty: v })); }} />
                         </div>
+                        {/* 팩 > 0이면 단계·용량 선택 */}
                         {it.qty > 0 && (
                           <div className="px-4 pb-3 border-t border-amber-50 pt-2 space-y-2">
                             <div className="grid grid-cols-4 gap-1">
                               {STAGES.map(st => (
                                 <button key={st} onClick={() => updSimple(opt.value, i => ({ ...i, stage: st, volume: null }))}
                                   className={`py-1.5 rounded-lg text-[11px] font-bold border ${it.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                  {st.replace('중기1단계','중1').replace('중기2단계','중2').replace('완료기','완료')}
+                                  {st.replace('단계','').replace('중기1','중1').replace('중기2','중2').replace('완료기','완료').replace('후기','후기')}
                                 </button>
                               ))}
                             </div>
                             {it.stage && (
                               <div className="grid grid-cols-2 gap-1">
-                                {STAGE_OPTIONS[it.stage].map(o2 => (
-                                  <button key={o2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: o2.volume }))}
-                                    className={`py-1.5 rounded-lg text-xs border ${it.volume===o2.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                    {o2.volume}g · {o2.price.toLocaleString()}원
+                                {STAGE_OPTIONS[it.stage].map(opt2 => (
+                                  <button key={opt2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: opt2.volume }))}
+                                    className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                    {opt2.volume}g · {opt2.price.toLocaleString()}원
                                   </button>
                                 ))}
                               </div>
@@ -778,34 +780,46 @@ export default function OrderPage() {
                     );
                   })}
                 </div>
+
                 {totalSimpleQty > 0 && (
                   <div className="mt-3 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
                     <span>합계 {totalSimpleQty}팩</span>
                     <span>{totalSimplePrice.toLocaleString()}원</span>
                   </div>
                 )}
+
                 <Row2>
-                  <BackBtn onClick={() => goStep(2)}/>
+                  <BackBtn onClick={() => setStep(2)}/>
                   <PrimaryBtn
                     onClick={() => {
-                      const orders = simpleItems.filter(i => i.qty > 0 && i.stage && i.volume).map(i => ({
-                        id: uid(), delivery_date: i.delivery_date,
-                        sets: [{ id: uid(), stage: i.stage!, volume: i.volume!, menus: emptyMenus(), _simpleQty: i.qty }]
-                      } as DateOrder));
-                      if (!orders.length) return;
-                      setDateOrders(orders);
+                      // 간단주문 → dateOrders 변환 (메뉴 없이 qty만)
+                      const orders: DateOrder[] = simpleItems
+                        .filter(i => i.qty > 0 && i.stage && i.volume)
+                        .map(i => ({
+                          id: uid(), delivery_date: i.delivery_date,
+                          sets: [{ id: uid(), stage: i.stage!, volume: i.volume!, menus: emptyMenus() }],
+                          _simpleQty: i.qty // 팩수 힌트 (submit에서 items에 반영)
+                        } as any)
+                      );
+                      if (orders.length === 0) return;
+                      // 간단주문: _simpleQty 플래그로 저장, 메뉴 빈 채로
+                      setDateOrders(orders.map(o => {
+                        const it = simpleItems.find(i => i.delivery_date === o.delivery_date);
+                        if (!it) return o;
+                        return { ...o, sets: o.sets.map(s => ({ ...s, menus: emptyMenus(), _simpleQty: it.qty })) };
+                      }));
                       goStep(4);
                     }}
                     disabled={!simpleValid}
                   >주문 확인</PrimaryBtn>
                 </Row2>
-              </>
+              </div>
             );
           })()}
 
-          {/* 상세주문 섹션 제거됨 — 메뉴보기에서 복잡한 주문 가능 */}
-          {false && (
-            <><p></p>
+          {/* ── 상세 주문 ────────────────────────────── */}
+          {!simpleMode && (
+            <><p className="text-xs text-stone-500 mb-4">날짜별로 다르게 · 한 날짜에 여러 단계·용량 가능</p>
 
           <div className="space-y-4">
             {dateOrders.map((d, di) => {
