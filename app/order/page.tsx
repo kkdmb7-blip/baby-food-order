@@ -116,15 +116,23 @@ export default function OrderPage() {
   const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
 
+  // 저장 정보 로드 — 최초 1회
   useEffect(() => {
-    // 주차별 메뉴 fetch (요약 + 일별 스케줄)
+    const s = loadSaved();
+    if (s?.babyName && s?.phone) {
+      setBabyName(s.babyName); setMonths(s.months);
+      setPhone(s.phone); setAddress(s.address);
+      setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
+      setSavedInfo(s);
+    }
+  }, []);
+
+  // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
+  useEffect(() => {
     fetch(`/api/menus/current?week=${currentWeekStart}`)
       .then(r => r.json())
-      .then(d => {
-        if (d.menus) setWeeklyMenus(d.menus);
-      }).catch(() => {});
+      .then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
 
-    // 메뉴보기용 kkakung_history 일별 스케줄 fetch
     const SB_URL = 'https://ymghmfkqctckxxysxkvy.supabase.co';
     const KEY = 'sb_publishable_3-9zobXqx6Nv36LzmNMBpA_fohZqA5x';
     fetch(`${SB_URL}/rest/v1/kkakung_history?id=eq.${currentWeekStart}&select=id,yusik`, {
@@ -166,15 +174,7 @@ export default function OrderPage() {
       });
       setDayMenus(days);
     }).catch(() => setDayMenus([]));
-    const s = loadSaved();
-    if (s?.babyName && s?.phone) {
-      setBabyName(s.babyName); setMonths(s.months);
-      setPhone(s.phone); setAddress(s.address);
-      setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
-      setSavedInfo(s);
-      // 홈화면 유지 — 메뉴보기/주문하기 선택하게
-    }
-  }, []);
+  }, [currentWeekStart]);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
 
