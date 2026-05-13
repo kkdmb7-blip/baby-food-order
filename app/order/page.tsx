@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice,
+  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, BANCHAN_PRICE, getPrice,
   type StageType, type MenuType
 } from '@/lib/supabase';
-import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone } from '@/lib/dates';
+import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays } from '@/lib/dates';
 
 // ── 타입 ─────────────────────────────────────────────────────────
 type AppMode = 'home' | 'menu' | 'order';
@@ -69,6 +69,8 @@ type DayMenu = {
   label: string;
   dow: number;
   menus: { name: string; type: string; ingredients: string }[];
+  banchan?: { name: string; ingredients: string }[];
+  soup?: { name: string; ingredients: string };
 };
 
 export default function OrderPage() {
@@ -102,6 +104,7 @@ export default function OrderPage() {
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
   const [dayMenus, setDayMenus] = useState<DayMenu[]>([]); // 메뉴보기용 일별 메뉴
   const [weekOffset, setWeekOffset] = useState(0);
+  const [banchanQtys, setBanchanQtys] = useState<Record<string, number>>({}); // 반찬 세트 수량
 
   // ── 메뉴보기 전용 상태 ───────────────────────────────────────────
   const [menuStage, setMenuStage] = useState<StageType | null>(null); // 레거시 (미사용)
@@ -162,9 +165,16 @@ export default function OrderPage() {
         }
         return [mainItem, ...middle, ...suffix].filter(Boolean).join(', ');
       }
-      const opts = weekDateOptions(weekOffset);
+      const opts = allWeekDays(weekOffset);
       const days: DayMenu[] = opts.filter(o => !o.past).map(opt => {
         const dayData = schedule.find((s:any) => s.date === opt.value);
+        if (opt.isBanchan) {
+          return {
+            date: opt.value, label: opt.label, dow: opt.dow, menus: [],
+            banchan: (dayData?.items || []).map((it:any) => ({ name: it.name || '', ingredients: it.ingredients || '' })),
+            soup: dayData?.soup ? { name: dayData.soup.name || '', ingredients: dayData.soup.ingredients || '' } : undefined
+          };
+        }
         const menus = (dayData?.menus || []).map((m:any) => ({
           name: m.name || '',
           type: TYPE_KOR[m.type] || m.type,
@@ -365,22 +375,29 @@ export default function OrderPage() {
       setMenuSels(prev => ({ ...prev, [date]: fn(prev[date] ?? { stage: null, volume: null, qtys: emptyMenus() }) }));
 
     const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
-      s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0);
+      s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0)
+      + Object.values(banchanQtys).reduce((a, b) => a + b, 0);
     const totalMenuPrice = Object.values(menuSels).reduce((s, sel) => {
       if (!sel.stage || !sel.volume) return s;
       return s + getPrice(sel.stage, sel.volume) * Object.values(sel.qtys).reduce((a, b) => a + b, 0);
-    }, 0);
+    }, 0) + Object.entries(banchanQtys).reduce((s, [, q]) => s + q * BANCHAN_PRICE, 0);
 
     const goOrderFromMenu = () => {
-      const orders: DateOrder[] = Object.entries(menuSels)
+      const yushikOrders: DateOrder[] = Object.entries(menuSels)
         .filter(([, sel]) => sel.stage && sel.volume && Object.values(sel.qtys).some(q => q > 0))
         .map(([date, sel]) => ({
-          id: uid(),
-          delivery_date: date,
+          id: uid(), delivery_date: date,
           sets: [{ id: uid(), stage: sel.stage!, volume: sel.volume!, menus: sel.qtys }]
         }));
-      if (orders.length === 0) return;
-      setDateOrders(orders);
+      const banchanOrders: DateOrder[] = Object.entries(banchanQtys)
+        .filter(([, qty]) => qty > 0)
+        .map(([date, qty]) => ({
+          id: uid(), delivery_date: date,
+          sets: [{ id: uid(), stage: '반찬세트' as any, volume: 0 as any, menus: emptyMenus(), _simpleQty: qty }]
+        }));
+      const allOrders = [...yushikOrders, ...banchanOrders];
+      if (allOrders.length === 0) return;
+      setDateOrders(allOrders);
       goMode('order');
       goStep(savedInfo ? 4 : 1);
     };
@@ -408,13 +425,15 @@ export default function OrderPage() {
         ) : (
           <div className="space-y-2">
             {dayMenus.map(day => {
+              const isBanchan = !!day.banchan;
               const isOpen = expandedDate === day.date;
               const sel = menuSelOf(day.date);
-              const dayQty = Object.values(sel.qtys).reduce((a,b)=>a+b,0);
-              const dayPrice = sel.stage && sel.volume ? getPrice(sel.stage, sel.volume) * dayQty : 0;
+              const bQty = banchanQtys[day.date] ?? 0;
+              const dayQty = isBanchan ? bQty : Object.values(sel.qtys).reduce((a,b)=>a+b,0);
+              const dayPrice = isBanchan ? bQty * BANCHAN_PRICE : (sel.stage && sel.volume ? getPrice(sel.stage, sel.volume) * dayQty : 0);
               const selVolOpts = sel.stage ? STAGE_OPTIONS[sel.stage] : [];
               return (
-                <div key={day.date} className="bg-white rounded-xl border border-amber-100 overflow-hidden">
+                <div key={day.date} className={`bg-white rounded-xl border overflow-hidden ${isBanchan ? 'border-emerald-200' : 'border-amber-100'}`}>
                   {/* 날짜 헤더 */}
                   <button
                     className="w-full flex items-center justify-between px-4 py-3 text-left"
@@ -422,10 +441,11 @@ export default function OrderPage() {
                   >
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-stone-900 text-sm">{day.label}</span>
-                      {sel.stage && <span className="text-[10px] text-stone-500">{sel.stage}{sel.volume ? ` ${sel.volume}g` : ''}</span>}
+                      {isBanchan && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">반찬</span>}
+                      {!isBanchan && sel.stage && <span className="text-[10px] text-stone-500">{sel.stage}{sel.volume ? ` ${sel.volume}g` : ''}</span>}
                       {dayQty > 0 && (
-                        <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold">
-                          {dayQty}팩 · {dayPrice.toLocaleString()}원
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold text-white ${isBanchan ? 'bg-emerald-500' : 'bg-amber-500'}`}>
+                          {isBanchan ? `${dayQty}세트` : `${dayQty}팩`} · {dayPrice.toLocaleString()}원
                         </span>
                       )}
                     </div>
@@ -434,8 +454,26 @@ export default function OrderPage() {
 
                   {isOpen && (
                     <div className="px-4 pb-4 border-t border-amber-50 pt-3 space-y-3">
-                      {/* 단계 선택 (날짜별 독립) */}
-                      <div>
+                      {/* 반찬 날 */}
+                      {isBanchan && (
+                        <div className="space-y-3">
+                          <div className="text-xs text-stone-500 font-medium">🍱 반찬 세트 · {BANCHAN_PRICE.toLocaleString()}원/세트</div>
+                          {(day.banchan!.length > 0 || day.soup) ? (
+                            <div className="bg-emerald-50 rounded-lg p-3 space-y-1 text-xs text-stone-700">
+                              {day.banchan!.map((b, i) => <div key={i}><span className="font-bold">{i+1}. {b.name}</span></div>)}
+                              {day.soup && <div className="pt-1 border-t border-emerald-100 font-bold">국. {day.soup.name}</div>}
+                            </div>
+                          ) : <div className="text-xs text-stone-400 py-2">반찬 메뉴 준비 중</div>}
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-stone-700">세트 수량</span>
+                            <QtyCtrl value={bQty} onChange={v => setBanchanQtys(prev => ({ ...prev, [day.date]: Math.max(0, v) }))} />
+                          </div>
+                          {bQty > 0 && <div className="text-xs text-emerald-700 font-bold text-right">{bQty}세트 · {(bQty * BANCHAN_PRICE).toLocaleString()}원</div>}
+                        </div>
+                      )}
+
+                      {/* 이유식 단계 선택 */}
+                      {!isBanchan && <div>
                         <div className="text-[11px] text-stone-500 mb-1.5">단계</div>
                         <div className="grid grid-cols-4 gap-1.5">
                           {STAGES.map(st => (
@@ -446,10 +484,10 @@ export default function OrderPage() {
                             </button>
                           ))}
                         </div>
-                      </div>
+                      </div>}
 
-                      {/* 용량 선택 */}
-                      {sel.stage && (
+                      {/* 이유식 용량 선택 */}
+                      {!isBanchan && sel.stage && (
                         <div>
                           <div className="text-[11px] text-stone-500 mb-1.5">용량</div>
                           <div className="flex gap-2">
@@ -465,8 +503,8 @@ export default function OrderPage() {
                         </div>
                       )}
 
-                      {/* 메뉴별 수량 */}
-                      {sel.volume && day.menus.map((m, i) => (
+                      {/* 이유식 메뉴별 수량 */}
+                      {!isBanchan && sel.volume && day.menus.map((m, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
@@ -484,7 +522,7 @@ export default function OrderPage() {
                           />
                         </div>
                       ))}
-                      {!sel.volume && (
+                      {!isBanchan && !sel.volume && (
                         <div className="text-xs text-stone-400">단계와 용량을 먼저 선택해주세요</div>
                       )}
                     </div>
@@ -500,7 +538,14 @@ export default function OrderPage() {
           <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
             <button onClick={goOrderFromMenu}
               className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg text-sm">
-              {totalMenuQty}팩 · {totalMenuPrice.toLocaleString()}원 — 주문하기 →
+              {(() => {
+                const bTotal = Object.values(banchanQtys).reduce((a,b)=>a+b,0);
+                const yTotal = totalMenuQty - bTotal;
+                const parts = [];
+                if (yTotal > 0) parts.push(`이유식 ${yTotal}팩`);
+                if (bTotal > 0) parts.push(`반찬 ${bTotal}세트`);
+                return `${parts.join(' · ')} · ${totalMenuPrice.toLocaleString()}원 — 주문하기 →`;
+              })()}
             </button>
           </div>
         )}
@@ -1073,10 +1118,12 @@ export default function OrderPage() {
           {dateOrders.map((d, di) => (
             <div key={d.id} className="bg-white rounded-xl border border-amber-200 p-4 mb-3 text-sm">
               <div className="font-bold text-amber-700 mb-2">{di+1}번째 — {d.delivery_date} ({dateQty(d)}팩 · {datePrice(d).toLocaleString()}원)</div>
-              {d.sets.filter(s=>s.stage&&s.volume).map(s => (
+              {d.sets.filter(s=>s.stage&&(s.volume||(s.stage as any)==='반찬세트')).map(s => (
                 <div key={s.id} className="pl-3 mb-1 text-stone-700">
-                  <span className="font-medium">{s.stage} {s.volume}g</span> —{' '}
-                  {s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}
+                  {(s.stage as any)==='반찬세트'
+                    ? <span className="font-medium text-emerald-700">반찬 세트 {s._simpleQty}세트 · {((s._simpleQty??0)*BANCHAN_PRICE).toLocaleString()}원</span>
+                    : <><span className="font-medium">{s.stage} {s.volume}g</span>{' — '}{s._simpleQty?`${s._simpleQty}팩`:MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}</>
+                  }
                 </div>
               ))}
             </div>

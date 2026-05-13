@@ -95,6 +95,7 @@ export function getPrice(stage: StageType, volume: number): number {
 }
 
 export const MIN_ORDER_QTY = 3;
+export const BANCHAN_PRICE = 35000; // 반찬5개+국1개 세트
 
 // 조리 요일 (일요일=0 ... 토요일=6)
 // 월=1, 화=2, 목=4, 금=5 (수=3 제외)

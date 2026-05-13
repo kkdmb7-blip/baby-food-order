@@ -93,6 +93,24 @@ export function deliveryDateOptions(): { value: string; label: string; dow: numb
   return out;
 }
 
+// 메뉴보기용 — 월~금 전체 (수=반찬 날 포함)
+export function allWeekDays(weekOffset = 0): { value: string; label: string; dow: number; past: boolean; isBanchan: boolean }[] {
+  const nowKST = Date.now() + 9 * 3600 * 1000;
+  const todayStr = kstDateStr(nowKST);
+  const nowD = new Date(nowKST);
+  const todayDow = nowD.getUTCDay();
+  const diffToMon = todayDow === 0 ? 1 : 1 - todayDow;
+  const thisMon = nowKST + diffToMon * 86400000 + weekOffset * 7 * 86400000;
+  const DOW_KOR: Record<number, string> = { 1: '월', 2: '화', 3: '수', 4: '목', 5: '금' };
+  return [0, 1, 2, 3, 4].map(offset => {
+    const ts = thisMon + offset * 86400000;
+    const d = new Date(ts);
+    const dow = d.getUTCDay();
+    const value = kstDateStr(ts);
+    return { value, label: `${d.getUTCMonth()+1}/${d.getUTCDate()} (${DOW_KOR[dow]})`, dow, past: value < todayStr, isBanchan: dow === 3 };
+  });
+}
+
 export function formatPhone(p: string) {
   const d = (p || '').replace(/[^\d]/g, '');
   if (d.length === 11) return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;

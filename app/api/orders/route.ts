@@ -38,6 +38,11 @@ export async function POST(req: NextRequest) {
         groupQty[key] = (groupQty[key] || 0) + (d.date_qty || 0);
       }
       for (const [key, qty] of Object.entries(groupQty)) {
+        // 수요일(반찬)은 최소 수량 체크 제외
+        if (key.length === 10) {
+          const dow = new Date(key + 'T00:00:00Z').getUTCDay();
+          if (dow === 3) continue;
+        }
         if (qty < MIN_ORDER_QTY) {
           const label = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
           return bad(`${label} ${qty}팩 — 1회 배송 최소 ${MIN_ORDER_QTY}팩 이상이어야 합니다`);
@@ -49,10 +54,12 @@ export async function POST(req: NextRequest) {
     let total_price: number;
     const isMulti = Array.isArray(items) && items.length > 0 && items[0].delivery_date;
     if (isMulti) {
-      // 아이템별 소계 합산으로 서버 재계산
+      // 아이템별 소계 합산으로 서버 재계산 (반찬세트 포함)
       total_price = items.reduce((sum: number, d: any) =>
-        sum + (d.sets || []).reduce((s2: number, s: any) =>
-          s2 + (getPrice(s.stage as StageType, s.volume) || 0) * (s.qty || 0), 0), 0);
+        sum + (d.sets || []).reduce((s2: number, s: any) => {
+          if (s.stage === '반찬세트') return s2 + 35000 * (s.qty || 0);
+          return s2 + (getPrice(s.stage as StageType, s.volume) || 0) * (s.qty || 0);
+        }, 0), 0);
       if (total_price <= 0) return bad('가격 계산 오류');
     } else {
       const pricePerPack = getPrice(stage, volume);
