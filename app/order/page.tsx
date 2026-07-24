@@ -10,10 +10,12 @@ import {
   recommendStage, stageGuide, stageTransitionNote,
   loadDiary, setFoodStatus, foodKeysByStatus, testingDays, type Diary, type FoodStatus,
   saveLastOrder, loadLastOrder, daysSinceLastOrder, type SavedSet,
+  loadReactions, setReaction, likedMenuNames, type MenuReaction, type MenuReactions,
+  SYMPTOMS, loadSymptoms, addSymptom, removeSymptom, type SymptomEntry,
 } from '@/lib/personalize';
 
 // ── 타입 ─────────────────────────────────────────────────────────
-type AppMode = 'home' | 'menu' | 'order';
+type AppMode = 'home' | 'menu' | 'order' | 'calendar';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -107,6 +109,17 @@ export default function OrderPage() {
     if (status !== 'allergic' && allergies.includes(key) && diary[key]?.status === 'allergic') toggleAllergy(key);
   }
 
+  // ── A. 메뉴 반응 / B. 이상반응 기록 ─────────────────────────────
+  const [reactions, setReactions] = useState<MenuReactions>({});
+  function rateMenu(name: string, r: MenuReaction) {
+    setReactions(setReaction(name, reactions[name] === r ? null : r));
+  }
+  const [symptoms, setSymptoms] = useState<SymptomEntry[]>([]);
+  function logSymptom(foodKey: string, symptom: string) {
+    setSymptoms(addSymptom({ foodKey, symptom, date: new Date().toISOString().slice(0, 10) }));
+  }
+  function delSymptom(idx: number) { setSymptoms(removeSymptom(idx)); }
+
   // Step 1
   const [babyName, setBabyName] = useState('');
   const [months, setMonths] = useState('');
@@ -166,6 +179,8 @@ export default function OrderPage() {
     } catch {}
     setDiary(loadDiary());
     setLastOrder(loadLastOrder());
+    setReactions(loadReactions());
+    setSymptoms(loadSymptoms());
   }, []);
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
@@ -445,6 +460,14 @@ export default function OrderPage() {
             <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
           </button>
           <button
+            onClick={() => goMode('calendar')}
+            className="w-full py-4 bg-white border-2 border-violet-200 rounded-2xl text-violet-800 font-bold text-sm shadow-sm hover:border-violet-400 transition"
+          >
+            <div className="text-xl mb-0.5">📅</div>
+            한 달 식단표
+            <div className="text-[11px] text-violet-400 font-normal mt-0.5">다가오는 4주 메뉴 한눈에</div>
+          </button>
+          <button
             onClick={() => goMode('order')}
             className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
           >
@@ -467,7 +490,8 @@ export default function OrderPage() {
 
         <div className="mt-3 space-y-3">
           <AllergyEditor allergies={allergies} toggle={toggleAllergy} open={allergyOpen} setOpen={setAllergyOpen} />
-          <FoodDiary diary={diary} update={updateFood} open={diaryOpen} setOpen={setDiaryOpen} />
+          <FoodDiary diary={diary} update={updateFood} open={diaryOpen} setOpen={setDiaryOpen}
+            symptoms={symptoms} onLog={logSymptom} onDel={delSymptom} />
         </div>
       </Wrap>
     );
@@ -630,9 +654,11 @@ export default function OrderPage() {
                                 {m.type}
                               </span>
                               <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
+                              {reactions[m.name] === 'like' && <span className="flex-shrink-0 text-[10px]">👍</span>}
                             </div>
                             <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
                             <AllergyBadge ingredients={m.ingredients} allergies={allergies} />
+                            <ReactionCtrl name={m.name} current={reactions[m.name]} onRate={rateMenu} />
                           </div>
                           <QtyCtrl
                             value={sel.qtys[m.type as MenuType] ?? 0}
@@ -668,6 +694,20 @@ export default function OrderPage() {
           </div>
         )}
         <div className="h-24" />
+      </Wrap>
+    );
+  }
+
+  // ── 월간 식단 캘린더 화면 ─────────────────────────────────────
+  if (mode === 'calendar') {
+    return (
+      <Wrap>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">한 달 식단표</h1>
+        </div>
+        <p className="text-xs text-stone-500 mb-3">다가오는 4주 조리 메뉴예요. 날짜를 누르면 메뉴가 펼쳐지고, 바로 주문하러 갈 수 있어요.</p>
+        <MonthCalendar reactions={reactions} allergies={allergies} onGoOrder={() => goMode('menu')} />
       </Wrap>
     );
   }
@@ -1284,6 +1324,130 @@ export default function OrderPage() {
   );
 }
 
+// ── C. 월간 식단 캘린더 (4주치 kkakung_history 조회) ──────────────
+function MonthCalendar({
+  reactions, allergies, onGoOrder,
+}: { reactions: MenuReactions; allergies: string[]; onGoOrder: () => void }) {
+  const [byDate, setByDate] = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [openDate, setOpenDate] = useState<string | null>(null);
+  const TYPE_KOR: Record<string, string> = { hanwoo: '한우', chicken: '닭', p3: '기타단백질' };
+  const DOW_KOR: Record<number, string> = { 1: '월', 2: '화', 3: '수', 4: '목', 5: '금' };
+
+  const weeks = useMemo(() => [0, 1, 2, 3].map(w => weekMonday(w)), []);
+  const todayStr = useMemo(() => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10), []);
+
+  useEffect(() => {
+    const SB = 'https://ymghmfkqctckxxysxkvy.supabase.co';
+    const KEY = 'sb_publishable_3-9zobXqx6Nv36LzmNMBpA_fohZqA5x';
+    Promise.all(weeks.map(mon =>
+      fetch(`${SB}/rest/v1/kkakung_history?id=eq.${mon}&select=id,yusik`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      }).then(r => r.json()).catch(() => [])
+    )).then(results => {
+      const map: Record<string, any> = {};
+      results.forEach(rows => {
+        const sched = rows?.[0]?.yusik?.schedule;
+        if (Array.isArray(sched)) sched.forEach((d: any) => { if (d.date) map[d.date] = d; });
+      });
+      setByDate(map);
+      setLoading(false);
+    });
+  }, [weeks]);
+
+  if (loading) return <div className="text-center py-10 text-stone-400 text-sm">식단을 불러오는 중…</div>;
+
+  return (
+    <div className="space-y-4">
+      {weeks.map((mon, wi) => {
+        const monTs = new Date(mon + 'T00:00:00Z').getTime();
+        // 월~금 (0~4)
+        const days = [0, 1, 2, 3, 4].map(off => {
+          const ts = monTs + off * 86400000;
+          const d = new Date(ts);
+          const value = d.toISOString().slice(0, 10);
+          const dow = d.getUTCDay();
+          return { value, dow, label: `${d.getUTCMonth() + 1}/${d.getUTCDate()}`, data: byDate[value] };
+        });
+        const monD = new Date(monTs);
+        return (
+          <div key={mon}>
+            <div className="text-xs font-bold text-violet-700 mb-2">
+              {wi === 0 ? '이번 주' : wi === 1 ? '다음 주' : `${monD.getUTCMonth() + 1}/${monD.getUTCDate()} 주`}
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {days.map(day => {
+                const isBanchan = day.dow === 3;
+                const menus = day.data?.menus || [];
+                const hasBanchan = isBanchan && (day.data?.items?.length || day.data?.soup);
+                const has = menus.length > 0 || hasBanchan;
+                const isPast = day.value < todayStr;
+                const isOpen = openDate === day.value;
+                return (
+                  <button key={day.value} onClick={() => has && setOpenDate(isOpen ? null : day.value)}
+                    className={`rounded-lg border p-1.5 text-left min-h-[52px] transition ${
+                      isPast ? 'bg-stone-50 border-stone-100 opacity-50'
+                      : isBanchan ? 'bg-emerald-50 border-emerald-200'
+                      : has ? 'bg-white border-violet-200 hover:border-violet-400' : 'bg-stone-50 border-stone-100'}`}>
+                    <div className="text-[10px] font-bold text-stone-500">{day.label}({DOW_KOR[day.dow]})</div>
+                    {isBanchan ? (
+                      <div className="text-[9px] text-emerald-600 font-bold mt-0.5">{hasBanchan ? '반찬' : ''}</div>
+                    ) : has ? (
+                      <div className="flex flex-wrap gap-0.5 mt-0.5">
+                        {menus.slice(0, 3).map((m: any, i: number) => (
+                          <span key={i} className={`text-[8px] font-bold px-1 py-0.5 rounded ${
+                            TYPE_KOR[m.type] === '한우' ? 'bg-amber-100 text-amber-800'
+                            : TYPE_KOR[m.type] === '닭' ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-violet-100 text-violet-800'}`}>
+                            {TYPE_KOR[m.type] || m.type}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[9px] text-stone-300 mt-0.5">예정</div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 펼친 날짜 상세 */}
+            {days.some(d => d.value === openDate) && (() => {
+              const day = days.find(d => d.value === openDate)!;
+              const menus = day.data?.menus || [];
+              return (
+                <div className="mt-2 bg-white border border-violet-200 rounded-xl p-3 space-y-2">
+                  <div className="text-xs font-bold text-violet-700">{day.label}({DOW_KOR[day.dow]}) 메뉴</div>
+                  {day.dow === 3 ? (
+                    <div className="text-xs text-stone-700 space-y-1">
+                      {(day.data?.items || []).map((it: any, i: number) => (
+                        <div key={i}>🍱 {it.name}<AllergyBadge ingredients={it.ingredients || ''} allergies={allergies} /></div>
+                      ))}
+                      {day.data?.soup && <div>🍲 {day.data.soup.name}</div>}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {menus.map((m: any, i: number) => (
+                        <div key={i} className="text-xs text-stone-700">
+                          <span className="font-bold">{TYPE_KOR[m.type] || m.type}</span> · {m.name}
+                          {reactions[m.name] === 'like' && ' 👍'}
+                          <div className="text-[10px] text-stone-400">{m.ingredients}</div>
+                          <AllergyBadge ingredients={m.ingredients || ''} allergies={allergies} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={onGoOrder} className="w-full py-2 bg-violet-500 text-white text-xs font-bold rounded-lg">이 메뉴 주문하러 가기 →</button>
+                </div>
+              );
+            })()}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── 공통 컴포넌트 ─────────────────────────────────────────────────
 function Wrap({ children }: { children: React.ReactNode }) {
   return <div className="max-w-md mx-auto px-4 py-6 pb-36">{children}</div>;
@@ -1367,11 +1531,15 @@ function AllergyEditor({
   );
 }
 
-// ── 재료 도감 (먹어본 재료 트래킹 + 알레르기 첫도입 도우미) ──────
+// ── 재료 도감 (먹어본 재료 트래킹 + 알레르기 첫도입 도우미 + 이상반응 기록) ──
 function FoodDiary({
-  diary, update, open, setOpen,
-}: { diary: Diary; update: (k: string, s: FoodStatus) => void; open: boolean; setOpen: (v: boolean) => void }) {
+  diary, update, open, setOpen, symptoms, onLog, onDel,
+}: {
+  diary: Diary; update: (k: string, s: FoodStatus) => void; open: boolean; setOpen: (v: boolean) => void;
+  symptoms: SymptomEntry[]; onLog: (foodKey: string, symptom: string) => void; onDel: (idx: number) => void;
+}) {
   const [showAll, setShowAll] = useState(false);
+  const [logKey, setLogKey] = useState<string>(''); // 이상반응 기록할 재료 선택
   const safe = foodKeysByStatus(diary, 'safe');
   const testing = foodKeysByStatus(diary, 'testing');
   const allergic = foodKeysByStatus(diary, 'allergic');
@@ -1426,6 +1594,38 @@ function FoodDiary({
             <span className="text-rose-600">🚫 알레르기 {allergic.length}</span>
           </div>
 
+          {/* B. 이상반응 기록 */}
+          <div className="bg-rose-50 rounded-xl p-3 space-y-2">
+            <div className="text-[11px] font-bold text-rose-700">🩹 이상반응 기록</div>
+            <p className="text-[10px] text-stone-500">재료를 고르고 증상을 누르면 오늘 날짜로 기록돼요.</p>
+            <select value={logKey} onChange={e => setLogKey(e.target.value)}
+              className="w-full text-xs border border-rose-200 rounded-lg px-2 py-1.5 bg-white">
+              <option value="">재료 선택…</option>
+              {ALLERGENS.map(a => <option key={a.key} value={a.key}>{a.emoji} {a.label}</option>)}
+            </select>
+            {logKey && (
+              <div className="flex flex-wrap gap-1">
+                {SYMPTOMS.map(sym => (
+                  <button key={sym} onClick={() => { onLog(logKey, sym); setLogKey(''); }}
+                    className="text-[11px] px-2 py-1 rounded-full bg-white border border-rose-200 text-rose-700 font-medium hover:bg-rose-100">
+                    {sym}
+                  </button>
+                ))}
+              </div>
+            )}
+            {symptoms.length > 0 && (
+              <div className="space-y-1 pt-1 border-t border-rose-100">
+                {symptoms.slice(0, 8).map((s, i) => (
+                  <div key={i} className="flex items-center justify-between text-[11px] text-stone-600">
+                    <span>{s.date} · <b>{allergenByKey(s.foodKey)?.label ?? s.foodKey}</b> → {s.symptom}</span>
+                    <button onClick={() => onDel(i)} className="text-stone-300 px-1">✕</button>
+                  </div>
+                ))}
+                {symptoms.length > 8 && <div className="text-[10px] text-stone-400">외 {symptoms.length - 8}건</div>}
+              </div>
+            )}
+          </div>
+
           {/* 재료별 상태 지정 */}
           <div className="space-y-1.5">
             {shown.map(a => {
@@ -1463,6 +1663,27 @@ function StatBtn({ on, onClick, cls, children }: { on: boolean; onClick: () => v
       className={`w-7 h-7 rounded-lg border text-xs flex items-center justify-center transition ${on ? active[cls] + ' scale-110' : 'bg-white border-stone-200 opacity-50 hover:opacity-100'}`}>
       {children}
     </button>
+  );
+}
+
+// A. 메뉴 반응 기록 컨트롤 (먹은 뒤 아기 반응)
+function ReactionCtrl({ name, current, onRate }: { name: string; current?: MenuReaction; onRate: (n: string, r: MenuReaction) => void }) {
+  const opts: { r: MenuReaction; emoji: string; label: string }[] = [
+    { r: 'like', emoji: '👍', label: '잘먹음' },
+    { r: 'meh', emoji: '😐', label: '보통' },
+    { r: 'dislike', emoji: '👎', label: '안먹음' },
+  ];
+  return (
+    <div className="mt-1 flex items-center gap-1">
+      <span className="text-[10px] text-stone-400">먹은 반응:</span>
+      {opts.map(o => (
+        <button key={o.r} onClick={(e) => { e.stopPropagation(); onRate(name, o.r); }}
+          className={`text-[11px] px-1.5 py-0.5 rounded border transition ${
+            current === o.r ? 'bg-amber-100 border-amber-300 font-bold' : 'bg-white border-stone-200 opacity-60 hover:opacity-100'}`}>
+          {o.emoji}
+        </button>
+      ))}
+    </div>
   );
 }
 

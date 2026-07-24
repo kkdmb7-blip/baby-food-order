@@ -87,3 +87,44 @@ export function daysSinceLastOrder(lo: LastOrder | null): number | null {
   const d = new Date(lo.savedAt + 'T00:00:00');
   return Math.floor((Date.now() - d.getTime()) / 86400000);
 }
+
+// ── A. 메뉴 반응 기록 (👍😐👎) ───────────────────────────────────
+export type MenuReaction = 'like' | 'meh' | 'dislike';
+export type MenuReactions = Record<string, MenuReaction>; // key = 메뉴 이름
+
+const REACTION_KEY = 'bfo_menu_reactions';
+
+export function loadReactions(): MenuReactions {
+  try { const s = localStorage.getItem(REACTION_KEY); return s ? JSON.parse(s) : {}; } catch { return {}; }
+}
+export function setReaction(menuName: string, r: MenuReaction | null): MenuReactions {
+  const m = loadReactions();
+  if (r === null) delete m[menuName]; else m[menuName] = r;
+  try { localStorage.setItem(REACTION_KEY, JSON.stringify(m)); } catch {}
+  return m;
+}
+export function likedMenuNames(m: MenuReactions): string[] {
+  return Object.entries(m).filter(([, v]) => v === 'like').map(([k]) => k);
+}
+
+// ── B. 이상반응 기록 (증상 + 날짜) ──────────────────────────────
+export const SYMPTOMS = ['발진', '두드러기', '설사', '구토', '입주변 빨감', '기타'] as const;
+export type SymptomEntry = { foodKey: string; symptom: string; date: string };
+
+const SYMPTOM_KEY = 'bfo_symptom_log';
+
+export function loadSymptoms(): SymptomEntry[] {
+  try { const s = localStorage.getItem(SYMPTOM_KEY); return s ? JSON.parse(s) : []; } catch { return []; }
+}
+export function addSymptom(e: SymptomEntry): SymptomEntry[] {
+  const list = loadSymptoms();
+  list.unshift(e);
+  try { localStorage.setItem(SYMPTOM_KEY, JSON.stringify(list.slice(0, 100))); } catch {}
+  return loadSymptoms();
+}
+export function removeSymptom(idx: number): SymptomEntry[] {
+  const list = loadSymptoms();
+  list.splice(idx, 1);
+  try { localStorage.setItem(SYMPTOM_KEY, JSON.stringify(list)); } catch {}
+  return loadSymptoms();
+}
