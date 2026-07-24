@@ -5,6 +5,7 @@ import {
   type StageType, type MenuType
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays } from '@/lib/dates';
+import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
 
 // ── 타입 ─────────────────────────────────────────────────────────
 type AppMode = 'home' | 'menu' | 'order';
@@ -30,6 +31,7 @@ type SavedInfo = {
   babyName: string; months: string; phone: string;
   address: string; addressDetail: string; doorPw: string;
   lastStage?: StageType; lastVolume?: number; // 간단주문 기본값
+  allergies?: string[]; // 알레르기 키 목록 (한 번 등록 → 유지)
 };
 
 function loadSaved(): SavedInfo | null {
@@ -77,6 +79,17 @@ export default function OrderPage() {
   const [mode, setMode] = useState<AppMode>('home');
   const [step, setStep] = useState<Step>(1);
   const [savedInfo, setSavedInfo] = useState<SavedInfo | null>(null);
+
+  // ── 알레르기 (한 번 등록 → localStorage 유지, 언제든 해제 가능) ──
+  const [allergies, setAllergies] = useState<string[]>([]);
+  const [allergyOpen, setAllergyOpen] = useState(false); // 등록 UI 펼침
+  function toggleAllergy(key: string) {
+    setAllergies(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      try { localStorage.setItem('bfo_allergies', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
 
   // Step 1
   const [babyName, setBabyName] = useState('');
@@ -128,6 +141,12 @@ export default function OrderPage() {
       setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
       setSavedInfo(s);
     }
+    // 알레르기 로드 — 전용 키 우선, 없으면 savedInfo에서
+    try {
+      const a = localStorage.getItem('bfo_allergies');
+      if (a) setAllergies(JSON.parse(a));
+      else if (s?.allergies) setAllergies(s.allergies);
+    } catch {}
   }, []);
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
@@ -317,7 +336,8 @@ export default function OrderPage() {
           volume: dateOrders.length === 1 && dateOrders[0].sets.length === 1 ? dateOrders[0].sets[0].volume : null,
           items: itemsPayload,
           total_qty: totalQty, total_price: totalPrice,
-          delivery_date: firstDate, order_type: '일반'
+          delivery_date: firstDate, order_type: '일반',
+          allergies: allergies.map(k => allergenByKey(k)?.label).filter(Boolean)
         })
       });
       const d = await r.json();
@@ -327,7 +347,8 @@ export default function OrderPage() {
         babyName: babyName.trim(), months, phone: phone.replace(/[^\d]/g,''),
         address: address.trim(), addressDetail: addressDetail.trim(), doorPw: doorPw.trim(),
         lastStage: firstSet?.stage ?? undefined,
-        lastVolume: firstSet?.volume ?? undefined
+        lastVolume: firstSet?.volume ?? undefined,
+        allergies
       });
       setCompletedId(d.id);
       setStep(5);
@@ -361,6 +382,9 @@ export default function OrderPage() {
             주문하기
             <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
           </button>
+        </div>
+        <div className="mt-3">
+          <AllergyEditor allergies={allergies} toggle={toggleAllergy} open={allergyOpen} setOpen={setAllergyOpen} />
         </div>
       </Wrap>
     );
@@ -460,8 +484,18 @@ export default function OrderPage() {
                           <div className="text-xs text-stone-500 font-medium">🍱 반찬 세트 · {BANCHAN_PRICE.toLocaleString()}원/세트</div>
                           {(day.banchan!.length > 0 || day.soup) ? (
                             <div className="bg-emerald-50 rounded-lg p-3 space-y-1 text-xs text-stone-700">
-                              {day.banchan!.map((b, i) => <div key={i}><span className="font-bold">{i+1}. {b.name}</span></div>)}
-                              {day.soup && <div className="pt-1 border-t border-emerald-100 font-bold">국. {day.soup.name}</div>}
+                              {day.banchan!.map((b, i) => (
+                                <div key={i}>
+                                  <span className="font-bold">{i+1}. {b.name}</span>
+                                  <AllergyBadge ingredients={b.ingredients} allergies={allergies} />
+                                </div>
+                              ))}
+                              {day.soup && (
+                                <div className="pt-1 border-t border-emerald-100">
+                                  <span className="font-bold">국. {day.soup.name}</span>
+                                  <AllergyBadge ingredients={day.soup.ingredients} allergies={allergies} />
+                                </div>
+                              )}
                             </div>
                           ) : <div className="text-xs text-stone-400 py-2">반찬 메뉴 준비 중</div>}
                           <div className="flex items-center justify-between">
@@ -515,6 +549,7 @@ export default function OrderPage() {
                               <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
                             </div>
                             <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
+                            <AllergyBadge ingredients={m.ingredients} allergies={allergies} />
                           </div>
                           <QtyCtrl
                             value={sel.qtys[m.type as MenuType] ?? 0}
@@ -1189,5 +1224,74 @@ function QtyCtrl({ value, onChange }: { value:number; onChange:(v:number)=>void 
     <button onClick={()=>onChange(value+1)} disabled={value>=10} className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-30 flex items-center justify-center">+</button>
   </div>;
 }
+// ── 알레르기 등록 UI ──────────────────────────────────────────────
+function AllergyEditor({
+  allergies, toggle, open, setOpen,
+}: { allergies: string[]; toggle: (k: string) => void; open: boolean; setOpen: (v: boolean) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? ALLERGENS : ALLERGENS.filter(a => COMMON_KEYS.includes(a.key) || allergies.includes(a.key));
+  return (
+    <div className="bg-white rounded-2xl border border-rose-100 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🚫</span>
+          <span className="text-sm font-bold text-stone-800">알레르기 설정</span>
+          {allergies.length > 0
+            ? <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">{allergies.length}개 등록</span>
+            : <span className="text-[11px] text-stone-400">미설정</span>}
+        </div>
+        <span className="text-stone-400 text-sm">{open ? '∧' : '∨'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-rose-50 pt-3">
+          <p className="text-[11px] text-stone-500 mb-3 leading-relaxed">
+            아기가 못 먹는 재료를 골라두면, 메뉴에 그 재료가 들어있을 때 <span className="text-rose-600 font-bold">빨간 경고</span>로 알려드려요. 한 번 설정하면 계속 유지되고, 다시 눌러 해제할 수 있어요.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {shown.map(a => {
+              const on = allergies.includes(a.key);
+              return (
+                <button key={a.key} onClick={() => toggle(a.key)}
+                  className={`px-2.5 py-1.5 rounded-full text-xs font-medium border transition ${
+                    on ? 'bg-rose-500 border-rose-500 text-white' : 'bg-white border-stone-200 text-stone-600 hover:border-rose-300'}`}>
+                  {a.emoji} {a.label}{on ? ' ✓' : ''}
+                </button>
+              );
+            })}
+          </div>
+          {!showAll && (
+            <button onClick={() => setShowAll(true)} className="mt-3 text-[11px] text-rose-500 underline underline-offset-2">
+              + 더 많은 재료 보기 (전체 {ALLERGENS.length}종)
+            </button>
+          )}
+          {allergies.length > 0 && (
+            <div className="mt-3 text-[11px] text-stone-500">
+              등록됨: {allergies.map(k => allergenByKey(k)?.label).filter(Boolean).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 메뉴 재료에 걸린 알레르겐 경고 배지
+function AllergyBadge({ ingredients, allergies }: { ingredients: string; allergies: string[] }) {
+  const hits = matchAllergens(ingredients, allergies);
+  if (hits.length === 0) return null;
+  return (
+    <div className="mt-1 flex items-center gap-1 flex-wrap">
+      <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+        ⚠️ 알레르기 주의
+      </span>
+      {hits.map(h => (
+        <span key={h.key} className="text-[10px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded">
+          {h.emoji} {h.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const iCls = 'w-full px-3.5 py-3 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
 const iSmCls = 'w-full px-3 py-2.5 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';

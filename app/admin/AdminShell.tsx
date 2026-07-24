@@ -131,6 +131,14 @@ export default function AdminShell({
                     {o.status} →
                   </button>
                 </div>
+                {o.allergies && o.allergies.length > 0 && (
+                  <div className="mb-1.5 flex items-center gap-1 flex-wrap bg-rose-50 border border-rose-200 rounded-lg px-2 py-1">
+                    <span className="text-[11px] font-bold text-rose-700">🚫 알레르기</span>
+                    {o.allergies.map((a, i) => (
+                      <span key={i} className="text-[11px] font-bold text-white bg-rose-500 px-1.5 py-0.5 rounded">{a}</span>
+                    ))}
+                  </div>
+                )}
                 <div className="mb-1">
                   {renderOrderDetail(o)}
                   <span className="text-xs font-bold text-amber-700">총 {o.total_qty}팩 / {o.total_price.toLocaleString()}원</span>

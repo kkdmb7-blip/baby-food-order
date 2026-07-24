@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
     const total_qty = Number(b.total_qty);
     const delivery_date = String(b.delivery_date || '');
     const order_type = String(b.order_type || '일반');
+    const allergies = Array.isArray(b.allergies)
+      ? b.allergies.map((x: any) => String(x).slice(0, 20)).slice(0, 40)
+      : [];
 
     // 검증
     if (!baby_name) return bad('아기 이름이 필요합니다');
@@ -93,7 +96,7 @@ export async function POST(req: NextRequest) {
       .insert({
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price, delivery_date,
-        order_type, status: '접수', customer_id
+        order_type, status: '접수', customer_id, allergies
       })
       .select('id')
       .single();

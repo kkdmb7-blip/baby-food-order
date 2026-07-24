@@ -44,6 +44,7 @@ export type Order = {
   status: OrderStatus;
   memo: string | null;
   customer_id: string | null;
+  allergies?: string[];
 };
 
 export type Customer = {
