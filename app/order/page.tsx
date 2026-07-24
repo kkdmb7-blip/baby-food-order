@@ -13,9 +13,10 @@ import {
   loadReactions, setReaction, likedMenuNames, type MenuReaction, type MenuReactions,
   SYMPTOMS, loadSymptoms, addSymptom, removeSymptom, type SymptomEntry,
 } from '@/lib/personalize';
+import { addPhoto, listPhotos, deletePhoto, type PhotoMeta } from '@/lib/album';
 
 // ── 타입 ─────────────────────────────────────────────────────────
-type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage';
+type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage' | 'album';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -125,6 +126,19 @@ export default function OrderPage() {
   const [myData, setMyData] = useState<{ orders: any[]; customer: any } | null>(null);
   const [myLoading, setMyLoading] = useState(false);
   const [myError, setMyError] = useState<string | null>(null);
+  // ── E. 성장앨범 (기기 저장) ─────────────────────────────────────
+  const [photos, setPhotos] = useState<PhotoMeta[]>([]);
+  const [albumBusy, setAlbumBusy] = useState(false);
+  const [albumNote, setAlbumNote] = useState('');
+  async function refreshAlbum() { setPhotos(await listPhotos()); }
+  async function onAddPhoto(file: File | undefined) {
+    if (!file) return;
+    setAlbumBusy(true);
+    try { await addPhoto(file, albumNote); setAlbumNote(''); await refreshAlbum(); }
+    catch {} finally { setAlbumBusy(false); }
+  }
+  async function onDeletePhoto(id: string) { await deletePhoto(id); await refreshAlbum(); }
+
   async function fetchMyOrders(p: string) {
     const digits = p.replace(/\D/g, '');
     if (!/^\d{10,11}$/.test(digits)) { setMyError('연락처를 정확히 입력해주세요'); return; }
@@ -496,6 +510,14 @@ export default function OrderPage() {
             <div className="text-[11px] text-stone-400 font-normal mt-0.5">배송상태 · 선결제 잔액 확인</div>
           </button>
           <button
+            onClick={() => { goMode('album'); refreshAlbum(); }}
+            className="w-full py-4 bg-white border-2 border-pink-200 rounded-2xl text-pink-800 font-bold text-sm shadow-sm hover:border-pink-400 transition"
+          >
+            <div className="text-xl mb-0.5">📸</div>
+            이유식 성장앨범
+            <div className="text-[11px] text-pink-400 font-normal mt-0.5">우리 아기 먹방 기록 · 내 폰에만 저장</div>
+          </button>
+          <button
             onClick={() => goMode('order')}
             className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
           >
@@ -820,6 +842,53 @@ export default function OrderPage() {
               </div>
             )}
           </>
+        )}
+      </Wrap>
+    );
+  }
+
+  // ── 성장앨범 화면 (E, 기기 저장) ──────────────────────────────
+  if (mode === 'album') {
+    return (
+      <Wrap>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">이유식 성장앨범</h1>
+        </div>
+        <div className="bg-pink-50 border border-pink-200 rounded-xl px-3.5 py-2.5 text-[11px] text-pink-700 mb-4 leading-relaxed">
+          🔒 사진은 <span className="font-bold">이 휴대폰 안에만</span> 저장돼요. 서버·사장님에게 올라가지 않아 안전해요. (기기를 바꾸면 사진은 옮겨지지 않아요)
+        </div>
+
+        {/* 사진 추가 */}
+        <div className="bg-white rounded-2xl border border-pink-100 p-4 mb-4 space-y-2">
+          <input value={albumNote} onChange={e => setAlbumNote(e.target.value)} maxLength={100}
+            placeholder="메모 (예: 오늘 한우죽 잘 먹었어요)" className={iCls} />
+          <label className={`block w-full py-3 text-center rounded-xl font-bold text-sm cursor-pointer ${albumBusy ? 'bg-stone-200 text-stone-400' : 'bg-pink-500 text-white active:bg-pink-600'}`}>
+            {albumBusy ? '저장 중…' : '📷 사진 추가하기'}
+            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={albumBusy}
+              onChange={e => onAddPhoto(e.target.files?.[0])} />
+          </label>
+        </div>
+
+        {/* 갤러리 */}
+        {photos.length === 0 ? (
+          <div className="text-center py-10 text-stone-400 text-sm">아직 사진이 없어요.<br />첫 이유식 순간을 남겨보세요 📸</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {photos.map(p => (
+              <div key={p.id} className="bg-white rounded-xl border border-pink-100 overflow-hidden">
+                <div className="relative">
+                  <img src={p.url} alt={p.note} className="w-full aspect-square object-cover" />
+                  <button onClick={() => onDeletePhoto(p.id)}
+                    className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white text-xs flex items-center justify-center">✕</button>
+                </div>
+                <div className="p-2">
+                  <div className="text-[10px] text-stone-400">{p.date}</div>
+                  {p.note && <div className="text-[11px] text-stone-700 mt-0.5 line-clamp-2">{p.note}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </Wrap>
     );
