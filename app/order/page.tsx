@@ -190,6 +190,10 @@ export default function OrderPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [completedId, setCompletedId] = useState<string | null>(null);
   const [earnedPoints, setEarnedPoints] = useState(0);
+  const [usedPoints, setUsedPoints] = useState(0);
+  // 포인트 사용 (결제 시)
+  const [availablePoints, setAvailablePoints] = useState(0);
+  const [usePoints, setUsePoints] = useState(0);
 
   const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
@@ -273,6 +277,15 @@ export default function OrderPage() {
   }, [currentWeekStart]);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
+
+  // 확인 단계 진입 시 보유 포인트 조회
+  useEffect(() => {
+    if (step !== 4) return;
+    const digits = phone.replace(/\D/g, '');
+    if (!/^\d{10,11}$/.test(digits)) { setAvailablePoints(0); return; }
+    fetch(`/api/my?phone=${digits}`).then(r => r.json())
+      .then(d => setAvailablePoints(d?.customer?.points || 0)).catch(() => setAvailablePoints(0));
+  }, [step, phone]);
 
   // ── 뒤로가기 처리 ────────────────────────────────────────────────
   // 앱 진입 시 기준 히스토리 + 상태 변경 시 push → popstate로 이전 상태 복원
@@ -426,7 +439,8 @@ export default function OrderPage() {
           items: itemsPayload,
           total_qty: totalQty, total_price: totalPrice,
           delivery_date: firstDate, order_type: '일반',
-          allergies: allergies.map(k => allergenByKey(k)?.label).filter(Boolean)
+          allergies: allergies.map(k => allergenByKey(k)?.label).filter(Boolean),
+          use_points: usePoints
         })
       });
       const d = await r.json();
@@ -447,6 +461,7 @@ export default function OrderPage() {
       );
       if (savedSets.length > 0) { saveLastOrder(savedSets); setLastOrder(loadLastOrder()); }
       setEarnedPoints(d.points_earned || 0);
+      setUsedPoints(d.points_used || 0);
       setCompletedId(d.id);
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
@@ -916,12 +931,19 @@ export default function OrderPage() {
               </div>
             ))}
             <div className="border-t border-amber-200 pt-2 font-bold">
-              합계 {totalQty}팩 · {totalPrice.toLocaleString()}원
+              {usedPoints > 0 && (
+                <div className="flex justify-between text-xs text-violet-600 font-normal mb-0.5">
+                  <span>포인트 사용</span><span>-{usedPoints.toLocaleString()}P</span>
+                </div>
+              )}
+              합계 {totalQty}팩 · {(totalPrice - usedPoints).toLocaleString()}원
             </div>
           </div>
-          {earnedPoints > 0 && (
+          {(earnedPoints > 0 || usedPoints > 0) && (
             <div className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5 text-sm font-bold text-violet-700 mb-3">
-              💜 {earnedPoints.toLocaleString()}P 적립됐어요!
+              {usedPoints > 0 && <span>💜 {usedPoints.toLocaleString()}P 사용</span>}
+              {usedPoints > 0 && earnedPoints > 0 && <span> · </span>}
+              {earnedPoints > 0 && <span>{earnedPoints.toLocaleString()}P 적립됐어요!</span>}
             </div>
           )}
           <p className="text-[11px] text-stone-400">주문번호 {completedId.slice(0,8)}</p>
@@ -1494,9 +1516,39 @@ export default function OrderPage() {
             + 같은 내용으로 다른 날짜 추가
           </button>
 
-          <div className="bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold mb-4">
-            <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
-            <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
+          {/* 포인트 사용 */}
+          {availablePoints > 0 && (() => {
+            const orderTotal = dateOrders.reduce((s, d) => s + datePrice(d), 0);
+            const maxUse = Math.min(availablePoints, orderTotal);
+            return (
+              <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-bold text-violet-700">💜 포인트 사용</span>
+                  <span className="text-xs text-violet-500">보유 {availablePoints.toLocaleString()}P</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input inputMode="numeric" value={usePoints || ''}
+                    onChange={e => setUsePoints(Math.min(maxUse, Math.max(0, parseInt(e.target.value.replace(/\D/g, '')) || 0)))}
+                    placeholder="0" className="flex-1 px-3 py-2 bg-white border border-violet-200 rounded-lg text-[16px] outline-none focus:border-violet-400" />
+                  <span className="text-sm text-violet-600 font-bold">P</span>
+                  <button onClick={() => setUsePoints(maxUse)}
+                    className="px-3 py-2 bg-violet-500 text-white text-xs font-bold rounded-lg">전액</button>
+                </div>
+                {usePoints > 0 && <div className="text-xs text-violet-600 font-bold mt-1.5 text-right">-{usePoints.toLocaleString()}P 할인 적용</div>}
+              </div>
+            );
+          })()}
+
+          <div className="bg-stone-800 text-white rounded-xl px-4 py-3 mb-4">
+            <div className="flex justify-between text-sm font-bold">
+              <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
+              <span>{(dateOrders.reduce((s,d)=>s+datePrice(d),0) - usePoints).toLocaleString()}원</span>
+            </div>
+            {usePoints > 0 && (
+              <div className="flex justify-between text-[11px] text-stone-400 mt-1">
+                <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
+              </div>
+            )}
           </div>
 
           {serverError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{serverError}</div>}

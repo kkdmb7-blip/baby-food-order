@@ -91,12 +91,25 @@ export async function POST(req: NextRequest) {
       customer_id = cust.id;
     }
 
+    // G. 포인트 사용/적립 — 일반·정기 주문만 (선결제 제외). 고객 1회 조회
+    const usePointsReq = Math.max(0, Math.floor(Number(b.use_points) || 0));
+    let pointsUsed = 0;
+    let custRow: { id: string; points: number } | null = null;
+    if (order_type !== '선결제') {
+      const { data: existing } = await sb
+        .from('baby_food_customers').select('id, points').eq('phone', customer_phone).maybeSingle();
+      custRow = existing ? { id: existing.id, points: existing.points || 0 } : null;
+      pointsUsed = Math.min(usePointsReq, custRow?.points ?? 0, total_price); // 1P = 1원
+    }
+    const net_price = total_price - pointsUsed;
+    const pointsEarned = order_type === '선결제' ? 0 : Math.floor(net_price * 0.03);
+
     const { data, error } = await sb
       .from('baby_food_orders')
       .insert({
         baby_name, months, customer_phone, address, address_detail, door_password,
-        stage, volume, items, total_qty, total_price, delivery_date,
-        order_type, status: '접수', customer_id, allergies
+        stage, volume, items, total_qty, total_price: net_price, delivery_date,
+        order_type, status: '접수', customer_id, allergies, points_used: pointsUsed
       })
       .select('id')
       .single();
@@ -106,23 +119,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     }
 
-    // G. 포인트 적립 (결제액 3%) — 전화번호로 고객 찾거나 생성 (실패 무시)
-    let pointsEarned = 0;
+    // 고객 포인트 갱신 (차감 + 적립) — 실패 무시
     try {
-      pointsEarned = Math.floor(total_price * 0.03);
-      if (pointsEarned > 0) {
-        const { data: existing } = await sb
-          .from('baby_food_customers')
-          .select('id, points')
-          .eq('phone', customer_phone)
-          .maybeSingle();
-        if (existing) {
-          await sb.from('baby_food_customers')
-            .update({ points: (existing.points || 0) + pointsEarned })
-            .eq('id', existing.id);
-        } else {
-          await sb.from('baby_food_customers')
-            .insert({ baby_name, phone: customer_phone, points: pointsEarned });
+      if (order_type !== '선결제') {
+        const newBalance = (custRow?.points ?? 0) - pointsUsed + pointsEarned;
+        if (custRow) {
+          await sb.from('baby_food_customers').update({ points: newBalance }).eq('id', custRow.id);
+        } else if (pointsEarned > 0) {
+          await sb.from('baby_food_customers').insert({ baby_name, phone: customer_phone, points: pointsEarned });
         }
       }
     } catch (e) { console.error('[points]', e); }
@@ -131,10 +135,10 @@ export async function POST(req: NextRequest) {
     void fetch(new URL('/api/notify', req.url), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price, customer_phone, address })
+      body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price: net_price, customer_phone, address })
     }).catch(() => {});
 
-    return NextResponse.json({ ok: true, id: data.id, points_earned: pointsEarned });
+    return NextResponse.json({ ok: true, id: data.id, points_earned: pointsEarned, points_used: pointsUsed, net_price });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
