@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   // 선결제/정기 고객 정보 (없을 수 있음)
   const { data: customer } = await sb
     .from('baby_food_customers')
-    .select('baby_name, prepaid_balance, is_regular, regular_schedule')
+    .select('baby_name, prepaid_balance, is_regular, regular_schedule, points')
     .eq('phone', phone)
     .maybeSingle();
 

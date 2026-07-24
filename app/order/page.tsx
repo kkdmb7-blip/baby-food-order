@@ -175,6 +175,7 @@ export default function OrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [completedId, setCompletedId] = useState<string | null>(null);
+  const [earnedPoints, setEarnedPoints] = useState(0);
 
   const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
@@ -431,6 +432,7 @@ export default function OrderPage() {
         }))
       );
       if (savedSets.length > 0) { saveLastOrder(savedSets); setLastOrder(loadLastOrder()); }
+      setEarnedPoints(d.points_earned || 0);
       setCompletedId(d.id);
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
@@ -769,17 +771,23 @@ export default function OrderPage() {
 
         {myData && (
           <>
-            {/* ⑦ 선결제 잔액 */}
+            {/* G 포인트 + ⑦ 선결제 잔액 */}
             {cust && (
-              <div className={`rounded-xl border p-4 mb-4 ${lowBalance ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-stone-800">
-                    {cust.baby_name ? `${cust.baby_name} · ` : ''}선결제 잔여
-                  </span>
-                  <span className={`text-lg font-black ${lowBalance ? 'text-rose-600' : 'text-amber-700'}`}>{cust.prepaid_balance}팩</span>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+                  <div className="text-[11px] text-violet-500 font-bold mb-0.5">💜 적립 포인트</div>
+                  <div className="text-lg font-black text-violet-700">{(cust.points || 0).toLocaleString()}P</div>
+                  <div className="text-[10px] text-violet-400 mt-0.5">주문할 때마다 3% 적립</div>
                 </div>
-                {cust.is_regular && <div className="text-[11px] text-emerald-600 font-bold mt-1">🔁 정기배송 이용중</div>}
-                {lowBalance && <div className="text-[11px] text-rose-600 font-bold mt-1">⚠️ 잔여가 얼마 안 남았어요. 충전을 알아보세요!</div>}
+                <div className={`rounded-xl border p-4 ${lowBalance ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <div className="text-[11px] text-stone-500 font-bold mb-0.5">선결제 잔여</div>
+                  <div className={`text-lg font-black ${lowBalance ? 'text-rose-600' : 'text-amber-700'}`}>{cust.prepaid_balance || 0}팩</div>
+                  {cust.is_regular
+                    ? <div className="text-[10px] text-emerald-600 font-bold mt-0.5">🔁 정기배송 이용중</div>
+                    : lowBalance
+                      ? <div className="text-[10px] text-rose-600 font-bold mt-0.5">⚠️ 소진 임박</div>
+                      : <div className="text-[10px] text-stone-400 mt-0.5">{cust.baby_name || ''}</div>}
+                </div>
               </div>
             )}
 
@@ -839,6 +847,11 @@ export default function OrderPage() {
               합계 {totalQty}팩 · {totalPrice.toLocaleString()}원
             </div>
           </div>
+          {earnedPoints > 0 && (
+            <div className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5 text-sm font-bold text-violet-700 mb-3">
+              💜 {earnedPoints.toLocaleString()}P 적립됐어요!
+            </div>
+          )}
           <p className="text-[11px] text-stone-400">주문번호 {completedId.slice(0,8)}</p>
         </div>
       </Wrap>

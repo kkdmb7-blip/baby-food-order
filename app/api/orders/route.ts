@@ -106,6 +106,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     }
 
+    // G. 포인트 적립 (결제액 3%) — 전화번호로 고객 찾거나 생성 (실패 무시)
+    let pointsEarned = 0;
+    try {
+      pointsEarned = Math.floor(total_price * 0.03);
+      if (pointsEarned > 0) {
+        const { data: existing } = await sb
+          .from('baby_food_customers')
+          .select('id, points')
+          .eq('phone', customer_phone)
+          .maybeSingle();
+        if (existing) {
+          await sb.from('baby_food_customers')
+            .update({ points: (existing.points || 0) + pointsEarned })
+            .eq('id', existing.id);
+        } else {
+          await sb.from('baby_food_customers')
+            .insert({ baby_name, phone: customer_phone, points: pointsEarned });
+        }
+      }
+    } catch (e) { console.error('[points]', e); }
+
     // 이메일 알림 (실패 무시)
     void fetch(new URL('/api/notify', req.url), {
       method: 'POST',
@@ -113,7 +134,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price, customer_phone, address })
     }).catch(() => {});
 
-    return NextResponse.json({ ok: true, id: data.id });
+    return NextResponse.json({ ok: true, id: data.id, points_earned: pointsEarned });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
