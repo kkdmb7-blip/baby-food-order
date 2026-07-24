@@ -15,7 +15,7 @@ import {
 } from '@/lib/personalize';
 
 // ── 타입 ─────────────────────────────────────────────────────────
-type AppMode = 'home' | 'menu' | 'order' | 'calendar';
+type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -119,6 +119,24 @@ export default function OrderPage() {
     setSymptoms(addSymptom({ foodKey, symptom, date: new Date().toISOString().slice(0, 10) }));
   }
   function delSymptom(idx: number) { setSymptoms(removeSymptom(idx)); }
+
+  // ── D+⑦. 내 주문 조회 ──────────────────────────────────────────
+  const [myPhone, setMyPhone] = useState('');
+  const [myData, setMyData] = useState<{ orders: any[]; customer: any } | null>(null);
+  const [myLoading, setMyLoading] = useState(false);
+  const [myError, setMyError] = useState<string | null>(null);
+  async function fetchMyOrders(p: string) {
+    const digits = p.replace(/\D/g, '');
+    if (!/^\d{10,11}$/.test(digits)) { setMyError('연락처를 정확히 입력해주세요'); return; }
+    setMyLoading(true); setMyError(null);
+    try {
+      const r = await fetch(`/api/my?phone=${digits}`);
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || '조회 실패');
+      setMyData({ orders: d.orders, customer: d.customer });
+    } catch (e: any) { setMyError(e.message); setMyData(null); }
+    finally { setMyLoading(false); }
+  }
 
   // Step 1
   const [babyName, setBabyName] = useState('');
@@ -468,6 +486,14 @@ export default function OrderPage() {
             <div className="text-[11px] text-violet-400 font-normal mt-0.5">다가오는 4주 메뉴 한눈에</div>
           </button>
           <button
+            onClick={() => { goMode('mypage'); const p = savedInfo?.phone || ''; if (p) { setMyPhone(p); fetchMyOrders(p); } }}
+            className="w-full py-4 bg-white border-2 border-stone-200 rounded-2xl text-stone-700 font-bold text-sm shadow-sm hover:border-stone-400 transition"
+          >
+            <div className="text-xl mb-0.5">📦</div>
+            내 주문 조회
+            <div className="text-[11px] text-stone-400 font-normal mt-0.5">배송상태 · 선결제 잔액 확인</div>
+          </button>
+          <button
             onClick={() => goMode('order')}
             className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
           >
@@ -708,6 +734,82 @@ export default function OrderPage() {
         </div>
         <p className="text-xs text-stone-500 mb-3">다가오는 4주 조리 메뉴예요. 날짜를 누르면 메뉴가 펼쳐지고, 바로 주문하러 갈 수 있어요.</p>
         <MonthCalendar reactions={reactions} allergies={allergies} onGoOrder={() => goMode('menu')} />
+      </Wrap>
+    );
+  }
+
+  // ── 내 주문 조회 화면 (D 배송상태 + ⑦ 선결제 잔액) ────────────
+  if (mode === 'mypage') {
+    const STATUS_STYLE: Record<string, string> = {
+      '접수': 'bg-amber-100 text-amber-800',
+      '준비중': 'bg-blue-100 text-blue-800',
+      '배송완료': 'bg-emerald-100 text-emerald-800',
+      '취소': 'bg-stone-100 text-stone-500',
+    };
+    const cust = myData?.customer;
+    const lowBalance = cust && cust.prepaid_balance > 0 && cust.prepaid_balance <= 5;
+    return (
+      <Wrap>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">내 주문 조회</h1>
+        </div>
+
+        {/* 전화번호 입력 */}
+        <div className="flex gap-2 mb-4">
+          <input value={myPhone} onChange={e => setMyPhone(e.target.value)} inputMode="numeric" maxLength={13}
+            placeholder="주문한 연락처 (010-0000-0000)"
+            className="flex-1 px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
+          <button onClick={() => fetchMyOrders(myPhone)} disabled={myLoading}
+            className="px-5 py-3 bg-amber-500 text-white font-bold rounded-xl disabled:bg-stone-200">
+            {myLoading ? '…' : '조회'}
+          </button>
+        </div>
+        {myError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{myError}</div>}
+
+        {myData && (
+          <>
+            {/* ⑦ 선결제 잔액 */}
+            {cust && (
+              <div className={`rounded-xl border p-4 mb-4 ${lowBalance ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-stone-800">
+                    {cust.baby_name ? `${cust.baby_name} · ` : ''}선결제 잔여
+                  </span>
+                  <span className={`text-lg font-black ${lowBalance ? 'text-rose-600' : 'text-amber-700'}`}>{cust.prepaid_balance}팩</span>
+                </div>
+                {cust.is_regular && <div className="text-[11px] text-emerald-600 font-bold mt-1">🔁 정기배송 이용중</div>}
+                {lowBalance && <div className="text-[11px] text-rose-600 font-bold mt-1">⚠️ 잔여가 얼마 안 남았어요. 충전을 알아보세요!</div>}
+              </div>
+            )}
+
+            {/* D 주문 목록 + 상태 */}
+            {myData.orders.length === 0 ? (
+              <div className="text-center py-10 text-stone-400 text-sm">해당 연락처의 주문 내역이 없어요</div>
+            ) : (
+              <div className="space-y-2">
+                {myData.orders.map((o: any) => (
+                  <div key={o.id} className="bg-white rounded-xl border border-stone-200 p-3.5">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-bold text-stone-900">{o.delivery_date} 배송</span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${STATUS_STYLE[o.status] || 'bg-stone-100 text-stone-500'}`}>
+                        {o.status}
+                      </span>
+                    </div>
+                    <div className="text-xs text-stone-500">
+                      총 {o.total_qty}팩 · {o.total_price.toLocaleString()}원
+                      {o.order_type !== '일반' && <span className="ml-2 text-purple-600">{o.order_type}</span>}
+                    </div>
+                    {o.allergies && o.allergies.length > 0 && (
+                      <div className="text-[10px] text-rose-600 mt-1">🚫 {o.allergies.join(', ')}</div>
+                    )}
+                    <div className="text-[10px] text-stone-300 mt-1">주문 {new Date(o.created_at).toLocaleDateString('ko-KR')} · {o.id.slice(0, 8)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </Wrap>
     );
   }
