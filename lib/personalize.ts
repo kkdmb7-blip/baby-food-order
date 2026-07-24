@@ -128,3 +128,16 @@ export function removeSymptom(idx: number): SymptomEntry[] {
   try { localStorage.setItem(SYMPTOM_KEY, JSON.stringify(list)); } catch {}
   return loadSymptoms();
 }
+
+// ── 배송상태 알림 (마지막으로 본 상태 기록) ──────────────────────
+const SEEN_STATUS_KEY = 'bfo_seen_status';
+
+export function loadSeenStatus(): Record<string, string> {
+  try { const s = localStorage.getItem(SEEN_STATUS_KEY); return s ? JSON.parse(s) : {}; } catch { return {}; }
+}
+export function saveSeenStatus(map: Record<string, string>) {
+  try { localStorage.setItem(SEEN_STATUS_KEY, JSON.stringify(map)); } catch {}
+}
+export function hasSeenStatusRecord(): boolean {
+  try { return localStorage.getItem(SEEN_STATUS_KEY) !== null; } catch { return false; }
+}

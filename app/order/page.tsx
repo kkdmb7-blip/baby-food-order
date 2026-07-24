@@ -12,6 +12,7 @@ import {
   saveLastOrder, loadLastOrder, daysSinceLastOrder, type SavedSet,
   loadReactions, setReaction, likedMenuNames, type MenuReaction, type MenuReactions,
   SYMPTOMS, loadSymptoms, addSymptom, removeSymptom, type SymptomEntry,
+  loadSeenStatus, saveSeenStatus, hasSeenStatusRecord,
 } from '@/lib/personalize';
 import { addPhoto, listPhotos, deletePhoto, type PhotoMeta } from '@/lib/album';
 
@@ -126,6 +127,16 @@ export default function OrderPage() {
   const [myData, setMyData] = useState<{ orders: any[]; customer: any } | null>(null);
   const [myLoading, setMyLoading] = useState(false);
   const [myError, setMyError] = useState<string | null>(null);
+  // ── 배송상태 알림 배너 ──────────────────────────────────────────
+  const [statusAlerts, setStatusAlerts] = useState<{ id: string; status: string; delivery_date: string }[]>([]);
+  function dismissAlerts() {
+    // 현재 상태를 '본 것'으로 기록하고 배너 닫기
+    const seen = loadSeenStatus();
+    statusAlerts.forEach(a => { seen[a.id] = a.status; });
+    saveSeenStatus(seen);
+    setStatusAlerts([]);
+  }
+
   // ── E. 성장앨범 (기기 저장) ─────────────────────────────────────
   const [photos, setPhotos] = useState<PhotoMeta[]>([]);
   const [albumBusy, setAlbumBusy] = useState(false);
@@ -218,6 +229,28 @@ export default function OrderPage() {
     setLastOrder(loadLastOrder());
     setReactions(loadReactions());
     setSymptoms(loadSymptoms());
+
+    // 배송상태 알림 감지 — 저장된 전화번호로 최근 주문 상태 확인
+    const digits = (s?.phone || '').replace(/\D/g, '');
+    if (/^\d{10,11}$/.test(digits)) {
+      fetch(`/api/my?phone=${digits}`).then(r => r.json()).then(d => {
+        if (!d?.ok || !Array.isArray(d.orders)) return;
+        const seen = loadSeenStatus();
+        const firstTime = !hasSeenStatusRecord();
+        const NOTABLE = ['준비중', '배송완료', '취소'];
+        const alerts: { id: string; status: string; delivery_date: string }[] = [];
+        const nextSeen: Record<string, string> = { ...seen };
+        for (const o of d.orders) {
+          nextSeen[o.id] = o.status;
+          if (!firstTime && seen[o.id] !== o.status && NOTABLE.includes(o.status)) {
+            alerts.push({ id: o.id, status: o.status, delivery_date: o.delivery_date });
+          }
+        }
+        if (firstTime) saveSeenStatus(nextSeen); // 첫 방문은 조용히 기록만
+        else if (alerts.length > 0) setStatusAlerts(alerts);
+        else saveSeenStatus(nextSeen);
+      }).catch(() => {});
+    }
   }, []);
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
@@ -477,6 +510,25 @@ export default function OrderPage() {
           <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
           <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
         </div>
+
+        {/* 배송상태 알림 배너 */}
+        {statusAlerts.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {statusAlerts.map(a => {
+              const info = a.status === '배송완료'
+                ? { emoji: '✅', text: '배송이 완료됐어요!', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' }
+                : a.status === '준비중'
+                  ? { emoji: '🧑‍🍳', text: '주문을 준비하고 있어요!', cls: 'bg-blue-50 border-blue-200 text-blue-800' }
+                  : { emoji: '❌', text: '주문이 취소됐어요', cls: 'bg-stone-100 border-stone-200 text-stone-600' };
+              return (
+                <div key={a.id} className={`rounded-xl border px-4 py-3 text-sm font-bold flex items-center justify-between gap-2 ${info.cls}`}>
+                  <span>{info.emoji} {a.delivery_date} 배송분 — {info.text}</span>
+                </div>
+              );
+            })}
+            <button onClick={dismissAlerts} className="w-full py-1.5 text-[11px] text-stone-400 underline underline-offset-2">확인했어요</button>
+          </div>
+        )}
         {/* ⑥ 재주문 리마인더 */}
         {(() => {
           const dsl = daysSinceLastOrder(lastOrder);
