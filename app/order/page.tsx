@@ -6,6 +6,11 @@ import {
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays } from '@/lib/dates';
 import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
+import {
+  recommendStage, stageGuide, stageTransitionNote,
+  loadDiary, setFoodStatus, foodKeysByStatus, testingDays, type Diary, type FoodStatus,
+  saveLastOrder, loadLastOrder, daysSinceLastOrder, type SavedSet,
+} from '@/lib/personalize';
 
 // ── 타입 ─────────────────────────────────────────────────────────
 type AppMode = 'home' | 'menu' | 'order';
@@ -91,6 +96,17 @@ export default function OrderPage() {
     });
   }
 
+  // ── 재료 도감(②④) / 재주문(③⑥) ──────────────────────────────
+  const [diary, setDiary] = useState<Diary>({});
+  const [diaryOpen, setDiaryOpen] = useState(false);
+  const [lastOrder, setLastOrder] = useState(() => null as ReturnType<typeof loadLastOrder>);
+  function updateFood(key: string, status: FoodStatus) {
+    setDiary(setFoodStatus(key, status));
+    // 알레르기로 표시하면 알레르기 목록에도 자동 추가 / 해제 시 제거
+    if (status === 'allergic' && !allergies.includes(key)) toggleAllergy(key);
+    if (status !== 'allergic' && allergies.includes(key) && diary[key]?.status === 'allergic') toggleAllergy(key);
+  }
+
   // Step 1
   const [babyName, setBabyName] = useState('');
   const [months, setMonths] = useState('');
@@ -131,6 +147,7 @@ export default function OrderPage() {
 
   const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
+  const recStage = useMemo(() => months ? recommendStage(parseInt(months)) : null, [months]);
 
   // 저장 정보 로드 — 최초 1회
   useEffect(() => {
@@ -147,6 +164,8 @@ export default function OrderPage() {
       if (a) setAllergies(JSON.parse(a));
       else if (s?.allergies) setAllergies(s.allergies);
     } catch {}
+    setDiary(loadDiary());
+    setLastOrder(loadLastOrder());
   }, []);
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
@@ -240,6 +259,28 @@ export default function OrderPage() {
     setPhone(savedInfo.phone); setAddress(savedInfo.address);
     setAddressDetail(savedInfo.addressDetail); setDoorPw(savedInfo.doorPw);
     setStep(3);
+  }
+
+  // ③ 지난번과 똑같이 주문 — 메뉴 구성 복원 후 날짜만 새로 선택
+  function reorderLast() {
+    if (!lastOrder) return;
+    const restored: DateOrder[] = [{
+      id: uid(), delivery_date: '',
+      sets: lastOrder.sets.map(s => ({
+        id: uid(), stage: s.stage, volume: s.volume,
+        menus: { 한우: s.menus?.한우 ?? 0, 닭: s.menus?.닭 ?? 0, 기타단백질: s.menus?.기타단백질 ?? 0 },
+        ...(s.simpleQty ? { _simpleQty: s.simpleQty } : {}),
+      })),
+    }];
+    setDateOrders(restored);
+    setSimpleMode(false);
+    if (savedInfo) {
+      setBabyName(savedInfo.babyName); setMonths(savedInfo.months);
+      setPhone(savedInfo.phone); setAddress(savedInfo.address);
+      setAddressDetail(savedInfo.addressDetail); setDoorPw(savedInfo.doorPw);
+    }
+    goMode('order');
+    goStep(savedInfo ? 3 : 1);
   }
 
   // ── DateOrder 변경 헬퍼 ────────────────────────────────────────
@@ -350,6 +391,13 @@ export default function OrderPage() {
         lastVolume: firstSet?.volume ?? undefined,
         allergies
       });
+      // ③⑥ 재주문용 마지막 주문 저장
+      const savedSets: SavedSet[] = dateOrders.flatMap(d =>
+        d.sets.filter(s => s.stage).map(s => ({
+          stage: s.stage, volume: s.volume, menus: s.menus, simpleQty: s._simpleQty,
+        }))
+      );
+      if (savedSets.length > 0) { saveLastOrder(savedSets); setLastOrder(loadLastOrder()); }
       setCompletedId(d.id);
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
@@ -365,6 +413,28 @@ export default function OrderPage() {
           <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
           <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
         </div>
+        {/* ⑥ 재주문 리마인더 */}
+        {(() => {
+          const dsl = daysSinceLastOrder(lastOrder);
+          if (dsl === null || dsl < 5) return null;
+          return (
+            <div className="mb-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-xs text-orange-800 leading-relaxed">
+              🔔 마지막 주문한 지 <span className="font-bold">{dsl}일</span> 됐어요. 이유식 떨어질 때 아니에요? 아래 <span className="font-bold">‘지난번과 똑같이’</span>로 빠르게 주문하세요.
+            </div>
+          );
+        })()}
+
+        {/* ⑤ 성장단계 전환 안내 */}
+        {savedInfo && (() => {
+          const note = stageTransitionNote(parseInt(savedInfo.months || '0'), savedInfo.lastStage);
+          if (!note) return null;
+          return (
+            <div className="mb-3 bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-xs text-sky-800 leading-relaxed">
+              🌱 {note}
+            </div>
+          );
+        })()}
+
         <div className="flex flex-col gap-3">
           <button
             onClick={() => goMode('menu')}
@@ -382,9 +452,22 @@ export default function OrderPage() {
             주문하기
             <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
           </button>
+          {/* ③ 원클릭 재주문 */}
+          {lastOrder && lastOrder.sets.length > 0 && (
+            <button
+              onClick={reorderLast}
+              className="w-full py-4 bg-white border-2 border-emerald-200 rounded-2xl text-emerald-800 font-bold text-sm shadow-sm hover:border-emerald-400 transition"
+            >
+              <div className="text-xl mb-0.5">🔁</div>
+              지난번과 똑같이 주문
+              <div className="text-[11px] text-emerald-500 font-normal mt-0.5">메뉴 그대로 · 날짜만 새로 선택</div>
+            </button>
+          )}
         </div>
-        <div className="mt-3">
+
+        <div className="mt-3 space-y-3">
           <AllergyEditor allergies={allergies} toggle={toggleAllergy} open={allergyOpen} setOpen={setAllergyOpen} />
+          <FoodDiary diary={diary} update={updateFood} open={diaryOpen} setOpen={setDiaryOpen} />
         </div>
       </Wrap>
     );
@@ -666,6 +749,12 @@ export default function OrderPage() {
                   </div>
                 </label>
               </div>
+              {months && parseInt(months) > 0 && recommendStage(parseInt(months)) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-800 leading-relaxed">
+                  <span className="font-bold">✨ {babyName || '아기'}에게 추천: {recommendStage(parseInt(months))}</span>
+                  <br /><span className="text-amber-600">{stageGuide(parseInt(months))} · 주문할 때 자동으로 골라드려요</span>
+                </div>
+              )}
               <div className="flex justify-end mt-5">
                 <button
                   onClick={()=>goStep(2)}
@@ -1001,8 +1090,11 @@ export default function OrderPage() {
                                 {STAGES.map(st => (
                                   <button key={st}
                                     onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null}))}
-                                    className={`py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                    className={`relative py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                     {st}
+                                    {recStage===st && s.stage!==st && (
+                                      <span className="absolute -top-1.5 -right-1 text-[9px] bg-rose-500 text-white font-bold px-1 py-0.5 rounded-full leading-none">추천</span>
+                                    )}
                                   </button>
                                 ))}
                               </div>
@@ -1272,6 +1364,105 @@ function AllergyEditor({
         </div>
       )}
     </div>
+  );
+}
+
+// ── 재료 도감 (먹어본 재료 트래킹 + 알레르기 첫도입 도우미) ──────
+function FoodDiary({
+  diary, update, open, setOpen,
+}: { diary: Diary; update: (k: string, s: FoodStatus) => void; open: boolean; setOpen: (v: boolean) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const safe = foodKeysByStatus(diary, 'safe');
+  const testing = foodKeysByStatus(diary, 'testing');
+  const allergic = foodKeysByStatus(diary, 'allergic');
+  const shown = showAll
+    ? ALLERGENS
+    : ALLERGENS.filter(a => COMMON_KEYS.includes(a.key) || diary[a.key]);
+  return (
+    <div className="bg-white rounded-2xl border border-emerald-100 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">📖</span>
+          <span className="text-sm font-bold text-stone-800">우리 아기 재료 도감</span>
+          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">먹어본 {safe.length}종</span>
+        </div>
+        <span className="text-stone-400 text-sm">{open ? '∧' : '∨'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-3">
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            새 재료는 <span className="font-bold text-amber-600">🧪 테스트</span>로 시작하세요. 한 번에 한 가지만, <span className="font-bold">3일간</span> 이상반응(발진·설사 등)을 관찰하는 게 안전해요. 괜찮으면 <span className="font-bold text-emerald-600">✅ 안전</span>, 이상하면 <span className="font-bold text-rose-600">🚫 알레르기</span> — 알레르기로 표시하면 메뉴 경고에 자동 반영돼요.
+          </p>
+
+          {/* 테스트중 — 3일 관찰 가이드 */}
+          {testing.length > 0 && (
+            <div className="bg-amber-50 rounded-xl p-3 space-y-2">
+              <div className="text-[11px] font-bold text-amber-700">🧪 테스트 관찰중</div>
+              {testing.map(k => {
+                const a = allergenByKey(k); if (!a) return null;
+                const days = testingDays(diary[k]);
+                return (
+                  <div key={k} className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-stone-700">
+                      {a.emoji} {a.label}
+                      <span className="ml-1 text-[10px] text-amber-600">
+                        {days === 0 ? '오늘 시작' : `${days}일째`}{days >= 3 ? ' · 관찰 완료!' : ` (3일 중 ${days}일)`}
+                      </span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => update(k, 'safe')} className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">✅ 안전</button>
+                      <button onClick={() => update(k, 'allergic')} className="text-[11px] font-bold text-rose-700 bg-rose-100 px-2 py-1 rounded">🚫 알레르기</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 요약 */}
+          <div className="flex gap-2 text-[11px]">
+            <span className="text-emerald-600">✅ 안전 {safe.length}</span>
+            <span className="text-amber-600">🧪 테스트 {testing.length}</span>
+            <span className="text-rose-600">🚫 알레르기 {allergic.length}</span>
+          </div>
+
+          {/* 재료별 상태 지정 */}
+          <div className="space-y-1.5">
+            {shown.map(a => {
+              const st = diary[a.key]?.status ?? 'none';
+              return (
+                <div key={a.key} className="flex items-center justify-between gap-2">
+                  <span className={`text-xs font-medium ${st === 'allergic' ? 'text-rose-600' : st === 'safe' ? 'text-emerald-700' : 'text-stone-600'}`}>
+                    {a.emoji} {a.label}
+                  </span>
+                  <div className="flex gap-1">
+                    <StatBtn on={st === 'testing'} onClick={() => update(a.key, st === 'testing' ? 'none' : 'testing')} cls="amber">🧪</StatBtn>
+                    <StatBtn on={st === 'safe'} onClick={() => update(a.key, st === 'safe' ? 'none' : 'safe')} cls="emerald">✅</StatBtn>
+                    <StatBtn on={st === 'allergic'} onClick={() => update(a.key, st === 'allergic' ? 'none' : 'allergic')} cls="rose">🚫</StatBtn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {!showAll && (
+            <button onClick={() => setShowAll(true)} className="text-[11px] text-emerald-600 underline underline-offset-2">
+              + 더 많은 재료 보기 (전체 {ALLERGENS.length}종)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+function StatBtn({ on, onClick, cls, children }: { on: boolean; onClick: () => void; cls: string; children: React.ReactNode }) {
+  const active: Record<string, string> = {
+    amber: 'bg-amber-500 border-amber-500', emerald: 'bg-emerald-500 border-emerald-500', rose: 'bg-rose-500 border-rose-500',
+  };
+  return (
+    <button onClick={onClick}
+      className={`w-7 h-7 rounded-lg border text-xs flex items-center justify-center transition ${on ? active[cls] + ' scale-110' : 'bg-white border-stone-200 opacity-50 hover:opacity-100'}`}>
+      {children}
+    </button>
   );
 }
 
