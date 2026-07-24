@@ -791,6 +791,9 @@ export default function OrderPage() {
               </div>
             )}
 
+            {/* ⑧ 정기배송 신청 */}
+            <RegularSetup phone={myPhone.replace(/\D/g, '')} initial={cust} onSaved={() => fetchMyOrders(myPhone)} />
+
             {/* D 주문 목록 + 상태 */}
             {myData.orders.length === 0 ? (
               <div className="text-center py-10 text-stone-400 text-sm">해당 연락처의 주문 내역이 없어요</div>
@@ -1436,6 +1439,102 @@ export default function OrderPage() {
         </Section>
       )}
     </Wrap>
+  );
+}
+
+// ── ⑧ 정기배송 신청 ──────────────────────────────────────────────
+function RegularSetup({ phone, initial, onSaved }: {
+  phone: string;
+  initial: { is_regular?: boolean; regular_schedule?: any } | null;
+  onSaved: () => void;
+}) {
+  const sched = initial?.regular_schedule || {};
+  const [open, setOpen] = useState(false);
+  const [stage, setStage] = useState<StageType | null>(sched.stage ?? null);
+  const [volume, setVolume] = useState<number | null>(sched.volume ?? null);
+  const initQtys: Record<string, number> = { 월: 0, 화: 0, 목: 0, 금: 0 };
+  (sched.slots || []).forEach((s: any) => { if (s.day in initQtys) initQtys[s.day] = s.qty; });
+  const [qtys, setQtys] = useState<Record<string, number>>(initQtys);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const isActive = !!initial?.is_regular;
+
+  async function save(active: boolean) {
+    setSaving(true); setMsg(null);
+    try {
+      const slots = Object.entries(qtys).filter(([, q]) => q > 0).map(([day, qty]) => ({ day, qty }));
+      const r = await fetch('/api/my/regular', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, active, stage, volume, slots }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
+      setMsg(active ? '정기배송이 신청됐어요!' : '정기배송이 해지됐어요');
+      onSaved();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-emerald-200 overflow-hidden mb-4">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🔁</span>
+          <span className="text-sm font-bold text-stone-800">정기배송</span>
+          {isActive
+            ? <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">이용중</span>
+            : <span className="text-[11px] text-stone-400">미신청</span>}
+        </div>
+        <span className="text-stone-400 text-sm">{open ? '∧' : '∨'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-3">
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            매주 원하는 요일·수량을 등록하면 자동으로 주문돼요. 단계·용량과 요일별 팩 수를 골라주세요.
+          </p>
+          {/* 단계 */}
+          <div className="grid grid-cols-4 gap-1.5">
+            {STAGES.map(st => (
+              <button key={st} onClick={() => { setStage(st); setVolume(null); }}
+                className={`py-2 rounded-lg text-[11px] font-bold border ${stage === st ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                {st.replace('중기1단계', '중1').replace('중기2단계', '중2').replace('완료기', '완료')}
+              </button>
+            ))}
+          </div>
+          {/* 용량 */}
+          {stage && (
+            <div className="grid grid-cols-2 gap-1.5">
+              {STAGE_OPTIONS[stage].map(o => (
+                <button key={o.volume} onClick={() => setVolume(o.volume)}
+                  className={`py-2 rounded-lg text-xs border ${volume === o.volume ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                  {o.volume}g · {o.price.toLocaleString()}원
+                </button>
+              ))}
+            </div>
+          )}
+          {/* 요일별 수량 */}
+          <div className="space-y-1.5">
+            {['월', '화', '목', '금'].map(day => (
+              <div key={day} className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-1.5">
+                <span className="text-sm font-bold text-stone-700">{day}요일</span>
+                <QtyCtrl value={qtys[day]} onChange={v => setQtys(p => ({ ...p, [day]: Math.max(0, Math.min(10, v)) }))} />
+              </div>
+            ))}
+          </div>
+          {msg && <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">{msg}</div>}
+          <div className="flex gap-2">
+            <button onClick={() => save(true)} disabled={saving || !stage || !volume}
+              className="flex-1 py-2.5 bg-emerald-500 text-white text-sm font-bold rounded-xl disabled:bg-stone-200">
+              {saving ? '저장 중…' : isActive ? '변경 저장' : '정기배송 신청'}
+            </button>
+            {isActive && (
+              <button onClick={() => save(false)} disabled={saving}
+                className="px-4 py-2.5 border border-stone-200 text-stone-500 text-sm font-medium rounded-xl">해지</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
