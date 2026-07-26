@@ -941,8 +941,8 @@ export default function OrderPage() {
           <input value={albumNote} onChange={e => setAlbumNote(e.target.value)} maxLength={100}
             placeholder="메모 (예: 오늘 한우죽 잘 먹었어요)" className={iCls} />
           <label className={`block w-full py-3 text-center rounded-xl font-bold text-sm cursor-pointer ${albumBusy ? 'bg-stone-200 text-stone-400' : 'bg-pink-500 text-white active:bg-pink-600'}`}>
-            {albumBusy ? '저장 중…' : '📷 사진 추가하기'}
-            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={albumBusy}
+            {albumBusy ? '저장 중…' : '📷 사진 추가 (촬영 · 앨범에서 선택)'}
+            <input type="file" accept="image/*" className="hidden" disabled={albumBusy}
               onChange={e => onAddPhoto(e.target.files?.[0])} />
           </label>
         </div>
