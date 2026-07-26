@@ -1968,15 +1968,15 @@ function FoodDiary({
                 const days = testingDays(diary[k]);
                 return (
                   <div key={k} className="flex items-center justify-between gap-2">
-                    <div className="text-xs text-stone-700">
-                      {a.emoji} {a.label}
-                      <span className="ml-1 text-[10px] text-amber-600">
+                    <div className="text-xs text-stone-700 min-w-0 flex-1">
+                      <div className="font-medium truncate">{a.emoji} {a.label}</div>
+                      <div className="text-[10px] text-amber-600">
                         {days === 0 ? '오늘 시작' : `${days}일째`}{days >= 3 ? ' · 관찰 완료!' : ` (3일 중 ${days}일)`}
-                      </span>
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => update(k, 'safe')} className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">✅ 안전</button>
-                      <button onClick={() => update(k, 'allergic')} className="text-[11px] font-bold text-rose-700 bg-rose-100 px-2 py-1 rounded">🚫 알레르기</button>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button onClick={() => update(k, 'safe')} className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded whitespace-nowrap">✅ 안전</button>
+                      <button onClick={() => update(k, 'allergic')} className="text-[11px] font-bold text-rose-700 bg-rose-100 px-2 py-1 rounded whitespace-nowrap">🚫 알레르기</button>
                     </div>
                   </div>
                 );
@@ -2029,10 +2029,10 @@ function FoodDiary({
               const st = diary[a.key]?.status ?? 'none';
               return (
                 <div key={a.key} className="flex items-center justify-between gap-2">
-                  <span className={`text-xs font-medium ${st === 'allergic' ? 'text-rose-600' : st === 'safe' ? 'text-emerald-700' : 'text-stone-600'}`}>
+                  <span className={`text-xs font-medium min-w-0 truncate ${st === 'allergic' ? 'text-rose-600' : st === 'safe' ? 'text-emerald-700' : 'text-stone-600'}`}>
                     {a.emoji} {a.label}
                   </span>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-shrink-0">
                     <StatBtn on={st === 'testing'} onClick={() => update(a.key, st === 'testing' ? 'none' : 'testing')} cls="amber">🧪</StatBtn>
                     <StatBtn on={st === 'safe'} onClick={() => update(a.key, st === 'safe' ? 'none' : 'safe')} cls="emerald">✅</StatBtn>
                     <StatBtn on={st === 'allergic'} onClick={() => update(a.key, st === 'allergic' ? 'none' : 'allergic')} cls="rose">🚫</StatBtn>
