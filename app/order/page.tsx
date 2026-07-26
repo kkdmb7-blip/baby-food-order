@@ -556,6 +556,7 @@ export default function OrderPage() {
         })()}
 
         <div className="flex flex-col gap-3">
+          {/* 주요 동작 */}
           <button
             onClick={() => goMode('menu')}
             className="w-full py-5 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-base shadow-sm hover:border-amber-400 transition"
@@ -563,30 +564,6 @@ export default function OrderPage() {
             <div className="text-2xl mb-1">📋</div>
             이번 주 메뉴 보기
             <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
-          </button>
-          <button
-            onClick={() => goMode('calendar')}
-            className="w-full py-4 bg-white border-2 border-violet-200 rounded-2xl text-violet-800 font-bold text-sm shadow-sm hover:border-violet-400 transition"
-          >
-            <div className="text-xl mb-0.5">📅</div>
-            한 달 식단표
-            <div className="text-[11px] text-violet-400 font-normal mt-0.5">다가오는 4주 메뉴 한눈에</div>
-          </button>
-          <button
-            onClick={() => { goMode('mypage'); const p = savedInfo?.phone || ''; const nm = savedInfo?.babyName || ''; if (p) setMyPhone(p); if (nm) setMyName(nm); if (p && nm) fetchMyOrders(p, nm); }}
-            className="w-full py-4 bg-white border-2 border-stone-200 rounded-2xl text-stone-700 font-bold text-sm shadow-sm hover:border-stone-400 transition"
-          >
-            <div className="text-xl mb-0.5">📦</div>
-            내 주문 조회
-            <div className="text-[11px] text-stone-400 font-normal mt-0.5">배송상태 · 선결제 잔액 확인</div>
-          </button>
-          <button
-            onClick={() => { goMode('album'); refreshAlbum(); }}
-            className="w-full py-4 bg-white border-2 border-pink-200 rounded-2xl text-pink-800 font-bold text-sm shadow-sm hover:border-pink-400 transition"
-          >
-            <div className="text-xl mb-0.5">📸</div>
-            이유식 성장앨범
-            <div className="text-[11px] text-pink-400 font-normal mt-0.5">우리 아기 먹방 기록 · 내 폰에만 저장</div>
           </button>
           <button
             onClick={() => goMode('order')}
@@ -607,6 +584,30 @@ export default function OrderPage() {
               <div className="text-[11px] text-emerald-500 font-normal mt-0.5">메뉴 그대로 · 날짜만 새로 선택</div>
             </button>
           )}
+          {/* 부가 기능 — 3열 컴팩트 */}
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => goMode('calendar')}
+              className="py-3 bg-white border border-violet-200 rounded-xl text-violet-800 font-bold text-xs shadow-sm hover:border-violet-400 transition"
+            >
+              <div className="text-lg mb-0.5">📅</div>
+              한 달 식단표
+            </button>
+            <button
+              onClick={() => { goMode('mypage'); const p = savedInfo?.phone || ''; const nm = savedInfo?.babyName || ''; if (p) setMyPhone(p); if (nm) setMyName(nm); if (p && nm) fetchMyOrders(p, nm); }}
+              className="py-3 bg-white border border-stone-200 rounded-xl text-stone-700 font-bold text-xs shadow-sm hover:border-stone-400 transition"
+            >
+              <div className="text-lg mb-0.5">📦</div>
+              내 주문 조회
+            </button>
+            <button
+              onClick={() => { goMode('album'); refreshAlbum(); }}
+              className="py-3 bg-white border border-pink-200 rounded-xl text-pink-800 font-bold text-xs shadow-sm hover:border-pink-400 transition"
+            >
+              <div className="text-lg mb-0.5">📸</div>
+              성장앨범
+            </button>
+          </div>
         </div>
 
         <div className="mt-3 space-y-3">
