@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       const { data: cust } = await sb
         .from('baby_food_customers')
         .select('id, prepaid_balance')
-        .eq('customer_phone', customer_phone)
+        .eq('phone', customer_phone)
         .single();
       if (!cust) return bad('선결제 고객 정보를 찾을 수 없습니다');
       if (cust.prepaid_balance < total_qty)
