@@ -124,7 +124,8 @@ export default function OrderPage() {
 
   // ── D+⑦. 내 주문 조회 ──────────────────────────────────────────
   const [myPhone, setMyPhone] = useState('');
-  const [myData, setMyData] = useState<{ orders: any[]; customer: any } | null>(null);
+  const [myName, setMyName] = useState('');
+  const [myData, setMyData] = useState<{ orders: any[]; customer: any; mismatch?: boolean } | null>(null);
   const [myLoading, setMyLoading] = useState(false);
   const [myError, setMyError] = useState<string | null>(null);
   // ── 배송상태 알림 배너 ──────────────────────────────────────────
@@ -150,15 +151,18 @@ export default function OrderPage() {
   }
   async function onDeletePhoto(id: string) { await deletePhoto(id); await refreshAlbum(); }
 
-  async function fetchMyOrders(p: string) {
+  async function fetchMyOrders(p: string, nm?: string) {
     const digits = p.replace(/\D/g, '');
+    const nameVal = (nm ?? myName).trim();
     if (!/^\d{10,11}$/.test(digits)) { setMyError('연락처를 정확히 입력해주세요'); return; }
+    if (!nameVal) { setMyError('아기 이름을 입력해주세요'); return; }
     setMyLoading(true); setMyError(null);
     try {
-      const r = await fetch(`/api/my?phone=${digits}`);
+      const r = await fetch(`/api/my?phone=${digits}&name=${encodeURIComponent(nameVal)}`);
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '조회 실패');
-      setMyData({ orders: d.orders, customer: d.customer });
+      if (d.mismatch) { setMyError('연락처와 아기 이름이 일치하지 않아요'); setMyData(null); }
+      else setMyData({ orders: d.orders, customer: d.customer });
     } catch (e: any) { setMyError(e.message); setMyData(null); }
     finally { setMyLoading(false); }
   }
@@ -232,8 +236,8 @@ export default function OrderPage() {
 
     // 배송상태 알림 감지 — 저장된 전화번호로 최근 주문 상태 확인
     const digits = (s?.phone || '').replace(/\D/g, '');
-    if (/^\d{10,11}$/.test(digits)) {
-      fetch(`/api/my?phone=${digits}`).then(r => r.json()).then(d => {
+    if (/^\d{10,11}$/.test(digits) && s?.babyName) {
+      fetch(`/api/my?phone=${digits}&name=${encodeURIComponent(s.babyName)}`).then(r => r.json()).then(d => {
         if (!d?.ok || !Array.isArray(d.orders)) return;
         const seen = loadSeenStatus();
         const firstTime = !hasSeenStatusRecord();
@@ -315,10 +319,10 @@ export default function OrderPage() {
   useEffect(() => {
     if (step !== 4) return;
     const digits = phone.replace(/\D/g, '');
-    if (!/^\d{10,11}$/.test(digits)) { setAvailablePoints(0); return; }
-    fetch(`/api/my?phone=${digits}`).then(r => r.json())
+    if (!/^\d{10,11}$/.test(digits) || !babyName.trim()) { setAvailablePoints(0); return; }
+    fetch(`/api/my?phone=${digits}&name=${encodeURIComponent(babyName.trim())}`).then(r => r.json())
       .then(d => setAvailablePoints(d?.customer?.points || 0)).catch(() => setAvailablePoints(0));
-  }, [step, phone]);
+  }, [step, phone, babyName]);
 
   // ── 뒤로가기 처리 ────────────────────────────────────────────────
   // 앱 진입 시 기준 히스토리 + 상태 변경 시 push → popstate로 이전 상태 복원
@@ -569,7 +573,7 @@ export default function OrderPage() {
             <div className="text-[11px] text-violet-400 font-normal mt-0.5">다가오는 4주 메뉴 한눈에</div>
           </button>
           <button
-            onClick={() => { goMode('mypage'); const p = savedInfo?.phone || ''; if (p) { setMyPhone(p); fetchMyOrders(p); } }}
+            onClick={() => { goMode('mypage'); const p = savedInfo?.phone || ''; const nm = savedInfo?.babyName || ''; if (p) setMyPhone(p); if (nm) setMyName(nm); if (p && nm) fetchMyOrders(p, nm); }}
             className="w-full py-4 bg-white border-2 border-stone-200 rounded-2xl text-stone-700 font-bold text-sm shadow-sm hover:border-stone-400 transition"
           >
             <div className="text-xl mb-0.5">📦</div>
@@ -846,15 +850,20 @@ export default function OrderPage() {
           <h1 className="text-lg font-bold text-stone-900 flex-1">내 주문 조회</h1>
         </div>
 
-        {/* 전화번호 입력 */}
-        <div className="flex gap-2 mb-4">
-          <input value={myPhone} onChange={e => setMyPhone(e.target.value)} inputMode="numeric" maxLength={13}
-            placeholder="주문한 연락처 (010-0000-0000)"
-            className="flex-1 px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
-          <button onClick={() => fetchMyOrders(myPhone)} disabled={myLoading}
-            className="px-5 py-3 bg-amber-500 text-white font-bold rounded-xl disabled:bg-stone-200">
-            {myLoading ? '…' : '조회'}
-          </button>
+        {/* 전화번호 + 아기 이름 입력 (2요소 확인) */}
+        <div className="space-y-2 mb-4">
+          <input value={myName} onChange={e => setMyName(e.target.value)} maxLength={15}
+            placeholder="아기 이름"
+            className="w-full px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
+          <div className="flex gap-2">
+            <input value={myPhone} onChange={e => setMyPhone(e.target.value)} inputMode="numeric" maxLength={13}
+              placeholder="주문한 연락처 (010-0000-0000)"
+              className="flex-1 px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
+            <button onClick={() => fetchMyOrders(myPhone)} disabled={myLoading}
+              className="px-5 py-3 bg-amber-500 text-white font-bold rounded-xl disabled:bg-stone-200">
+              {myLoading ? '…' : '조회'}
+            </button>
+          </div>
         </div>
         {myError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{myError}</div>}
 
