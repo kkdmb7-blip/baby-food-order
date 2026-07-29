@@ -41,6 +41,7 @@ type SavedInfo = {
   address: string; addressDetail: string; doorPw: string;
   lastStage?: StageType; lastVolume?: number; // 간단주문 기본값
   allergies?: string[]; // 알레르기 키 목록 (한 번 등록 → 유지)
+  postalCode?: string; zoneGroup?: string | null; deliveryKind?: string | null; // 배송권역
 };
 
 function loadSaved(): SavedInfo | null {
@@ -176,6 +177,48 @@ export default function OrderPage() {
   const [address, setAddress] = useState('');
   const [addressDetail, setAddressDetail] = useState('');
   const [doorPw, setDoorPw] = useState('');
+  // 배송권역: 직배송(강서·양천) / 당일배송(두발히어로) / 택배익일배송
+  const [postalCode, setPostalCode] = useState('');
+  const [zoneGroup, setZoneGroup] = useState<string | null>(null);
+  const [deliveryKind, setDeliveryKind] = useState<string | null>(null); // '직배송'|'당일배송'|'택배익일배송'|null
+  const [zoneChecking, setZoneChecking] = useState(false);
+  const DIRECT_GU = ['강서구', '양천구']; // 서울 자체 직배송 지역 (두발히어로 무관)
+
+  // 주소 선택 시 배송 종류 판별
+  async function resolveDelivery(zonecode: string, sido: string, sigungu: string) {
+    const pc = String(zonecode || '').trim();
+    const gu = String(sigungu || '');
+    // 강서·양천(서울) → 직배송
+    if (String(sido || '').includes('서울') && DIRECT_GU.some(g => gu.includes(g))) {
+      setDeliveryKind('직배송'); setZoneGroup(null); return;
+    }
+    if (!/^\d{5}$/.test(pc)) return;
+    setZoneChecking(true); setDeliveryKind(null); setZoneGroup(null);
+    try {
+      const SB = 'https://ymghmfkqctckxxysxkvy.supabase.co';
+      const KEY = 'sb_publishable_3-9zobXqx6Nv36LzmNMBpA_fohZqA5x';
+      const r = await fetch(`${SB}/rest/v1/dubal_zones?postal_code=eq.${pc}&select=zone_group`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      });
+      const rows = await r.json();
+      if (Array.isArray(rows) && rows[0]?.zone_group) { setZoneGroup(rows[0].zone_group); setDeliveryKind('당일배송'); }
+      else { setZoneGroup(null); setDeliveryKind('택배익일배송'); }
+    } catch { setDeliveryKind(null); }
+    finally { setZoneChecking(false); }
+  }
+
+  // 카카오(다음) 우편번호 검색 열기
+  function openPostcode() {
+    const daum = (window as any).daum;
+    if (!daum?.Postcode) { alert('주소 검색을 불러오는 중이에요. 잠시 후 다시 눌러주세요.'); return; }
+    new daum.Postcode({
+      oncomplete: (data: any) => {
+        setAddress(data.roadAddress || data.address || '');
+        setPostalCode(data.zonecode || '');
+        resolveDelivery(data.zonecode || '', data.sido || '', data.sigungu || '');
+      },
+    }).open();
+  }
 
   // Step 3 — 복합 주문
   const [combinedDelivery, setCombinedDelivery] = useState(false); // 합배송 모드
@@ -221,6 +264,9 @@ export default function OrderPage() {
       setBabyName(s.babyName); setMonths(s.months);
       setPhone(s.phone); setAddress(s.address);
       setAddressDetail(s.addressDetail); setDoorPw(s.doorPw);
+      if (s.postalCode) setPostalCode(s.postalCode);
+      if (s.zoneGroup !== undefined) setZoneGroup(s.zoneGroup);
+      if (s.deliveryKind !== undefined) setDeliveryKind(s.deliveryKind);
       setSavedInfo(s);
     }
     // 알레르기 로드 — 전용 키 우선, 없으면 savedInfo에서
@@ -315,6 +361,15 @@ export default function OrderPage() {
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
 
+  // 카카오(다음) 우편번호 스크립트 로드
+  useEffect(() => {
+    if ((window as any).daum?.Postcode) return;
+    const s = document.createElement('script');
+    s.src = 'https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+    s.async = true;
+    document.body.appendChild(s);
+  }, []);
+
   // 확인 단계 진입 시 보유 포인트 조회
   useEffect(() => {
     if (step !== 4) return;
@@ -356,6 +411,9 @@ export default function OrderPage() {
     setBabyName(savedInfo.babyName); setMonths(savedInfo.months);
     setPhone(savedInfo.phone); setAddress(savedInfo.address);
     setAddressDetail(savedInfo.addressDetail); setDoorPw(savedInfo.doorPw);
+    if (savedInfo.postalCode) setPostalCode(savedInfo.postalCode);
+    if (savedInfo.zoneGroup !== undefined) setZoneGroup(savedInfo.zoneGroup);
+    if (savedInfo.deliveryKind !== undefined) setDeliveryKind(savedInfo.deliveryKind);
     setStep(3);
   }
 
@@ -477,7 +535,10 @@ export default function OrderPage() {
           total_qty: totalQty, total_price: totalPrice,
           delivery_date: firstDate, order_type: '일반',
           allergies: allergies.map(k => allergenByKey(k)?.label).filter(Boolean),
-          use_points: usePoints
+          use_points: usePoints,
+          postal_code: postalCode,
+          zone_group: zoneGroup,
+          delivery_method: deliveryKind || '당일배송'
         })
       });
       const d = await r.json();
@@ -488,7 +549,8 @@ export default function OrderPage() {
         address: address.trim(), addressDetail: addressDetail.trim(), doorPw: doorPw.trim(),
         lastStage: firstSet?.stage ?? undefined,
         lastVolume: firstSet?.volume ?? undefined,
-        allergies
+        allergies,
+        postalCode, zoneGroup, deliveryKind
       });
       // ③⑥ 재주문용 마지막 주문 저장
       const savedSets: SavedSet[] = dateOrders.flatMap(d =>
@@ -1084,7 +1146,34 @@ export default function OrderPage() {
       {step === 2 && (
         <Section title="배송 정보를 입력해주세요">
           <Field label="연락처"><input value={phone} onChange={e=>setPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/></Field>
-          <Field label="주소"><input value={address} onChange={e=>setAddress(e.target.value)} placeholder="서울시 서초구..." className={iCls}/></Field>
+          <Field label="주소">
+            <button onClick={openPostcode} type="button"
+              className="w-full py-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-800 font-bold text-sm active:bg-amber-100 transition">
+              🔍 주소 검색 {address ? '(다시 찾기)' : ''}
+            </button>
+            {address && (
+              <div className="mt-2 text-sm text-stone-800 bg-white border border-stone-200 rounded-xl px-3 py-2.5">
+                {postalCode && <span className="text-xs text-stone-400">[{postalCode}] </span>}{address}
+              </div>
+            )}
+          </Field>
+          {/* 배송 종류 배너 */}
+          {zoneChecking && <div className="mb-3 text-xs text-stone-400">배송 지역 확인 중…</div>}
+          {deliveryKind === '직배송' && (
+            <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-800 leading-relaxed">
+              🚗 <span className="font-bold">직배송 지역</span>이에요! 저희가 직접 당일에 배송해드려요.
+            </div>
+          )}
+          {deliveryKind === '당일배송' && (
+            <div className="mb-3 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-800 leading-relaxed">
+              ✅ <span className="font-bold">당일배송 가능 지역</span>이에요! (두발히어로{zoneGroup ? ` · ${zoneGroup} 구역` : ''})
+            </div>
+          )}
+          {deliveryKind === '택배익일배송' && (
+            <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs text-blue-800 leading-relaxed">
+              📦 이 지역은 당일배송 구역이 아니라 <span className="font-bold">택배 익일배송</span>으로 보내드려요. (배송료 동일)
+            </div>
+          )}
           <Field label="상세주소"><input value={addressDetail} onChange={e=>setAddressDetail(e.target.value)} placeholder="동·호수 등" className={iCls}/></Field>
           <Field label="현관 비밀번호 (선택)"><input value={doorPw} onChange={e=>setDoorPw(e.target.value)} placeholder="예: #1234*" className={iCls}/></Field>
           <Row2>

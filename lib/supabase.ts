@@ -45,6 +45,9 @@ export type Order = {
   memo: string | null;
   customer_id: string | null;
   allergies?: string[];
+  postal_code?: string | null;
+  zone_group?: string | null;
+  delivery_method?: string | null;
 };
 
 export type Customer = {

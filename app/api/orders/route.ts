@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
     const allergies = Array.isArray(b.allergies)
       ? b.allergies.map((x: any) => String(x).slice(0, 20)).slice(0, 40)
       : [];
+    const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
+    const zone_group = b.zone_group ? String(b.zone_group).slice(0, 30) : null;
+    const delivery_method = ['직배송', '택배익일배송', '당일배송'].includes(b.delivery_method) ? b.delivery_method : '당일배송';
 
     // 검증
     if (!baby_name) return bad('아기 이름이 필요합니다');
@@ -109,7 +112,8 @@ export async function POST(req: NextRequest) {
       .insert({
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date,
-        order_type, status: '접수', customer_id, allergies, points_used: pointsUsed
+        order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
+        postal_code, zone_group, delivery_method
       })
       .select('id')
       .single();
