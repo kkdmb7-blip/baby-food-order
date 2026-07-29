@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
     if (!/^\d{10,11}$/.test(phone)) return bad('연락처를 확인해주세요');
 
     const active = !!b.active;
+    const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
     let regular_schedule: any = {};
     if (active) {
       const stage = String(b.stage || '') as StageType;
@@ -28,13 +29,14 @@ export async function POST(req: NextRequest) {
     const { data: existing } = await sb
       .from('baby_food_customers').select('id').eq('phone', phone).maybeSingle();
 
+    const patch: any = { is_regular: active, regular_schedule };
+    if (postal_code) patch.postal_code = postal_code; // 정기배송 tier 판별용
     if (existing) {
-      const { error } = await sb.from('baby_food_customers')
-        .update({ is_regular: active, regular_schedule }).eq('id', existing.id);
+      const { error } = await sb.from('baby_food_customers').update(patch).eq('id', existing.id);
       if (error) return NextResponse.json({ ok: false, error: '저장 실패' }, { status: 500 });
     } else {
       const { error } = await sb.from('baby_food_customers')
-        .insert({ baby_name: String(b.baby_name || '정기배송').slice(0, 20), phone, is_regular: active, regular_schedule });
+        .insert({ baby_name: String(b.baby_name || '정기배송').slice(0, 20), phone, ...patch });
       if (error) return NextResponse.json({ ok: false, error: '저장 실패' }, { status: 500 });
     }
     return NextResponse.json({ ok: true, active });

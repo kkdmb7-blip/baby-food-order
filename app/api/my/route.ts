@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
 
   const { data: customer } = await sb
     .from('baby_food_customers')
-    .select('baby_name, prepaid_balance, is_regular, regular_schedule, points')
+    .select('baby_name, prepaid_balance, is_regular, regular_schedule, points, postal_code')
     .eq('phone', phone)
     .maybeSingle();
 

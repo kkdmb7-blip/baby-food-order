@@ -94,12 +94,30 @@ export const STAGE_OPTIONS: Record<StageType, { volume: number; price: number }[
   ]
 };
 
-export function getPrice(stage: StageType, volume: number): number {
-  return STAGE_OPTIONS[stage].find(o => o.volume === volume)?.price ?? 0;
+// ── 지역별 가격 tier ──────────────────────────────────────────
+// '직배송'(강서·양천 자체배송) = 기본가 / '기타'(두발히어로 당일·택배) = 이유식 +500원, 반찬 38,000원
+export type PriceTier = '직배송' | '기타';
+export const PACK_SURCHARGE = 500; // 이유식 단품 팩당 인상액 (기타 지역)
+
+// deliveryKind → tier 매핑 (클라이언트/서버 공용 · 정책 변경 시 여기만 수정)
+export function tierOf(deliveryKind: string | null | undefined): PriceTier {
+  return deliveryKind === '직배송' ? '직배송' : '기타';
+}
+
+// 기본값 '직배송'(기본가) — tier 누락 시 과다청구 방지
+export function getPrice(stage: StageType, volume: number, tier: PriceTier = '직배송'): number {
+  const base = STAGE_OPTIONS[stage].find(o => o.volume === volume)?.price ?? 0;
+  if (base === 0) return 0;
+  return base + (tier === '기타' ? PACK_SURCHARGE : 0);
 }
 
 export const MIN_ORDER_QTY = 3;
-export const BANCHAN_PRICE = 35000; // 반찬5개+국1개 세트
+
+// 반찬5개+국1개 세트 — tier별 별도 금액 (이유식 +500과 무관한 별도 상수)
+export const BANCHAN_PRICE_BY_TIER: Record<PriceTier, number> = { '직배송': 35000, '기타': 38000 };
+export function getBanchanPrice(tier: PriceTier = '직배송'): number {
+  return BANCHAN_PRICE_BY_TIER[tier];
+}
 
 // 조리 요일 (일요일=0 ... 토요일=6)
 // 월=1, 화=2, 목=4, 금=5 (수=3 제외)

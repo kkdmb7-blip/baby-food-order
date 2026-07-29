@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, BANCHAN_PRICE, getPrice,
-  type StageType, type MenuType
+  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
+  type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays } from '@/lib/dates';
 import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
@@ -67,10 +67,10 @@ function setQtyTotal(s: OrderSet): number {
 function dateQty(d: DateOrder): number {
   return d.sets.reduce((sum, s) => sum + setQtyTotal(s), 0);
 }
-function datePrice(d: DateOrder): number {
+function datePrice(d: DateOrder, tier: PriceTier): number {
   return d.sets.reduce((sum, s) => {
     if (!s.stage || !s.volume) return sum;
-    return sum + getPrice(s.stage, s.volume) * setQtyTotal(s);
+    return sum + getPrice(s.stage, s.volume, tier) * setQtyTotal(s);
   }, 0);
 }
 
@@ -183,6 +183,8 @@ export default function OrderPage() {
   const [deliveryKind, setDeliveryKind] = useState<string | null>(null); // '직배송'|'당일배송'|'택배익일배송'|null
   const [zoneChecking, setZoneChecking] = useState(false);
   const DIRECT_GU = ['강서구', '양천구']; // 서울 자체 직배송 지역 (두발히어로 무관)
+  const tier: PriceTier = tierOf(deliveryKind); // 지역 가격 tier (직배송=기본가 / 기타=+500)
+  const addressReady = !!address && deliveryKind !== null; // 주소·지역 확정 여부 (가격 노출 조건)
 
   // 주소 선택 시 배송 종류 판별
   async function resolveDelivery(zonecode: string, sido: string, sigungu: string) {
@@ -504,21 +506,21 @@ export default function OrderPage() {
     setServerError(null);
 
     const totalQty = dateOrders.reduce((sum, d) => sum + dateQty(d), 0);
-    const totalPrice = dateOrders.reduce((sum, d) => sum + datePrice(d), 0);
+    const totalPrice = dateOrders.reduce((sum, d) => sum + datePrice(d, tier), 0);
     const firstDate = dateOrders[0].delivery_date;
 
     const itemsPayload = dateOrders.map(d => ({
       delivery_date: d.delivery_date,
       sets: d.sets.filter(s => s.stage && s.volume && setQtyTotal(s) > 0).map(s => ({
         stage: s.stage, volume: s.volume,
-        price_per: getPrice(s.stage!, s.volume!),
+        price_per: getPrice(s.stage!, s.volume!, tier),
         simple: !!s._simpleQty,
         menus: s._simpleQty ? [] : MENU_TYPES.filter(m => s.menus[m] > 0).map(m => ({ menu: m, qty: s.menus[m] })),
         qty: setQtyTotal(s),
-        subtotal: getPrice(s.stage!, s.volume!) * setQtyTotal(s)
+        subtotal: getPrice(s.stage!, s.volume!, tier) * setQtyTotal(s)
       })),
       date_qty: dateQty(d),
-      date_price: datePrice(d)
+      date_price: datePrice(d, tier)
     }));
 
     try {
@@ -692,10 +694,7 @@ export default function OrderPage() {
     const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
       s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0)
       + Object.values(banchanQtys).reduce((a, b) => a + b, 0);
-    const totalMenuPrice = Object.values(menuSels).reduce((s, sel) => {
-      if (!sel.stage || !sel.volume) return s;
-      return s + getPrice(sel.stage, sel.volume) * Object.values(sel.qtys).reduce((a, b) => a + b, 0);
-    }, 0) + Object.entries(banchanQtys).reduce((s, [, q]) => s + q * BANCHAN_PRICE, 0);
+    // 정책: 메뉴보기(주소 전)에서는 가격 미표시
 
     const goOrderFromMenu = () => {
       const yushikOrders: DateOrder[] = Object.entries(menuSels)
@@ -734,6 +733,9 @@ export default function OrderPage() {
         </div>
 
         <p className="text-xs text-stone-500 mb-3">날짜 탭 → 단계·용량 선택 → 메뉴별 수량 · 날짜마다 다른 단계·용량 가능</p>
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-800">
+          💡 배송지 입력 후 가격이 표시돼요 (지역에 따라 금액이 달라져요)
+        </div>
 
         {dayMenus.length === 0 ? (
           <div className="text-center py-10 text-stone-400 text-sm">이번 주 메뉴가 아직 등록되지 않았어요</div>
@@ -745,7 +747,6 @@ export default function OrderPage() {
               const sel = menuSelOf(day.date);
               const bQty = banchanQtys[day.date] ?? 0;
               const dayQty = isBanchan ? bQty : Object.values(sel.qtys).reduce((a,b)=>a+b,0);
-              const dayPrice = isBanchan ? bQty * BANCHAN_PRICE : (sel.stage && sel.volume ? getPrice(sel.stage, sel.volume) * dayQty : 0);
               const selVolOpts = sel.stage ? STAGE_OPTIONS[sel.stage] : [];
               return (
                 <div key={day.date} className={`bg-white rounded-xl border overflow-hidden ${isBanchan ? 'border-emerald-200' : 'border-amber-100'}`}>
@@ -760,7 +761,7 @@ export default function OrderPage() {
                       {!isBanchan && sel.stage && <span className="text-[10px] text-stone-500">{sel.stage}{sel.volume ? ` ${sel.volume}g` : ''}</span>}
                       {dayQty > 0 && (
                         <span className={`text-xs px-2 py-0.5 rounded-full font-bold text-white ${isBanchan ? 'bg-emerald-500' : 'bg-amber-500'}`}>
-                          {isBanchan ? `${dayQty}세트` : `${dayQty}팩`} · {dayPrice.toLocaleString()}원
+                          {isBanchan ? `${dayQty}세트` : `${dayQty}팩`}
                         </span>
                       )}
                     </div>
@@ -772,7 +773,7 @@ export default function OrderPage() {
                       {/* 반찬 날 */}
                       {isBanchan && (
                         <div className="space-y-3">
-                          <div className="text-xs text-stone-500 font-medium">🍱 반찬 세트 · {BANCHAN_PRICE.toLocaleString()}원/세트</div>
+                          <div className="text-xs text-stone-500 font-medium">🍱 반찬 세트</div>
                           {(day.banchan!.length > 0 || day.soup) ? (
                             <div className="bg-emerald-50 rounded-lg p-3 space-y-1 text-xs text-stone-700">
                               {day.banchan!.map((b, i) => (
@@ -793,7 +794,7 @@ export default function OrderPage() {
                             <span className="text-sm font-bold text-stone-700">세트 수량</span>
                             <QtyCtrl value={bQty} onChange={v => setBanchanQtys(prev => ({ ...prev, [day.date]: Math.max(0, v) }))} />
                           </div>
-                          {bQty > 0 && <div className="text-xs text-emerald-700 font-bold text-right">{bQty}세트 · {(bQty * BANCHAN_PRICE).toLocaleString()}원</div>}
+                          {bQty > 0 && <div className="text-xs text-emerald-700 font-bold text-right">{bQty}세트</div>}
                         </div>
                       )}
 
@@ -820,8 +821,7 @@ export default function OrderPage() {
                               <button key={opt.volume}
                                 onClick={() => updMenuSel(day.date, s => ({ ...s, volume: opt.volume, qtys: emptyMenus() }))}
                                 className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                {opt.volume}g<br/>
-                                <span className="font-normal">{opt.price.toLocaleString()}원</span>
+                                {opt.volume}g
                               </button>
                             ))}
                           </div>
@@ -872,7 +872,7 @@ export default function OrderPage() {
                 const parts = [];
                 if (yTotal > 0) parts.push(`이유식 ${yTotal}팩`);
                 if (bTotal > 0) parts.push(`반찬 ${bTotal}세트`);
-                return `${parts.join(' · ')} · ${totalMenuPrice.toLocaleString()}원 — 주문하기 →`;
+                return `${parts.join(' · ')} — 배송지 입력하고 주문하기 →`;
               })()}
             </button>
           </div>
@@ -1036,7 +1036,7 @@ export default function OrderPage() {
   // ── 완료 화면 ─────────────────────────────────────────────────
   if (step === 5 && completedId) {
     const totalQty = dateOrders.reduce((s, d) => s + dateQty(d), 0);
-    const totalPrice = dateOrders.reduce((s, d) => s + datePrice(d), 0);
+    const totalPrice = dateOrders.reduce((s, d) => s + datePrice(d, tier), 0);
     return (
       <Wrap>
         <div className="bg-white rounded-2xl p-7 shadow-sm border border-amber-100 text-center">
@@ -1206,7 +1206,7 @@ export default function OrderPage() {
                   {dateOrders.map(o => (
                     <div key={o.id} className="bg-amber-50 rounded-lg px-3 py-2 text-xs text-stone-600 flex items-center justify-between">
                       <span>{summaryText(o)}</span>
-                      <span className="text-amber-500 font-bold">{datePrice(o).toLocaleString()}원</span>
+                      <span className="text-amber-500 font-bold">{datePrice(o, tier).toLocaleString()}원</span>
                     </div>
                   ))}
                 </div>
@@ -1290,7 +1290,7 @@ export default function OrderPage() {
             const totalSimpleQty = simpleItems.reduce((s, i) => s + i.qty, 0);
             const totalSimplePrice = simpleItems.reduce((s, i) => {
               if (!i.stage || !i.volume) return s;
-              return s + getPrice(i.stage, i.volume) * i.qty;
+              return s + getPrice(i.stage, i.volume, tier) * i.qty;
             }, 0);
             // 간단주문 유효성: 선택된 날짜별 3팩+, stage/volume 있음
             const simpleValid = simpleItems.some(i => i.qty >= MIN_ORDER_QTY && i.stage && i.volume);
@@ -1338,7 +1338,7 @@ export default function OrderPage() {
                                 {STAGE_OPTIONS[it.stage].map(opt2 => (
                                   <button key={opt2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: opt2.volume }))}
                                     className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                    {opt2.volume}g · {opt2.price.toLocaleString()}원
+                                    {opt2.volume}g · {getPrice(it.stage!, opt2.volume, tier).toLocaleString()}원
                                   </button>
                                 ))}
                               </div>
@@ -1509,7 +1509,7 @@ export default function OrderPage() {
                                     <button key={opt.volume}
                                       onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume}))}
                                       className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                      {opt.volume}g · {opt.price.toLocaleString()}원
+                                      {opt.volume}g · {getPrice(s.stage!, opt.volume, tier).toLocaleString()}원
                                     </button>
                                   ))}
                                 </div>
@@ -1556,7 +1556,7 @@ export default function OrderPage() {
                   {completeSets(d).length > 0 && (
                     <div className="flex justify-between text-sm font-bold px-3 py-2 rounded-xl bg-amber-100 text-amber-800">
                       <span>{d.delivery_date || '날짜 미선택'} 소계 · {dateQty(d)}팩</span>
-                      <span>{datePrice(d).toLocaleString()}원</span>
+                      <span>{datePrice(d, tier).toLocaleString()}원</span>
                     </div>
                   )}
                 </div>}
@@ -1585,7 +1585,7 @@ export default function OrderPage() {
               )}
               <div className="mt-2 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
                 <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
-                <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원</span>
+                <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원</span>
               </div>
               {/* 합배송 토글 */}
               {(() => {
@@ -1644,11 +1644,11 @@ export default function OrderPage() {
           {/* 날짜별 주문 내역 */}
           {dateOrders.map((d, di) => (
             <div key={d.id} className="bg-white rounded-xl border border-amber-200 p-4 mb-3 text-sm">
-              <div className="font-bold text-amber-700 mb-2">{di+1}번째 — {d.delivery_date} ({dateQty(d)}팩 · {datePrice(d).toLocaleString()}원)</div>
+              <div className="font-bold text-amber-700 mb-2">{di+1}번째 — {d.delivery_date} ({dateQty(d)}팩 · {datePrice(d, tier).toLocaleString()}원)</div>
               {d.sets.filter(s=>s.stage&&(s.volume||(s.stage as any)==='반찬세트')).map(s => (
                 <div key={s.id} className="pl-3 mb-1 text-stone-700">
                   {(s.stage as any)==='반찬세트'
-                    ? <span className="font-medium text-emerald-700">반찬 세트 {s._simpleQty}세트 · {((s._simpleQty??0)*BANCHAN_PRICE).toLocaleString()}원</span>
+                    ? <span className="font-medium text-emerald-700">반찬 세트 {s._simpleQty}세트 · {((s._simpleQty??0)*getBanchanPrice(tier)).toLocaleString()}원</span>
                     : <><span className="font-medium">{s.stage} {s.volume}g</span>{' — '}{s._simpleQty?`${s._simpleQty}팩`:MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}</>
                   }
                 </div>
@@ -1669,7 +1669,7 @@ export default function OrderPage() {
 
           {/* 포인트 사용 */}
           {availablePoints > 0 && (() => {
-            const orderTotal = dateOrders.reduce((s, d) => s + datePrice(d), 0);
+            const orderTotal = dateOrders.reduce((s, d) => s + datePrice(d, tier), 0);
             const maxUse = Math.min(availablePoints, orderTotal);
             return (
               <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 mb-3">
@@ -1693,11 +1693,11 @@ export default function OrderPage() {
           <div className="bg-stone-800 text-white rounded-xl px-4 py-3 mb-4">
             <div className="flex justify-between text-sm font-bold">
               <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
-              <span>{(dateOrders.reduce((s,d)=>s+datePrice(d),0) - usePoints).toLocaleString()}원</span>
+              <span>{(dateOrders.reduce((s,d)=>s+datePrice(d, tier),0) - usePoints).toLocaleString()}원</span>
             </div>
             {usePoints > 0 && (
               <div className="flex justify-between text-[11px] text-stone-400 mt-1">
-                <span>{dateOrders.reduce((s,d)=>s+datePrice(d),0).toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
+                <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
               </div>
             )}
           </div>
@@ -1717,7 +1717,7 @@ export default function OrderPage() {
 // ── ⑧ 정기배송 신청 ──────────────────────────────────────────────
 function RegularSetup({ phone, initial, onSaved }: {
   phone: string;
-  initial: { is_regular?: boolean; regular_schedule?: any } | null;
+  initial: { is_regular?: boolean; regular_schedule?: any; postal_code?: string | null } | null;
   onSaved: () => void;
 }) {
   const sched = initial?.regular_schedule || {};
@@ -1731,13 +1731,50 @@ function RegularSetup({ phone, initial, onSaved }: {
   const [msg, setMsg] = useState<string | null>(null);
   const isActive = !!initial?.is_regular;
 
+  // 주소·지역 tier (가격 노출 조건)
+  const [postalCode, setPostalCode] = useState(initial?.postal_code || '');
+  const [addr, setAddr] = useState('');
+  const [tier, setTier] = useState<PriceTier | null>(null);
+  const [checking, setChecking] = useState(false);
+  const DIRECT_GU = ['강서구', '양천구'];
+
+  async function resolveTier(pc: string) {
+    if (!/^\d{5}$/.test(pc)) { setTier(null); return; }
+    setChecking(true);
+    try {
+      const SB = 'https://ymghmfkqctckxxysxkvy.supabase.co';
+      const KEY = 'sb_publishable_3-9zobXqx6Nv36LzmNMBpA_fohZqA5x';
+      const rows = await fetch(`${SB}/rest/v1/dubal_zones?postal_code=eq.${pc}&select=sido,gu`, {
+        headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+      }).then(r => r.json());
+      const row = Array.isArray(rows) ? rows[0] : null;
+      const kind = row && String(row.sido || '').includes('서울') && DIRECT_GU.some(g => String(row.gu || '').includes(g))
+        ? '직배송' : '기타';
+      setTier(kind === '직배송' ? '직배송' : '기타');
+    } catch { setTier(null); }
+    finally { setChecking(false); }
+  }
+  useEffect(() => { if (initial?.postal_code) resolveTier(initial.postal_code); }, []);
+
+  function openPostcode() {
+    const daum = (window as any).daum;
+    if (!daum?.Postcode) { alert('주소 검색을 불러오는 중이에요. 잠시 후 다시 눌러주세요.'); return; }
+    new daum.Postcode({
+      oncomplete: (data: any) => {
+        setAddr(data.roadAddress || data.address || '');
+        setPostalCode(data.zonecode || '');
+        resolveTier(data.zonecode || '');
+      },
+    }).open();
+  }
+
   async function save(active: boolean) {
     setSaving(true); setMsg(null);
     try {
       const slots = Object.entries(qtys).filter(([, q]) => q > 0).map(([day, qty]) => ({ day, qty }));
       const r = await fetch('/api/my/regular', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, active, stage, volume, slots }),
+        body: JSON.stringify({ phone, active, stage, volume, slots, postal_code: postalCode }),
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
@@ -1762,8 +1799,23 @@ function RegularSetup({ phone, initial, onSaved }: {
       {open && (
         <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-3">
           <p className="text-[11px] text-stone-500 leading-relaxed">
-            매주 원하는 요일·수량을 등록하면 자동으로 주문돼요. 단계·용량과 요일별 팩 수를 골라주세요.
+            매주 원하는 요일·수량을 등록하면 자동으로 주문돼요. 배송지·단계·용량과 요일별 팩 수를 골라주세요.
           </p>
+          {/* 배송지 (tier 확정용) */}
+          <div>
+            <button onClick={openPostcode} type="button"
+              className="w-full py-2.5 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-800 font-bold text-xs active:bg-emerald-100">
+              🔍 배송지 검색 {postalCode ? '(다시 찾기)' : ''}
+            </button>
+            {(addr || postalCode) && (
+              <div className="mt-1.5 text-xs text-stone-700 bg-white border border-stone-200 rounded-lg px-3 py-2">
+                {postalCode && <span className="text-stone-400">[{postalCode}] </span>}{addr || '등록된 배송지'}
+                {checking && <span className="ml-1 text-stone-400">확인 중…</span>}
+                {tier === '직배송' && <span className="ml-1 text-amber-600 font-bold">· 직배송</span>}
+                {tier === '기타' && <span className="ml-1 text-emerald-600 font-bold">· 당일/택배</span>}
+              </div>
+            )}
+          </div>
           {/* 단계 */}
           <div className="grid grid-cols-4 gap-1.5">
             {STAGES.map(st => (
@@ -1773,16 +1825,21 @@ function RegularSetup({ phone, initial, onSaved }: {
               </button>
             ))}
           </div>
-          {/* 용량 */}
+          {/* 용량 (가격은 배송지 확정 후 표시) */}
           {stage && (
-            <div className="grid grid-cols-2 gap-1.5">
-              {STAGE_OPTIONS[stage].map(o => (
-                <button key={o.volume} onClick={() => setVolume(o.volume)}
-                  className={`py-2 rounded-lg text-xs border ${volume === o.volume ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
-                  {o.volume}g · {o.price.toLocaleString()}원
-                </button>
-              ))}
-            </div>
+            <>
+              {tier === null && (
+                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">💡 배송지 입력 후 가격이 표시돼요</div>
+              )}
+              <div className="grid grid-cols-2 gap-1.5">
+                {STAGE_OPTIONS[stage].map(o => (
+                  <button key={o.volume} onClick={() => setVolume(o.volume)}
+                    className={`py-2 rounded-lg text-xs border ${volume === o.volume ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                    {o.volume}g{tier !== null ? ` · ${getPrice(stage!, o.volume, tier).toLocaleString()}원` : ''}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
           {/* 요일별 수량 */}
           <div className="space-y-1.5">
@@ -1795,9 +1852,9 @@ function RegularSetup({ phone, initial, onSaved }: {
           </div>
           {msg && <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">{msg}</div>}
           <div className="flex gap-2">
-            <button onClick={() => save(true)} disabled={saving || !stage || !volume}
+            <button onClick={() => save(true)} disabled={saving || !stage || !volume || !postalCode}
               className="flex-1 py-2.5 bg-emerald-500 text-white text-sm font-bold rounded-xl disabled:bg-stone-200">
-              {saving ? '저장 중…' : isActive ? '변경 저장' : '정기배송 신청'}
+              {saving ? '저장 중…' : !postalCode ? '배송지를 입력해주세요' : isActive ? '변경 저장' : '정기배송 신청'}
             </button>
             {isActive && (
               <button onClick={() => save(false)} disabled={saving}

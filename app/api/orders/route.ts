@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, STAGES, MIN_ORDER_QTY, getPrice, type StageType } from '@/lib/supabase';
+import { supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, type StageType, type PriceTier } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { kstToday } from '@/lib/dates';
 
@@ -56,24 +56,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 복합 주문(mixed)은 클라이언트 계산 total_price 사용, 단일은 서버 재계산
+    const sb = supabaseService();
+
+    // 서버 tier 재판별 (클라이언트 값 불신) — postal_code로 dubal_zones 조회
+    // 강서·양천(서울)=직배송(기본가), 그 외(두발 당일·택배)=기타(+500). postal_code 없으면 delivery_method로 폴백.
+    let serverTier: PriceTier = '기타';
+    if (postal_code) {
+      const { data: zrow } = await sb
+        .from('dubal_zones').select('sido, gu').eq('postal_code', postal_code).maybeSingle();
+      serverTier = zrow && String(zrow.sido || '').includes('서울')
+        && ['강서구', '양천구'].some(g => String(zrow.gu || '').includes(g))
+        ? '직배송' : '기타';
+    } else {
+      serverTier = tierOf(delivery_method);
+    }
+
+    // 복합 주문(mixed)은 아이템별 소계, 단일은 서버 재계산 — 둘 다 serverTier 적용
     let total_price: number;
     const isMulti = Array.isArray(items) && items.length > 0 && items[0].delivery_date;
     if (isMulti) {
-      // 아이템별 소계 합산으로 서버 재계산 (반찬세트 포함)
       total_price = items.reduce((sum: number, d: any) =>
         sum + (d.sets || []).reduce((s2: number, s: any) => {
-          if (s.stage === '반찬세트') return s2 + 35000 * (s.qty || 0);
-          return s2 + (getPrice(s.stage as StageType, s.volume) || 0) * (s.qty || 0);
+          if (s.stage === '반찬세트') return s2 + getBanchanPrice(serverTier) * (s.qty || 0);
+          return s2 + (getPrice(s.stage as StageType, s.volume, serverTier) || 0) * (s.qty || 0);
         }, 0), 0);
       if (total_price <= 0) return bad('가격 계산 오류');
     } else {
-      const pricePerPack = getPrice(stage, volume);
+      const pricePerPack = getPrice(stage, volume, serverTier);
       if (!pricePerPack) return bad('가격 정보 오류');
       total_price = total_qty * pricePerPack;
     }
-
-    const sb = supabaseService();
 
     // 선결제 고객이면 잔여 차감
     let customer_id: string | null = null;

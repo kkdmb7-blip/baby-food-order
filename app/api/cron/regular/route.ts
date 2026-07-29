@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, getPrice, type StageType } from '@/lib/supabase';
+import { supabaseService, getPrice, type StageType, type PriceTier } from '@/lib/supabase';
 
 // GET /api/cron/regular — 정기배송 자동 주문 생성 (Vercel Cron 전용)
 // 안전장치: ① CRON_SECRET 인증 ② REGULAR_AUTO_ENABLED=true 일 때만 실제 생성 ③ 중복 방지
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const sb = supabaseService();
   const { data: regulars, error } = await sb
     .from('baby_food_customers')
-    .select('id, baby_name, phone, is_regular, regular_schedule')
+    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code')
     .eq('is_regular', true);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
@@ -39,7 +39,23 @@ export async function GET(req: NextRequest) {
     if (!sched?.stage || !sched?.volume || !Array.isArray(sched?.slots)) continue;
     const stage = sched.stage as StageType;
     const volume = Number(sched.volume);
-    const pricePer = getPrice(stage, volume);
+
+    // 고객 배송지(postal_code)로 tier·배송종류 판별
+    let tier: PriceTier = '기타';
+    let deliveryMethod = '당일배송';
+    let zoneGroup: string | null = null;
+    if (c.postal_code) {
+      const { data: zrow } = await sb
+        .from('dubal_zones').select('sido, gu, zone_group').eq('postal_code', c.postal_code).maybeSingle();
+      if (zrow && String(zrow.sido || '').includes('서울') && ['강서구', '양천구'].some(g => String(zrow.gu || '').includes(g))) {
+        tier = '직배송'; deliveryMethod = '직배송';
+      } else if (zrow) {
+        tier = '기타'; deliveryMethod = '당일배송'; zoneGroup = zrow.zone_group || null;
+      } else {
+        tier = '기타'; deliveryMethod = '택배익일배송';
+      }
+    }
+    const pricePer = getPrice(stage, volume, tier);
     if (!pricePer) continue;
 
     for (const u of upcoming) {
@@ -71,6 +87,7 @@ export async function GET(req: NextRequest) {
           address: '(정기배송 등록 주소)', stage, volume, items,
           total_qty: qty, total_price: pricePer * qty, delivery_date: u.date,
           order_type: '정기', status: '접수', customer_id: c.id,
+          postal_code: c.postal_code || null, zone_group: zoneGroup, delivery_method: deliveryMethod,
         });
         if (!ie) created++;
       }
