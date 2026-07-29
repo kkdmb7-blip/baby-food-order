@@ -5,7 +5,7 @@ import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/s
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 
-type Tab = '오늘주문' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '엑셀';
+type Tab = '오늘주문' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '엑셀';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -87,7 +87,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['오늘주문', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
+  const tabs: Tab[] = ['오늘주문', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -164,6 +164,8 @@ export default function AdminShell({
         )}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
+        {tab === '배송' && <DeliveryGroups orders={orders} today={today} />}
+
         {tab === '조리표' && <CookingSheet orders={orders} getQty={getQty} today={today} />}
 
         {/* ── 탭 3: 주소록 ────────────────────────────────── */}
@@ -246,6 +248,76 @@ function CookingSheet({ orders, getQty, today }: { orders: Order[]; getQty: (o: 
 }
 
 // ── 주소록 ─────────────────────────────────────────────────────────
+// ── 배송 구역별 묶음 (두발히어로 기사 전달용) ──────────────────────
+function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
+  const active = orders.filter(o => o.status !== '취소');
+  const kindOf = (o: Order) => o.delivery_method || '당일배송';
+  const direct = active.filter(o => kindOf(o) === '직배송');
+  const parcel = active.filter(o => kindOf(o) === '택배익일배송');
+  const dubal = active.filter(o => kindOf(o) === '당일배송');
+
+  // 당일배송(두발) → 구역별
+  const byZone: Record<string, Order[]> = {};
+  dubal.forEach(o => { const z = o.zone_group || '구역미확인'; (byZone[z] = byZone[z] || []).push(o); });
+  const zones = Object.keys(byZone).sort();
+
+  const Row = (o: Order) => (
+    <div key={o.id} className="px-3 py-2 flex items-start gap-2 text-sm">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-stone-900">{o.baby_name}</span>
+          <span className="text-xs text-stone-500">{formatPhone(o.customer_phone)}</span>
+          <span className="text-xs font-bold text-amber-700">{o.total_qty}팩</span>
+        </div>
+        <div className="text-xs text-stone-600 truncate">
+          {o.address}{o.address_detail ? ' ' + o.address_detail : ''}
+          {o.door_password && <span className="ml-1 text-stone-400">🔑{o.door_password}</span>}
+        </div>
+      </div>
+    </div>
+  );
+
+  const Section = ({ title, color, items, count }: { title: string; color: string; items: React.ReactNode; count: number }) => (
+    <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
+      <div className={`px-4 py-2.5 font-bold text-sm flex items-center justify-between ${color}`}>
+        <span>{title}</span><span className="text-xs">{count}건</span>
+      </div>
+      {count === 0 ? <div className="p-4 text-center text-stone-400 text-xs">없음</div> : <div className="divide-y divide-stone-100">{items}</div>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* 요약 */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="bg-amber-50 rounded-lg py-2"><div className="text-lg font-black text-amber-700">{direct.length}</div><div className="text-[11px] text-amber-600">🚗 직배송</div></div>
+        <div className="bg-emerald-50 rounded-lg py-2"><div className="text-lg font-black text-emerald-700">{dubal.length}</div><div className="text-[11px] text-emerald-600">🚚 당일(두발)</div></div>
+        <div className="bg-blue-50 rounded-lg py-2"><div className="text-lg font-black text-blue-700">{parcel.length}</div><div className="text-[11px] text-blue-600">📦 택배익일</div></div>
+      </div>
+
+      <Section title="🚗 직배송 (우리가 직접)" color="bg-amber-100 text-amber-800" count={direct.length} items={direct.map(Row)} />
+
+      {/* 당일배송 — 구역별 */}
+      <div>
+        <div className="text-sm font-bold text-emerald-800 mb-2">🚚 당일배송 · 두발히어로 (구역별 {zones.length}구역)</div>
+        <div className="space-y-2">
+          {dubal.length === 0 && <div className="bg-white rounded-xl border border-stone-200 p-4 text-center text-stone-400 text-xs">없음</div>}
+          {zones.map(z => (
+            <div key={z} className="bg-white rounded-xl border border-emerald-200 overflow-hidden">
+              <div className="px-4 py-2 bg-emerald-50 font-bold text-sm text-emerald-800 flex items-center justify-between">
+                <span>{z}</span><span className="text-xs">{byZone[z].length}건</span>
+              </div>
+              <div className="divide-y divide-stone-100">{byZone[z].map(Row)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <Section title="📦 택배 익일배송" color="bg-blue-100 text-blue-800" count={parcel.length} items={parcel.map(Row)} />
+    </div>
+  );
+}
+
 function AddressBook({ orders, today, getQty }: { orders: Order[]; today: string; getQty: (o: Order, m: MenuType) => number }) {
   return (
     <div>
