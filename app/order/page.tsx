@@ -17,7 +17,7 @@ import {
 import { addPhoto, listPhotos, deletePhoto, type PhotoMeta } from '@/lib/album';
 
 // ── 타입 ─────────────────────────────────────────────────────────
-type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage' | 'album';
+type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage' | 'album' | 'review';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -49,6 +49,23 @@ function loadSaved(): SavedInfo | null {
 }
 function doSave(info: SavedInfo) {
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(info)); } catch {}
+}
+
+const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방';
+async function shareApp(referrerPhone?: string) {
+  const url = typeof window !== 'undefined' ? window.location.origin + '/order' : '';
+  const text = referrerPhone
+    ? `${STORE_NAME} 이유식 써봤는데 좋아서 추천해요! 제 연락처(${referrerPhone})를 추천인으로 입력하면 서로 포인트 받아요 🍱`
+    : `${STORE_NAME} — 신선한 이유식을 집까지 배송해드려요 🍱`;
+  if (typeof navigator !== 'undefined' && (navigator as any).share) {
+    try { await (navigator as any).share({ title: STORE_NAME, text, url }); return; } catch { /* 사용자가 취소한 경우 등 — 무시 */ }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    alert('공유 문구를 복사했어요. 원하는 곳에 붙여넣어 주세요!');
+  } catch {
+    alert(url);
+  }
 }
 
 // ── 헬퍼 ────────────────────────────────────────────────────────
@@ -174,6 +191,7 @@ export default function OrderPage() {
 
   // Step 2
   const [phone, setPhone] = useState('');
+  const [referrerPhone, setReferrerPhone] = useState(''); // 친구초대: 추천인 연락처(선택, 첫 주문에만 적용)
   const [address, setAddress] = useState('');
   const [addressDetail, setAddressDetail] = useState('');
   const [doorPw, setDoorPw] = useState('');
@@ -251,9 +269,21 @@ export default function OrderPage() {
   const [completedId, setCompletedId] = useState<string | null>(null);
   const [earnedPoints, setEarnedPoints] = useState(0);
   const [usedPoints, setUsedPoints] = useState(0);
+  const [welcomeBonus, setWelcomeBonus] = useState(0);
+  const [referralBonusEarned, setReferralBonusEarned] = useState(0);
   // 포인트 사용 (결제 시)
   const [availablePoints, setAvailablePoints] = useState(0);
   const [usePoints, setUsePoints] = useState(0);
+
+  // 후기 (홈 화면 티저 + 작성 화면)
+  const [reviews, setReviews] = useState<{ id: string; baby_name: string; rating: number; content: string; created_at: string }[]>([]);
+  const [reviewPhone, setReviewPhone] = useState('');
+  const [reviewBabyName, setReviewBabyName] = useState('');
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewContent, setReviewContent] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewDone, setReviewDone] = useState<number | null>(null); // 적립된 포인트(0이면 이미 작성한 적 있음)
 
   const dateOpts = useMemo(() => weekDateOptions(weekOffset), [weekOffset]);
   const currentWeekStart = useMemo(() => weekMonday(weekOffset), [weekOffset]);
@@ -303,7 +333,29 @@ export default function OrderPage() {
         else saveSeenStatus(nextSeen);
       }).catch(() => {});
     }
+
+    // 홈 화면 후기 티저용 — 승인된 후기 목록
+    fetch('/api/reviews').then(r => r.json()).then(d => { if (d.ok) setReviews(d.reviews); }).catch(() => {});
   }, []);
+
+  async function submitReview() {
+    const digits = reviewPhone.replace(/\D/g, '');
+    if (!/^\d{10,11}$/.test(digits)) { setReviewError('연락처를 정확히 입력해주세요'); return; }
+    if (!reviewBabyName.trim()) { setReviewError('아기 이름을 입력해주세요'); return; }
+    if (reviewContent.trim().length < 5) { setReviewError('후기 내용을 5자 이상 입력해주세요'); return; }
+    setReviewSubmitting(true); setReviewError(null);
+    try {
+      const r = await fetch('/api/reviews', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_phone: digits, baby_name: reviewBabyName.trim(), rating: reviewRating, content: reviewContent.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || '등록 실패');
+      setReviewDone(d.bonus || 0);
+      fetch('/api/reviews').then(rr => rr.json()).then(dd => { if (dd.ok) setReviews(dd.reviews); }).catch(() => {});
+    } catch (e: any) { setReviewError(e.message); }
+    finally { setReviewSubmitting(false); }
+  }
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
   useEffect(() => {
@@ -540,7 +592,8 @@ export default function OrderPage() {
           use_points: usePoints,
           postal_code: postalCode,
           zone_group: zoneGroup,
-          delivery_method: deliveryKind || '당일배송'
+          delivery_method: deliveryKind || '당일배송',
+          referrer_phone: referrerPhone.replace(/\D/g, '')
         })
       });
       const d = await r.json();
@@ -563,6 +616,8 @@ export default function OrderPage() {
       if (savedSets.length > 0) { saveLastOrder(savedSets); setLastOrder(loadLastOrder()); }
       setEarnedPoints(d.points_earned || 0);
       setUsedPoints(d.points_used || 0);
+      setWelcomeBonus(d.welcome_bonus || 0);
+      setReferralBonusEarned(d.referral_bonus || 0);
       setCompletedId(d.id);
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
@@ -672,6 +727,37 @@ export default function OrderPage() {
               성장앨범
             </button>
           </div>
+
+          {/* 친구초대 */}
+          <button onClick={() => shareApp(savedInfo?.phone)}
+            className="w-full py-3 bg-white border border-amber-200 rounded-xl text-amber-800 font-bold text-xs shadow-sm flex items-center justify-center gap-1.5">
+            📣 친구 초대하고 3,000P 받기
+          </button>
+        </div>
+
+        {/* 후기 */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-bold text-stone-700">이용 후기</span>
+            <button onClick={() => goMode('review')} className="text-xs text-amber-700 font-bold">후기 남기고 1,000P →</button>
+          </div>
+          {reviews.length === 0 ? (
+            <div className="bg-white border border-stone-100 rounded-xl px-4 py-5 text-center text-xs text-stone-400">
+              아직 후기가 없어요. 첫 후기의 주인공이 되어보세요! 🍱
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {reviews.slice(0, 3).map(rv => (
+                <div key={rv.id} className="bg-white border border-stone-100 rounded-xl px-4 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-stone-700">{rv.baby_name} 부모님</span>
+                    <span className="text-amber-500 text-xs">{'★'.repeat(rv.rating)}{'☆'.repeat(5 - rv.rating)}</span>
+                  </div>
+                  <p className="text-xs text-stone-600 leading-relaxed line-clamp-3">{rv.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-3 space-y-3">
@@ -679,6 +765,58 @@ export default function OrderPage() {
           <FoodDiary diary={diary} update={updateFood} open={diaryOpen} setOpen={setDiaryOpen}
             symptoms={symptoms} onLog={logSymptom} onDel={delSymptom} />
         </div>
+      </Wrap>
+    );
+  }
+
+  // ── 후기 작성 화면 ──────────────────────────────────────────────
+  if (mode === 'review') {
+    if (reviewDone !== null) {
+      return (
+        <Wrap>
+          <div className="bg-white rounded-2xl p-7 shadow-sm border border-amber-100 text-center">
+            <div className="text-5xl mb-4">🙏</div>
+            <h1 className="text-xl font-bold text-stone-900 mb-2">후기 감사해요!</h1>
+            {reviewDone > 0 ? (
+              <p className="text-sm text-violet-600 font-bold mb-5">{reviewDone.toLocaleString()}P 적립됐어요</p>
+            ) : (
+              <p className="text-sm text-stone-500 mb-5">이미 첫 후기 포인트를 받으셨어요. 소중한 후기 감사합니다!</p>
+            )}
+            <button onClick={() => goMode('home')} className="w-full py-3 bg-amber-500 text-white font-bold text-sm rounded-xl">처음으로</button>
+          </div>
+        </Wrap>
+      );
+    }
+    return (
+      <Wrap>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
+          <h1 className="text-lg font-bold text-stone-900 flex-1">후기 남기기</h1>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs text-amber-800 mb-4 leading-relaxed">
+          💡 주문 이력이 있는 연락처만 작성할 수 있어요. 첫 후기 작성 시 1,000P를 드려요!
+        </div>
+        <Field label="아기 이름"><input value={reviewBabyName} onChange={e=>setReviewBabyName(e.target.value)} maxLength={20} placeholder="아기 이름" className={iCls}/></Field>
+        <Field label="연락처"><input value={reviewPhone} onChange={e=>setReviewPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="주문한 연락처" className={iCls}/></Field>
+        <Field label="별점">
+          <div className="flex gap-1">
+            {[1,2,3,4,5].map(n => (
+              <button key={n} type="button" onClick={() => setReviewRating(n)} className="text-2xl leading-none">
+                {n <= reviewRating ? '★' : '☆'}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="후기 내용">
+          <textarea value={reviewContent} onChange={e=>setReviewContent(e.target.value)} maxLength={500} rows={4}
+            placeholder="이유식은 어땠나요? 배송, 맛, 아기 반응 등 자유롭게 남겨주세요"
+            className={iCls} />
+        </Field>
+        {reviewError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{reviewError}</div>}
+        <button onClick={submitReview} disabled={reviewSubmitting}
+          className="w-full py-3.5 bg-amber-500 text-white font-bold text-sm rounded-xl disabled:bg-stone-200">
+          {reviewSubmitting ? '등록 중…' : '후기 등록하기'}
+        </button>
       </Wrap>
     );
   }
@@ -1070,7 +1208,26 @@ export default function OrderPage() {
               {earnedPoints > 0 && <span>{earnedPoints.toLocaleString()}P 적립됐어요!</span>}
             </div>
           )}
-          <p className="text-[11px] text-stone-400">주문번호 {completedId.slice(0,8)}</p>
+          {referralBonusEarned > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 mb-3">🎉 추천인 보너스 {referralBonusEarned.toLocaleString()}P 포함! 추천해주신 분께도 같은 포인트가 적립됐어요.</div>
+          )}
+          {welcomeBonus > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 mb-3">🎉 첫 주문 웰컴포인트 {welcomeBonus.toLocaleString()}P 포함!</div>
+          )}
+          <p className="text-[11px] text-stone-400 mb-4">주문번호 {completedId.slice(0,8)}</p>
+
+          {/* 친구초대 + 후기유도 (전환율 장치) */}
+          <div className="space-y-2 pt-4 border-t border-stone-100">
+            <button onClick={() => shareApp(phone.replace(/\D/g, ''))}
+              className="w-full py-3 bg-amber-500 text-white font-bold text-sm rounded-xl active:bg-amber-600">
+              📣 친구에게 공유하고 3,000P 받기
+            </button>
+            <button onClick={() => goMode('review')}
+              className="w-full py-3 bg-white border border-stone-200 text-stone-700 font-bold text-sm rounded-xl">
+              ⭐ 후기 남기고 1,000P 받기
+            </button>
+            <button onClick={() => goMode('home')} className="w-full py-2 text-xs text-stone-400 underline underline-offset-2">처음으로</button>
+          </div>
         </div>
       </Wrap>
     );
@@ -1146,6 +1303,10 @@ export default function OrderPage() {
       {step === 2 && (
         <Section title="배송 정보를 입력해주세요">
           <Field label="연락처"><input value={phone} onChange={e=>setPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/></Field>
+          <Field label="추천인 연락처 (선택)">
+            <input value={referrerPhone} onChange={e=>setReferrerPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/>
+            <p className="text-[11px] text-stone-400 mt-1">친구·지인 추천으로 오셨다면 입력해주세요. 첫 주문에 한해 두 분 다 3,000P를 드려요!</p>
+          </Field>
           <Field label="주소">
             <button onClick={openPostcode} type="button"
               className="w-full py-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-800 font-bold text-sm active:bg-amber-100 transition">

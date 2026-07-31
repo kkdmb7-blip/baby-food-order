@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
     const zone_group = b.zone_group ? String(b.zone_group).slice(0, 30) : null;
     const delivery_method = ['직배송', '택배익일배송', '당일배송'].includes(b.delivery_method) ? b.delivery_method : '당일배송';
+    const referrer_phone = String(b.referrer_phone || '').replace(/\D/g, '') || null;
 
     // 검증
     if (!baby_name) return bad('아기 이름이 필요합니다');
@@ -117,7 +118,26 @@ export async function POST(req: NextRequest) {
       pointsUsed = Math.min(usePointsReq, custRow?.points ?? 0, total_price); // 1P = 1원
     }
     const net_price = total_price - pointsUsed;
-    const pointsEarned = order_type === '선결제' ? 0 : Math.floor(net_price * 0.03);
+
+    // H. 첫주문 웰컴포인트 / 추천인 포인트 — 선결제 제외, 이 연락처로 주문한 적이 전혀 없을 때만
+    const WELCOME_BONUS = 2000;
+    const REFERRAL_BONUS = 3000;
+    let welcomeBonus = 0;
+    let referralBonus = 0;
+    let referredByStored: string | null = null;
+    if (order_type !== '선결제') {
+      const { data: priorOrder } = await sb
+        .from('baby_food_orders').select('id').eq('customer_phone', customer_phone).limit(1).maybeSingle();
+      const isFirstOrder = !priorOrder;
+      if (isFirstOrder && referrer_phone && referrer_phone !== customer_phone) {
+        const { data: referrerOrder } = await sb
+          .from('baby_food_orders').select('id').eq('customer_phone', referrer_phone).limit(1).maybeSingle();
+        if (referrerOrder) { referralBonus = REFERRAL_BONUS; referredByStored = referrer_phone; }
+      }
+      if (isFirstOrder && referralBonus === 0) welcomeBonus = WELCOME_BONUS;
+    }
+    const newCustomerBonus = referralBonus || welcomeBonus;
+    const pointsEarned = order_type === '선결제' ? 0 : Math.floor(net_price * 0.03) + newCustomerBonus;
 
     const { data, error } = await sb
       .from('baby_food_orders')
@@ -125,7 +145,7 @@ export async function POST(req: NextRequest) {
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
-        postal_code, zone_group, delivery_method
+        postal_code, zone_group, delivery_method, referred_by_phone: referredByStored
       })
       .select('id')
       .single();
@@ -145,6 +165,14 @@ export async function POST(req: NextRequest) {
           await sb.from('baby_food_customers').insert({ baby_name, phone: customer_phone, points: pointsEarned });
         }
       }
+      // 추천인에게도 동일 보너스 적립
+      if (referralBonus > 0 && referredByStored) {
+        const { data: refCust } = await sb
+          .from('baby_food_customers').select('id, points').eq('phone', referredByStored).maybeSingle();
+        if (refCust) {
+          await sb.from('baby_food_customers').update({ points: (refCust.points || 0) + referralBonus }).eq('id', refCust.id);
+        }
+      }
     } catch (e) { console.error('[points]', e); }
 
     // 이메일 알림 (실패 무시)
@@ -154,7 +182,10 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price: net_price, customer_phone, address })
     }).catch(() => {});
 
-    return NextResponse.json({ ok: true, id: data.id, points_earned: pointsEarned, points_used: pointsUsed, net_price });
+    return NextResponse.json({
+      ok: true, id: data.id, points_earned: pointsEarned, points_used: pointsUsed, net_price,
+      welcome_bonus: welcomeBonus, referral_bonus: referralBonus,
+    });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
