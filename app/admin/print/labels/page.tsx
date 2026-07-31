@@ -19,7 +19,7 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
     return (o.items as any[]).find(i => i.menu === m)?.qty || 0;
   }
 
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || '이유식';
+  const storeName = (process.env.NEXT_PUBLIC_STORE_NAME || '이유식').trim();
 
   return (
     <div className="bg-white min-h-screen p-4 text-black">

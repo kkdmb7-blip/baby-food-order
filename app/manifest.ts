@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방';
+  const storeName = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
   return {
     name: storeName,
     short_name: storeName,

@@ -58,7 +58,7 @@ function doSave(info: SavedInfo) {
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(info)); } catch {}
 }
 
-const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방';
+const STORE_NAME = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
 async function shareApp(referrerPhone?: string) {
   const url = typeof window !== 'undefined' ? window.location.origin + '/order' : '';
   const text = referrerPhone

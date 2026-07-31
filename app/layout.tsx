@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 const SITE_URL = 'https://kkdmb.picolab.kr';
-const STORE_NAME = process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방';
+const STORE_NAME = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
