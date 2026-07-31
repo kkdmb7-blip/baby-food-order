@@ -5,6 +5,7 @@
 //  ③ 원클릭 재주문 / ⑥ 재주문 리마인더
 // ────────────────────────────────────────────────────────────────
 import type { StageType } from './supabase';
+import { kstToday } from './dates';
 
 // ── ① 개월수 → 단계 추천 ─────────────────────────────────────────
 export function recommendStage(months: number): StageType | null {
@@ -76,7 +77,8 @@ export type LastOrder = { savedAt: string; sets: SavedSet[] };
 const LAST_ORDER_KEY = 'bfo_last_order';
 
 export function saveLastOrder(sets: SavedSet[]) {
-  try { localStorage.setItem(LAST_ORDER_KEY, JSON.stringify({ savedAt: new Date().toISOString().slice(0, 10), sets })); } catch {}
+  // UTC 날짜를 쓰면 자정~오전9시(KST) 사이엔 하루 전 날짜로 잘못 저장돼 재주문 리마인더가 하루 어긋남
+  try { localStorage.setItem(LAST_ORDER_KEY, JSON.stringify({ savedAt: kstToday(), sets })); } catch {}
 }
 export function loadLastOrder(): LastOrder | null {
   try { const s = localStorage.getItem(LAST_ORDER_KEY); return s ? JSON.parse(s) : null; } catch { return null; }

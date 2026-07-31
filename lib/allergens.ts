@@ -45,7 +45,7 @@ export const ALLERGENS: Allergen[] = [
   { key: 'onion',    label: '양파', emoji: '🧅', keywords: ['양파'] },
   { key: 'mushroom', label: '버섯', emoji: '🍄', keywords: ['버섯', '표고', '느타리', '새송이', '팽이'] },
   { key: 'rice',     label: '쌀', emoji: '🍚', keywords: ['쌀', '백미', '현미', '찹쌀'] },
-  { key: 'sesame',   label: '참깨', emoji: '🌱', keywords: ['참깨', '들깨', '참기름', '들기름', '깨'] },
+  { key: 'sesame',   label: '참깨', emoji: '🌱', keywords: ['참깨', '들깨', '참기름', '들기름', '깨소금'] },
 ];
 
 // 흔히 먼저 등록하는 항목 (등록 UI 상단 노출용)

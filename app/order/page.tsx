@@ -536,27 +536,32 @@ export default function OrderPage() {
   }
 
   // ── 검증 ──────────────────────────────────────────────────────
+  // 수요일(반찬 세트)은 서버(api/orders)에서도 최소수량 규칙을 예외 처리함 — 여기서도 똑같이 예외 처리해야
+  // 반찬 1~2세트만 주문하려는 고객이 "최소 3팩" 경고에 막히지 않는다.
+  function isWedDate(date: string): boolean {
+    return date.length === 10 && new Date(date + 'T00:00:00Z').getUTCDay() === 3;
+  }
   function isStep3Valid(): boolean {
     if (dateOrders.some(d => !d.delivery_date)) return false;
     if (dateOrders.some(d => completeSets(d).length === 0)) return false;
     if (combinedDelivery) {
-      // 합배송 모드: 그룹별 합산 >= 3
-      return Object.values(groupQtys()).every(q => q >= MIN_ORDER_QTY);
+      // 합배송 모드: 그룹별 합산 >= 3 (수요일 그룹은 예외)
+      return Object.entries(groupQtys()).every(([key, q]) => isWedDate(key) || q >= MIN_ORDER_QTY);
     } else {
-      // 기본 모드: 날짜별 >= 3
-      return dateOrders.every(d => dateQty(d) >= MIN_ORDER_QTY);
+      // 기본 모드: 날짜별 >= 3 (수요일은 예외)
+      return dateOrders.every(d => isWedDate(d.delivery_date) || dateQty(d) >= MIN_ORDER_QTY);
     }
   }
 
   function qtyWarning(): string | null {
     if (combinedDelivery) {
       const gq = groupQtys();
-      const short = Object.entries(gq).find(([, q]) => q < MIN_ORDER_QTY);
+      const short = Object.entries(gq).find(([key, q]) => !isWedDate(key) && q < MIN_ORDER_QTY);
       if (!short) return null;
       const label = short[0] === 'A' ? '월·화 합산' : short[0] === 'B' ? '목·금 합산' : short[0];
       return `${label} ${short[1]}팩 — 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
     } else {
-      const short = dateOrders.find(d => completeSets(d).length > 0 && dateQty(d) < MIN_ORDER_QTY);
+      const short = dateOrders.find(d => completeSets(d).length > 0 && !isWedDate(d.delivery_date) && dateQty(d) < MIN_ORDER_QTY);
       if (!short) return null;
       return `${short.delivery_date || '선택한 날짜'} ${dateQty(short)}팩 — 날짜별 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
     }

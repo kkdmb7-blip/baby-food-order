@@ -145,7 +145,8 @@ export async function POST(req: NextRequest) {
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
-        postal_code, zone_group, delivery_method, referred_by_phone: referredByStored
+        postal_code, zone_group, delivery_method, referred_by_phone: referredByStored,
+        points_earned: pointsEarned
       })
       .select('id')
       .single();

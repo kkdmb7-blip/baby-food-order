@@ -6,6 +6,10 @@
 ALTER TABLE baby_food_orders
   ADD COLUMN IF NOT EXISTS referred_by_phone text;
 
+-- 이 주문으로 적립된 포인트(3%+웰컴/추천보너스) — 주문 취소 시 정확히 회수하기 위해 저장
+ALTER TABLE baby_food_orders
+  ADD COLUMN IF NOT EXISTS points_earned int NOT NULL DEFAULT 0;
+
 -- 후기
 CREATE TABLE IF NOT EXISTS baby_food_reviews (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
