@@ -17,7 +17,7 @@ import {
 import { addPhoto, listPhotos, deletePhoto, type PhotoMeta } from '@/lib/album';
 
 // ── 타입 ─────────────────────────────────────────────────────────
-type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage' | 'album' | 'review';
+type AppMode = 'home' | 'menu' | 'order' | 'calendar' | 'mypage' | 'album' | 'review' | 'intro';
 type MenuSel = Record<MenuType, number>;
 type OrderSet = {
   id: string;
@@ -46,6 +46,13 @@ type SavedInfo = {
 
 function loadSaved(): SavedInfo | null {
   try { const s = localStorage.getItem(SAVED_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
+}
+const INTRO_SEEN_KEY = 'bfo_intro_seen';
+function introSeen(): boolean {
+  try { return localStorage.getItem(INTRO_SEEN_KEY) === '1'; } catch { return true; }
+}
+function markIntroSeen() {
+  try { localStorage.setItem(INTRO_SEEN_KEY, '1'); } catch {}
 }
 function doSave(info: SavedInfo) {
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(info)); } catch {}
@@ -300,6 +307,9 @@ export default function OrderPage() {
       if (s.zoneGroup !== undefined) setZoneGroup(s.zoneGroup);
       if (s.deliveryKind !== undefined) setDeliveryKind(s.deliveryKind);
       setSavedInfo(s);
+    } else if (!introSeen()) {
+      // 처음 오는 방문자(주문 이력 없음)에게만 서비스 소개 화면을 먼저 보여줌
+      setMode('intro');
     }
     // 알레르기 로드 — 전용 키 우선, 없으면 savedInfo에서
     try {
@@ -622,6 +632,65 @@ export default function OrderPage() {
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
     finally { setSubmitting(false); }
+  }
+
+  // ── 서비스 소개 화면 (첫 방문자 전용) ───────────────────────────
+  if (mode === 'intro') {
+    const enter = () => { markIntroSeen(); goMode('home'); };
+    return (
+      <Wrap>
+        <div className="text-center mb-6 pt-6">
+          <div className="text-4xl mb-2">🍱</div>
+          <div className="text-xl font-bold text-stone-900 mb-1">{STORE_NAME}</div>
+          <div className="text-sm text-stone-500">우리 아기 첫 이유식, 신선하게 집까지</div>
+        </div>
+
+        <div className="space-y-2.5 mb-6">
+          <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">🥕</span>
+            <div>
+              <div className="text-sm font-bold text-stone-900">주문 즉시 신선 조리</div>
+              <div className="text-xs text-stone-500 mt-0.5">냉동 대량생산이 아니라 그때그때 조리해서 배송해요</div>
+            </div>
+          </div>
+          <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">🌱</span>
+            <div>
+              <div className="text-sm font-bold text-stone-900">단계별 맞춤 구성</div>
+              <div className="text-xs text-stone-500 mt-0.5">중기 1·2단계, 후기, 완료기 — 개월수에 맞는 용량·메뉴로</div>
+            </div>
+          </div>
+          <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">🚫</span>
+            <div>
+              <div className="text-sm font-bold text-stone-900">알레르기 자동 관리</div>
+              <div className="text-xs text-stone-500 mt-0.5">한 번 등록해두면 재료에 알레르기 표시가 자동으로 떠요</div>
+            </div>
+          </div>
+          <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
+            <span className="text-2xl">🚗</span>
+            <div>
+              <div className="text-sm font-bold text-stone-900">지역별 당일·직배송</div>
+              <div className="text-xs text-stone-500 mt-0.5">강서·양천은 직배송, 그 외 지역도 당일배송·택배 익일배송 지원</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-center mb-6">
+          <div className="text-xs text-amber-700 mb-1">1팩</div>
+          <div className="text-2xl font-black text-amber-800">5,000원부터</div>
+          <div className="text-[11px] text-amber-600 mt-1">최소 주문 3팩 · 지역에 따라 배송비 일부 포함될 수 있어요</div>
+        </div>
+
+        <button onClick={enter}
+          className="w-full py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-sm active:bg-amber-600 transition mb-2">
+          메뉴 보고 시작하기
+        </button>
+        <button onClick={enter} className="w-full py-2 text-xs text-stone-400 underline underline-offset-2">
+          이미 이용해봤어요, 바로 시작할게요
+        </button>
+      </Wrap>
+    );
   }
 
   // ── 홈 화면 ─────────────────────────────────────────────────────
