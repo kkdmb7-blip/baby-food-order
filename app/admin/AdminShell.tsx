@@ -1,11 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/supabase';
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 
-type Tab = '오늘주문' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '엑셀';
+type Tab = '오늘주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '엑셀';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -87,7 +87,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['오늘주문', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
+  const tabs: Tab[] = ['오늘주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -162,6 +162,9 @@ export default function AdminShell({
             ))}
           </div>
         )}
+
+        {/* ── 탭: 통계 ────────────────────────────────────── */}
+        {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
         {tab === '배송' && <DeliveryGroups orders={orders} today={today} />}
@@ -487,6 +490,74 @@ function ExcelDownload({ today }: { today: string }) {
         📊 엑셀 다운로드
       </a>
       <p className="text-xs text-stone-400 mt-3 text-center">컬럼: 조리일·아기이름·개월수·단계·용량·한우·닭·기타단백질·총팩수·총금액·주소·연락처·상태</p>
+    </div>
+  );
+}
+
+type Stats = {
+  today: { revenue: number; orders: number };
+  thisMonth: { revenue: number; orders: number; newCustomers: number };
+  totalCustomers: number; repeatRate: number;
+  monthly: { month: string; revenue: number; orders: number }[];
+};
+
+function StatsTab() {
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/admin/stats').then(r => r.json()).then(d => { if (d.ok) setStats(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="text-center py-16 text-stone-400 text-sm">불러오는 중…</div>;
+  if (!stats) return <Empty text="통계를 불러오지 못했어요" />;
+
+  const maxRevenue = Math.max(1, ...stats.monthly.map(m => m.revenue));
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-xl border border-stone-200 p-4">
+          <div className="text-xs text-stone-400 mb-1">오늘 매출</div>
+          <div className="text-xl font-black text-stone-900">{stats.today.revenue.toLocaleString()}원</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">주문 {stats.today.orders}건</div>
+        </div>
+        <div className="bg-white rounded-xl border border-stone-200 p-4">
+          <div className="text-xs text-stone-400 mb-1">이번 달 매출</div>
+          <div className="text-xl font-black text-amber-700">{stats.thisMonth.revenue.toLocaleString()}원</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">주문 {stats.thisMonth.orders}건</div>
+        </div>
+        <div className="bg-white rounded-xl border border-stone-200 p-4">
+          <div className="text-xs text-stone-400 mb-1">이번 달 신규고객</div>
+          <div className="text-xl font-black text-emerald-700">{stats.thisMonth.newCustomers}명</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">첫 주문 기준</div>
+        </div>
+        <div className="bg-white rounded-xl border border-stone-200 p-4">
+          <div className="text-xs text-stone-400 mb-1">재구매율</div>
+          <div className="text-xl font-black text-violet-700">{stats.repeatRate}%</div>
+          <div className="text-[11px] text-stone-400 mt-0.5">전체 고객 {stats.totalCustomers}명 중 2회 이상</div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-bold text-stone-800 mb-3">월별 매출 (최근 12개월)</div>
+        <div className="flex items-end gap-1.5 overflow-x-auto" style={{ height: 160 }}>
+          {stats.monthly.map(m => {
+            const h = m.revenue === 0 ? 2 : Math.max(4, Math.round((m.revenue / maxRevenue) * 120));
+            return (
+              <div key={m.month} className="flex flex-col items-center justify-end h-full" style={{ minWidth: 44 }}>
+                <div className="flex-1 flex flex-col justify-end items-center w-full">
+                  <span className="text-[9px] font-bold text-stone-500 mb-0.5 whitespace-nowrap">
+                    {m.revenue > 0 ? Math.round(m.revenue / 10000) + '만' : '0'}
+                  </span>
+                  <div className={`w-full rounded-t ${m.revenue === 0 ? 'bg-stone-200' : 'bg-amber-400'}`} style={{ height: h }} />
+                </div>
+                <span className="text-[10px] text-stone-400 mt-1 border-t border-stone-100 w-full text-center pt-1">{+m.month.slice(5, 7)}월</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

@@ -19,6 +19,11 @@ export const metadata: Metadata = {
     url: SITE_URL,
   },
   robots: { index: true, follow: true },
+  icons: {
+    icon: [{ url: '/favicon.png', type: 'image/png' }],
+    apple: [{ url: '/apple-touch-icon.png' }],
+  },
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: STORE_NAME },
 };
 
 export const viewport: Viewport = {

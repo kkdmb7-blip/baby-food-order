@@ -75,6 +75,31 @@ async function shareApp(referrerPhone?: string) {
   }
 }
 
+// ── 배송상태 웹푸시 구독 ───────────────────────────────────────────
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+async function subscribePush(phone: string): Promise<'ok' | 'denied' | 'unsupported' | 'error'> {
+  const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  if (!vapidKey || !('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return 'denied';
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource });
+    const r = await fetch('/api/push/subscribe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, subscription: sub.toJSON() }),
+    });
+    const d = await r.json();
+    return d.ok ? 'ok' : 'error';
+  } catch (e) { console.error('[subscribePush]', e); return 'error'; }
+}
+
 // ── 헬퍼 ────────────────────────────────────────────────────────
 let _uid = 0;
 function uid() { return String(++_uid); }
@@ -153,6 +178,13 @@ export default function OrderPage() {
   const [myData, setMyData] = useState<{ orders: any[]; customer: any; mismatch?: boolean } | null>(null);
   const [myLoading, setMyLoading] = useState(false);
   const [myError, setMyError] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<'idle' | 'loading' | 'ok' | 'denied' | 'unsupported' | 'error'>('idle');
+  async function handleSubscribePush() {
+    setPushStatus('loading');
+    const digits = myPhone.replace(/\D/g, '');
+    const result = await subscribePush(digits);
+    setPushStatus(result);
+  }
   // ── 배송상태 알림 배너 ──────────────────────────────────────────
   const [statusAlerts, setStatusAlerts] = useState<{ id: string; status: string; delivery_date: string }[]>([]);
   function dismissAlerts() {
@@ -190,6 +222,19 @@ export default function OrderPage() {
       else setMyData({ orders: d.orders, customer: d.customer });
     } catch (e: any) { setMyError(e.message); setMyData(null); }
     finally { setMyLoading(false); }
+  }
+
+  async function cancelMyOrder(orderId: string) {
+    if (!confirm('이 주문을 취소할까요?')) return;
+    try {
+      const r = await fetch('/api/my/cancel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId, phone: myPhone.replace(/\D/g, ''), baby_name: myName })
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) { alert(d.error || '취소 실패'); return; }
+      fetchMyOrders(myPhone);
+    } catch (e: any) { alert(e.message); }
   }
 
   // Step 1
@@ -802,6 +847,18 @@ export default function OrderPage() {
             </button>
           </div>
 
+          {/* 정기배송 — 신청 화면(내 주문 조회 안)이 눈에 잘 안 띄어서 홈에 바로 노출 */}
+          <button
+            onClick={() => {
+              const p = savedInfo?.phone || ''; const nm = savedInfo?.babyName || '';
+              if (!p || !nm) { alert('정기배송은 먼저 주문을 한 번 하신 뒤 신청하실 수 있어요!'); goMode('menu'); return; }
+              goMode('mypage'); setMyPhone(p); setMyName(nm); fetchMyOrders(p, nm);
+            }}
+            className="w-full py-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-bold text-xs shadow-sm flex items-center justify-center gap-1.5"
+          >
+            🔁 정기배송 신청 — 매번 안 시켜도 자동으로 배송돼요
+          </button>
+
           {/* 친구초대 */}
           <button onClick={() => shareApp(savedInfo?.phone)}
             className="w-full py-3 bg-white border border-amber-200 rounded-xl text-amber-800 font-bold text-xs shadow-sm flex items-center justify-center gap-1.5">
@@ -1164,6 +1221,21 @@ export default function OrderPage() {
               </div>
             )}
 
+            {/* 배송상태 웹푸시 알림 */}
+            <div className="mb-4">
+              {pushStatus === 'ok' ? (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-700 font-bold text-center">🔔 배송 알림이 켜졌어요</div>
+              ) : (
+                <button onClick={handleSubscribePush} disabled={pushStatus === 'loading'}
+                  className="w-full py-3 bg-white border border-sky-200 rounded-xl text-sky-700 font-bold text-xs shadow-sm disabled:opacity-50">
+                  {pushStatus === 'loading' ? '설정 중…' : '🔔 배송상태 바뀔 때 알림 받기'}
+                </button>
+              )}
+              {pushStatus === 'denied' && <p className="text-[10px] text-stone-400 mt-1 text-center">브라우저 알림 권한이 꺼져있어요. 설정에서 허용해주세요.</p>}
+              {pushStatus === 'unsupported' && <p className="text-[10px] text-stone-400 mt-1 text-center">이 브라우저는 알림을 지원하지 않아요. (iPhone은 홈 화면에 추가한 뒤 가능해요)</p>}
+              {pushStatus === 'error' && <p className="text-[10px] text-stone-400 mt-1 text-center">알림 설정에 실패했어요. 잠시 후 다시 시도해주세요.</p>}
+            </div>
+
             {/* ⑧ 정기배송 신청 */}
             <RegularSetup phone={myPhone.replace(/\D/g, '')} initial={cust} onSaved={() => fetchMyOrders(myPhone)} />
 
@@ -1188,6 +1260,12 @@ export default function OrderPage() {
                       <div className="text-[10px] text-rose-600 mt-1">🚫 {o.allergies.join(', ')}</div>
                     )}
                     <div className="text-[10px] text-stone-300 mt-1">주문 {new Date(o.created_at).toLocaleDateString('ko-KR')} · {o.id.slice(0, 8)}</div>
+                    {o.status === '접수' && (
+                      <button onClick={() => cancelMyOrder(o.id)}
+                        className="w-full mt-2 py-2 text-[11px] font-bold text-rose-500 border border-rose-200 rounded-lg">
+                        이 주문 취소
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
