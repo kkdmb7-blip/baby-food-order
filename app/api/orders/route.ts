@@ -25,7 +25,9 @@ export async function POST(req: NextRequest) {
     const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
     const zone_group = b.zone_group ? String(b.zone_group).slice(0, 30) : null;
     const delivery_method = ['직배송', '택배익일배송', '당일배송'].includes(b.delivery_method) ? b.delivery_method : '당일배송';
-    const referrer_phone = String(b.referrer_phone || '').replace(/\D/g, '') || null;
+    const referrer_phone_input = String(b.referrer_phone || '').replace(/\D/g, '') || null;
+    const referrer_code = String(b.referrer_code || '').trim().slice(0, 20) || null;
+    const acquisition_source = String(b.acquisition_source || '').trim().slice(0, 40) || null;
 
     // 검증
     if (!baby_name) return bad('아기 이름이 필요합니다');
@@ -119,6 +121,15 @@ export async function POST(req: NextRequest) {
     }
     const net_price = total_price - pointsUsed;
 
+    // 리퍼럴 링크(?ref=코드)로 왔으면 코드로 추천인 조회 — 전화번호를 텍스트에 노출 안 해도 되게.
+    // 코드가 없으면(직접 입력한 경우 등) 수동 입력 전화번호를 그대로 사용.
+    let referrer_phone = referrer_phone_input;
+    if (referrer_code) {
+      const { data: refByCode } = await sb
+        .from('baby_food_customers').select('phone').eq('referral_code', referrer_code).maybeSingle();
+      if (refByCode?.phone) referrer_phone = refByCode.phone;
+    }
+
     // H. 첫주문 웰컴포인트 / 추천인 포인트 — 선결제 제외, 이 연락처로 주문한 적이 전혀 없을 때만
     const WELCOME_BONUS = 2000;
     const REFERRAL_BONUS = 3000;
@@ -146,7 +157,7 @@ export async function POST(req: NextRequest) {
         stage, volume, items, total_qty, total_price: net_price, delivery_date,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
         postal_code, zone_group, delivery_method, referred_by_phone: referredByStored,
-        points_earned: pointsEarned
+        points_earned: pointsEarned, acquisition_source
       })
       .select('id')
       .single();

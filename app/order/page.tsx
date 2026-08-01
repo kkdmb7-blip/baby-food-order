@@ -47,6 +47,8 @@ type SavedInfo = {
 function loadSaved(): SavedInfo | null {
   try { const s = localStorage.getItem(SAVED_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
 }
+const ACQ_SOURCE_KEY = 'bfo_acquisition_source'; // 유입경로 — 최초 1회만 기록(퍼스트터치)
+const REF_CODE_KEY = 'bfo_referral_code'; // 공유링크(?ref=코드)로 들어온 추천인 코드
 const INTRO_SEEN_KEY = 'bfo_intro_seen';
 function introSeen(): boolean {
   try { return localStorage.getItem(INTRO_SEEN_KEY) === '1'; } catch { return true; }
@@ -59,11 +61,27 @@ function doSave(info: SavedInfo) {
 }
 
 const STORE_NAME = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
-async function shareApp(referrerPhone?: string) {
-  const url = typeof window !== 'undefined' ? window.location.origin + '/order' : '';
-  const text = referrerPhone
-    ? `${STORE_NAME} 이유식 써봤는데 좋아서 추천해요! 제 연락처(${referrerPhone})를 추천인으로 입력하면 서로 포인트 받아요 🍱`
-    : `${STORE_NAME} — 신선한 이유식을 집까지 배송해드려요 🍱`;
+
+// 추천인 전화번호를 텍스트에 그대로 노출하지 않고, 링크(?ref=코드)로 자동 적용되게 함
+async function shareApp(phone?: string) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  let url = `${origin}/order`;
+  let text = `${STORE_NAME} — 신선한 이유식을 집까지 배송해드려요 🍱`;
+
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits) {
+    try {
+      const r = await fetch('/api/my/referral-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: digits }),
+      });
+      const d = await r.json();
+      if (d.ok && d.code) {
+        url = `${origin}/order?ref=${d.code}`;
+        text = `${STORE_NAME} 이유식 써봤는데 좋아서 추천해요! 이 링크로 첫 주문하면 서로 3,000P 받아요 🍱`;
+      }
+    } catch { /* 코드 발급 실패해도 그냥 일반 링크로 공유 */ }
+  }
+
   if (typeof navigator !== 'undefined' && (navigator as any).share) {
     try { await (navigator as any).share({ title: STORE_NAME, text, url }); return; } catch { /* 사용자가 취소한 경우 등 — 무시 */ }
   }
@@ -244,6 +262,7 @@ export default function OrderPage() {
   // Step 2
   const [phone, setPhone] = useState('');
   const [referrerPhone, setReferrerPhone] = useState(''); // 친구초대: 추천인 연락처(선택, 첫 주문에만 적용)
+  const [refCodeCaptured, setRefCodeCaptured] = useState(false); // 공유링크(?ref=코드)로 들어와서 자동 적용된 경우
   const [address, setAddress] = useState('');
   const [addressDetail, setAddressDetail] = useState('');
   const [doorPw, setDoorPw] = useState('');
@@ -329,6 +348,7 @@ export default function OrderPage() {
 
   // 후기 (홈 화면 티저 + 작성 화면)
   const [reviews, setReviews] = useState<{ id: string; baby_name: string; rating: number; content: string; created_at: string }[]>([]);
+  const [reviewSummary, setReviewSummary] = useState<{ count: number; avg: number }>({ count: 0, avg: 0 });
   const [reviewPhone, setReviewPhone] = useState('');
   const [reviewBabyName, setReviewBabyName] = useState('');
   const [reviewRating, setReviewRating] = useState(5);
@@ -343,6 +363,15 @@ export default function OrderPage() {
 
   // 저장 정보 로드 — 최초 1회
   useEffect(() => {
+    // 유입경로(?src=insta 등, 퍼스트터치만 기록) + 리퍼럴 링크(?ref=코드) 캡처
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const src = params.get('src') || params.get('utm_source');
+      if (src && !localStorage.getItem(ACQ_SOURCE_KEY)) localStorage.setItem(ACQ_SOURCE_KEY, src.slice(0, 40));
+      const ref = params.get('ref');
+      if (ref) localStorage.setItem(REF_CODE_KEY, ref.slice(0, 20));
+      if (localStorage.getItem(REF_CODE_KEY)) setRefCodeCaptured(true);
+    } catch {}
     const s = loadSaved();
     if (s?.babyName && s?.phone) {
       setBabyName(s.babyName); setMonths(s.months);
@@ -389,8 +418,8 @@ export default function OrderPage() {
       }).catch(() => {});
     }
 
-    // 홈 화면 후기 티저용 — 승인된 후기 목록
-    fetch('/api/reviews').then(r => r.json()).then(d => { if (d.ok) setReviews(d.reviews); }).catch(() => {});
+    // 홈 화면 후기 티저용 — 승인된 후기 목록 + 평균별점
+    fetch('/api/reviews').then(r => r.json()).then(d => { if (d.ok) { setReviews(d.reviews); setReviewSummary(d.summary); } }).catch(() => {});
   }, []);
 
   async function submitReview() {
@@ -407,7 +436,7 @@ export default function OrderPage() {
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '등록 실패');
       setReviewDone(d.bonus || 0);
-      fetch('/api/reviews').then(rr => rr.json()).then(dd => { if (dd.ok) setReviews(dd.reviews); }).catch(() => {});
+      fetch('/api/reviews').then(rr => rr.json()).then(dd => { if (dd.ok) { setReviews(dd.reviews); setReviewSummary(dd.summary); } }).catch(() => {});
     } catch (e: any) { setReviewError(e.message); }
     finally { setReviewSubmitting(false); }
   }
@@ -653,7 +682,9 @@ export default function OrderPage() {
           postal_code: postalCode,
           zone_group: zoneGroup,
           delivery_method: deliveryKind || '당일배송',
-          referrer_phone: referrerPhone.replace(/\D/g, '')
+          referrer_phone: referrerPhone.replace(/\D/g, ''),
+          referrer_code: (() => { try { return localStorage.getItem(REF_CODE_KEY) || ''; } catch { return ''; } })(),
+          acquisition_source: (() => { try { return localStorage.getItem(ACQ_SOURCE_KEY) || ''; } catch { return ''; } })(),
         })
       });
       const d = await r.json();
@@ -869,7 +900,12 @@ export default function OrderPage() {
         {/* 후기 */}
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-bold text-stone-700">이용 후기</span>
+            <span className="text-sm font-bold text-stone-700 flex items-center gap-1.5">
+              이용 후기
+              {reviewSummary.count > 0 && (
+                <span className="text-amber-600 font-bold">⭐ {reviewSummary.avg} <span className="text-stone-400 font-normal">({reviewSummary.count}개)</span></span>
+              )}
+            </span>
             <button onClick={() => goMode('review')} className="text-xs text-amber-700 font-bold">후기 남기고 1,000P →</button>
           </div>
           {reviews.length === 0 ? (
@@ -1455,10 +1491,16 @@ export default function OrderPage() {
       {step === 2 && (
         <Section title="배송 정보를 입력해주세요">
           <Field label="연락처"><input value={phone} onChange={e=>setPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/></Field>
-          <Field label="추천인 연락처 (선택)">
-            <input value={referrerPhone} onChange={e=>setReferrerPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/>
-            <p className="text-[11px] text-stone-400 mt-1">친구·지인 추천으로 오셨다면 입력해주세요. 첫 주문에 한해 두 분 다 3,000P를 드려요!</p>
-          </Field>
+          {refCodeCaptured ? (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-700 font-bold mb-3">
+              ✅ 추천 링크로 들어오셨어요 — 첫 주문 시 두 분 다 3,000P가 자동 적립돼요
+            </div>
+          ) : (
+            <Field label="추천인 연락처 (선택)">
+              <input value={referrerPhone} onChange={e=>setReferrerPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/>
+              <p className="text-[11px] text-stone-400 mt-1">친구·지인 추천으로 오셨다면 입력해주세요. 첫 주문에 한해 두 분 다 3,000P를 드려요!</p>
+            </Field>
+          )}
           <Field label="주소">
             <button onClick={openPostcode} type="button"
               className="w-full py-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-800 font-bold text-sm active:bg-amber-100 transition">

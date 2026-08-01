@@ -3,17 +3,21 @@ import { supabaseService } from '@/lib/supabase';
 
 const REVIEW_BONUS = 1000;
 
-// GET — 공개 후기 목록 (승인된 것만, 전화번호는 노출하지 않음)
+// GET — 공개 후기 목록(최근 20개) + 전체 평균별점·개수 (전화번호는 노출하지 않음)
 export async function GET() {
   const sb = supabaseService();
-  const { data, error } = await sb
-    .from('baby_food_reviews')
-    .select('id, baby_name, rating, content, created_at')
-    .eq('is_approved', true)
-    .order('created_at', { ascending: false })
-    .limit(20);
+  const [{ data, error }, { data: allRatings }] = await Promise.all([
+    sb.from('baby_food_reviews').select('id, baby_name, rating, content, created_at')
+      .eq('is_approved', true).order('created_at', { ascending: false }).limit(20),
+    sb.from('baby_food_reviews').select('rating').eq('is_approved', true),
+  ]);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, reviews: data || [] });
+
+  const ratings = allRatings || [];
+  const count = ratings.length;
+  const avg = count > 0 ? Math.round((ratings.reduce((s, r) => s + r.rating, 0) / count) * 10) / 10 : 0;
+
+  return NextResponse.json({ ok: true, reviews: data || [], summary: { count, avg } });
 }
 
 // POST — 후기 작성 (실제 주문 이력이 있는 연락처만 가능, 첫 후기에 한해 포인트 적립)

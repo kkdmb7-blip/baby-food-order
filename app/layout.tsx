@@ -17,6 +17,12 @@ export const metadata: Metadata = {
     title: `${STORE_NAME} — 신선한 이유식 주문·배송`,
     description: '단계별 맞춤 이유식을 신선하게 집까지. 알레르기 관리·정기배송 지원.',
     url: SITE_URL,
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: STORE_NAME }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `${STORE_NAME} — 신선한 이유식 주문·배송`,
+    images: ['/og-image.png'],
   },
   robots: { index: true, follow: true },
   icons: {

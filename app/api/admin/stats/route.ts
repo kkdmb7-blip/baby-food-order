@@ -8,10 +8,6 @@ function kstDate(iso: string): string {
   const d = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
   return d.toISOString().slice(0, 10);
 }
-function kstMonth(iso: string): string {
-  return kstDate(iso).slice(0, 7);
-}
-
 // GET /api/admin/stats — 매출·신규고객·재구매율 요약 (마케팅 성과 확인용)
 export async function GET() {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
@@ -19,7 +15,7 @@ export async function GET() {
 
   const { data: orders, error } = await sb
     .from('baby_food_orders')
-    .select('created_at, total_price, customer_phone')
+    .select('created_at, total_price, customer_phone, acquisition_source')
     .neq('status', '취소')
     .order('created_at', { ascending: false })
     .limit(5000);
@@ -32,6 +28,7 @@ export async function GET() {
   const monthly: Record<string, { revenue: number; orders: number }> = {};
   const firstOrderMonthByPhone: Record<string, string> = {};
   const orderCountByPhone: Record<string, number> = {};
+  const bySource: Record<string, { revenue: number; orders: number }> = {};
 
   for (const o of orders || []) {
     const day = kstDate(o.created_at);
@@ -44,6 +41,11 @@ export async function GET() {
     orderCountByPhone[o.customer_phone] = (orderCountByPhone[o.customer_phone] || 0) + 1;
     if (!firstOrderMonthByPhone[o.customer_phone] || month < firstOrderMonthByPhone[o.customer_phone]) {
       firstOrderMonthByPhone[o.customer_phone] = month;
+    }
+    if (o.acquisition_source) {
+      if (!bySource[o.acquisition_source]) bySource[o.acquisition_source] = { revenue: 0, orders: 0 };
+      bySource[o.acquisition_source].revenue += o.total_price;
+      bySource[o.acquisition_source].orders++;
     }
   }
 
@@ -62,11 +64,16 @@ export async function GET() {
     monthlyList.push({ month: m, revenue: monthly[m]?.revenue || 0, orders: monthly[m]?.orders || 0 });
   }
 
+  const sourceList = Object.entries(bySource)
+    .map(([source, v]) => ({ source, ...v }))
+    .sort((a, b) => b.orders - a.orders);
+
   return NextResponse.json({
     ok: true,
     today: { revenue: todayRevenue, orders: todayOrders },
     thisMonth: { revenue: monthRevenue, orders: monthOrders, newCustomers: newCustomersThisMonth },
     totalCustomers, repeatRate,
     monthly: monthlyList,
+    bySource: sourceList,
   });
 }

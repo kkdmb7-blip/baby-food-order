@@ -499,6 +499,7 @@ type Stats = {
   thisMonth: { revenue: number; orders: number; newCustomers: number };
   totalCustomers: number; repeatRate: number;
   monthly: { month: string; revenue: number; orders: number }[];
+  bySource: { source: string; revenue: number; orders: number }[];
 };
 
 function StatsTab() {
@@ -557,6 +558,23 @@ function StatsTab() {
             );
           })}
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-stone-200 p-4">
+        <div className="text-sm font-bold text-stone-800 mb-1">유입경로별 성과</div>
+        <div className="text-[11px] text-stone-400 mb-3">주문 링크에 ?src=채널명을 붙여 공유하면 여기 집계돼요 (예: ?src=insta)</div>
+        {stats.bySource.length === 0 ? (
+          <div className="text-center py-8 text-stone-400 text-xs">아직 유입경로가 기록된 주문이 없어요</div>
+        ) : (
+          <div className="space-y-2">
+            {stats.bySource.map(s => (
+              <div key={s.source} className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-2">
+                <span className="text-sm font-bold text-stone-800">{s.source}</span>
+                <span className="text-xs text-stone-500">{s.orders}건 · {s.revenue.toLocaleString()}원</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
