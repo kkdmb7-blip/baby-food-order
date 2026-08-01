@@ -2464,7 +2464,7 @@ function FoodDiary({
       {open && (
         <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-3">
           <p className="text-[11px] text-stone-500 leading-relaxed">
-            새 재료는 <span className="font-bold text-amber-600">🧪 테스트</span>로 시작하세요. 한 번에 한 가지만, <span className="font-bold">3일간</span> 이상반응(발진·설사 등)을 관찰하는 게 안전해요. 괜찮으면 <span className="font-bold text-emerald-600">✅ 안전</span>, 이상하면 <span className="font-bold text-rose-600">🚫 알레르기</span> — 알레르기로 표시하면 메뉴 경고에 자동 반영돼요.
+            새 재료는 <span className="font-bold text-amber-600">🧪 테스트</span>로 시작하세요. 흔히 한 번에 한 가지만, <span className="font-bold">3일간</span> 간격을 두고 이상반응(발진·설사 등)을 지켜보라고 하는데, 정확한 기준은 다니시는 소아과에 확인하시는 걸 권장드려요. 괜찮으면 <span className="font-bold text-emerald-600">✅ 안전</span>, 이상하면 <span className="font-bold text-rose-600">🚫 알레르기</span> — 알레르기로 표시하면 메뉴 경고에 자동 반영돼요.
           </p>
 
           {/* 테스트중 — 3일 관찰 가이드 */}
