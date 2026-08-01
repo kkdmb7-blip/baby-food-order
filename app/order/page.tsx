@@ -728,6 +728,11 @@ export default function OrderPage() {
           <div className="text-sm text-stone-500">우리 아기 첫 이유식, 신선하게 집까지</div>
         </div>
 
+        <div className="bg-stone-800 text-white rounded-2xl p-4 mb-4">
+          <div className="text-sm font-bold mb-1">메뉴는 하루 3가지뿐이에요</div>
+          <div className="text-xs text-stone-300 leading-relaxed">대신 그 3가지를 매일 소량으로 진짜 신선하게 조리하고, 아기 알레르기까지 저희가 직접 챙겨드려요. 많은 종류보다 확실한 안전과 신선함을 택했어요.</div>
+        </div>
+
         <div className="space-y-2.5 mb-6">
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
             <span className="text-2xl">🥕</span>
