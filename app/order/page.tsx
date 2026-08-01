@@ -783,6 +783,74 @@ export default function OrderPage() {
 
   // ── 홈 화면 ─────────────────────────────────────────────────────
   if (mode === 'home') {
+    const isReturning = !!(savedInfo?.babyName && savedInfo?.phone); // 주문 이력 있는 재방문 고객인지
+
+    // 처음 오는 손님(주문 이력 없음)은 복잡한 재방문자용 기능 없이 주문 중심으로 단순하게
+    if (!isReturning) {
+      return (
+        <Wrap>
+          <div className="text-center mb-8 pt-4">
+            <div className="text-3xl mb-2">🍱</div>
+            <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
+            <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => goMode('menu')}
+              className="w-full py-5 bg-white border-2 border-amber-200 rounded-2xl text-stone-900 font-bold text-base shadow-sm hover:border-amber-400 transition"
+            >
+              <div className="text-2xl mb-1">📋</div>
+              이번 주 메뉴 보기
+              <div className="text-xs text-stone-400 font-normal mt-0.5">요일별 메뉴 확인 · 바로 주문</div>
+            </button>
+            <button
+              onClick={() => goMode('order')}
+              className="w-full py-5 bg-amber-500 rounded-2xl text-white font-bold text-base shadow-sm active:bg-amber-600 transition"
+            >
+              <div className="text-2xl mb-1">✏️</div>
+              주문하기
+              <div className="text-xs text-amber-100 font-normal mt-0.5">날짜·단계·메뉴 직접 선택</div>
+            </button>
+          </div>
+
+          {/* 후기 — 첫 주문 전 신뢰 신호 */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-bold text-stone-700 flex items-center gap-1.5">
+                이용 후기
+                {reviewSummary.count > 0 && (
+                  <span className="text-amber-600 font-bold">⭐ {reviewSummary.avg} <span className="text-stone-400 font-normal">({reviewSummary.count}개)</span></span>
+                )}
+              </span>
+            </div>
+            {reviews.length === 0 ? (
+              <div className="bg-white border border-stone-100 rounded-xl px-4 py-5 text-center text-xs text-stone-400">
+                아직 후기가 없어요. 첫 후기의 주인공이 되어보세요! 🍱
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {reviews.slice(0, 3).map(rv => (
+                  <div key={rv.id} className="bg-white border border-stone-100 rounded-xl px-4 py-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold text-stone-700">{rv.baby_name} 부모님</span>
+                      <span className="text-amber-500 text-xs">{'★'.repeat(rv.rating)}{'☆'.repeat(5 - rv.rating)}</span>
+                    </div>
+                    <p className="text-xs text-stone-600 leading-relaxed line-clamp-3">{rv.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 알레르기는 미리 등록해두면 편해서 첫방문자에게도 유지 */}
+          <div className="mt-3">
+            <AllergyEditor allergies={allergies} toggle={toggleAllergy} open={allergyOpen} setOpen={setAllergyOpen} />
+          </div>
+        </Wrap>
+      );
+    }
+
     return (
       <Wrap>
         <div className="text-center mb-8 pt-4">
@@ -821,8 +889,8 @@ export default function OrderPage() {
         })()}
 
         {/* ⑤ 성장단계 전환 안내 */}
-        {savedInfo && (() => {
-          const note = stageTransitionNote(parseInt(savedInfo.months || '0'), savedInfo.lastStage);
+        {(() => {
+          const note = stageTransitionNote(parseInt(savedInfo!.months || '0'), savedInfo!.lastStage);
           if (!note) return null;
           return (
             <div className="mb-3 bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-xs text-sky-800 leading-relaxed">
