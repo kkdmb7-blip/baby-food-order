@@ -730,7 +730,7 @@ export default function OrderPage() {
 
         <div className="bg-stone-800 text-white rounded-2xl p-4 mb-4">
           <div className="text-sm font-bold mb-1">메뉴는 하루 3가지뿐이에요</div>
-          <div className="text-xs text-stone-300 leading-relaxed">대신 그 3가지를 매일 소량으로 진짜 신선하게 조리하고, 아기 알레르기까지 저희가 직접 챙겨드려요. 많은 종류보다 확실한 안전과 신선함을 택했어요.</div>
+          <div className="text-xs text-stone-300 leading-relaxed">대신 그 3가지를 매일 소량으로, 대량생산 없이 진짜 신선하게 조리해요. 많은 종류보다 확실한 신선함을 택했어요.</div>
         </div>
 
         <div className="space-y-2.5 mb-6">
@@ -751,8 +751,8 @@ export default function OrderPage() {
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
             <span className="text-2xl">🚫</span>
             <div>
-              <div className="text-sm font-bold text-stone-900">알레르기 자동 관리</div>
-              <div className="text-xs text-stone-500 mt-0.5">한 번 등록해두면 재료에 알레르기 표시가 자동으로 떠요</div>
+              <div className="text-sm font-bold text-stone-900">알레르기 재료 자동 표시</div>
+              <div className="text-xs text-stone-500 mt-0.5">등록해두신 알레르기 재료가 들어가면 메뉴에 표시해드려요 (참고용 — 최종 확인은 보호자님이 함께 해주세요)</div>
             </div>
           </div>
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
