@@ -126,7 +126,9 @@ function newSet(): OrderSet { return { id: uid(), stage: null, volume: null, men
 function newDate(): DateOrder { return { id: uid(), delivery_date: '', sets: [newSet()] }; }
 
 function setQty(s: OrderSet, menu: MenuType, val: number): OrderSet {
-  return { ...s, menus: { ...s.menus, [menu]: Math.max(0, Math.min(10, val)) } };
+  // _simpleQty(간단주문 팩수)가 남아있으면 상세 메뉴를 골라도 제출 시 무시되고 메뉴가 빈 채로
+  // 나가버림 — 상세 메뉴를 직접 조작하는 순간 간단주문 흔적은 지운다.
+  return { ...s, _simpleQty: undefined, menus: { ...s.menus, [menu]: Math.max(0, Math.min(10, val)) } };
 }
 function setQtyTotal(s: OrderSet): number {
   return s._simpleQty ?? Object.values(s.menus).reduce((a, b) => a + b, 0);
@@ -1844,7 +1846,7 @@ export default function OrderPage() {
                               <div className="grid grid-cols-2 gap-1.5">
                                 {STAGES.map(st => (
                                   <button key={st}
-                                    onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null}))}
+                                    onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null, menus: emptyMenus(), _simpleQty: undefined}))}
                                     className={`relative py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                     {st}
                                     {recStage===st && s.stage!==st && (
@@ -1862,7 +1864,7 @@ export default function OrderPage() {
                                 <div className="grid grid-cols-2 gap-1.5">
                                   {STAGE_OPTIONS[s.stage].map(opt => (
                                     <button key={opt.volume}
-                                      onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume}))}
+                                      onClick={()=>updSet(d.id, s.id, x=>({...x, volume:opt.volume, _simpleQty: undefined}))}
                                       className={`py-2 rounded-lg text-xs border transition ${s.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                       {opt.volume}g · {getPrice(s.stage!, opt.volume, tier).toLocaleString()}원
                                     </button>
