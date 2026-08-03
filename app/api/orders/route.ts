@@ -97,15 +97,24 @@ export async function POST(req: NextRequest) {
         .from('baby_food_customers')
         .select('id, prepaid_balance')
         .eq('phone', customer_phone)
-        .single();
+        .maybeSingle();
       if (!cust) return bad('선결제 고객 정보를 찾을 수 없습니다');
       if (cust.prepaid_balance < total_qty)
         return bad(`잔여 팩이 부족합니다 (잔여: ${cust.prepaid_balance}팩, 필요: ${total_qty}팩)`);
-      const { error: ue } = await sb
+      // ⚠️ "읽은 값 - 수량"을 그냥 덮어쓰면, 같은 고객이 거의 동시에 두 번 주문(중복클릭 등)했을 때
+      // 둘 다 같은 잔액을 읽어서 각자 계산 → 마지막에 쓴 값만 남아 실제로는 1번만 차감되거나
+      // 잔액 부족인데도 통과되는 경쟁조건이 생김. eq('prepaid_balance', cust.prepaid_balance)로
+      // "내가 읽은 값 그대로일 때만" 갱신되게 해서, 동시 요청 중 하나는 매칭 실패로 안전하게 막는다.
+      const { data: updated, error: ue } = await sb
         .from('baby_food_customers')
         .update({ prepaid_balance: cust.prepaid_balance - total_qty })
-        .eq('id', cust.id);
+        .eq('id', cust.id)
+        .eq('prepaid_balance', cust.prepaid_balance)
+        .select('id');
       if (ue) return NextResponse.json({ ok: false, error: '잔여 차감 실패' }, { status: 500 });
+      if (!updated || updated.length === 0) {
+        return bad('처리 중 잔액이 변경됐어요 — 다시 시도해주세요 (중복 제출 방지)');
+      }
       customer_id = cust.id;
     }
 
