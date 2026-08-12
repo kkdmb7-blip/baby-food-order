@@ -55,8 +55,10 @@ export function saveDiary(d: Diary) {
 }
 export function setFoodStatus(key: string, status: FoodStatus): Diary {
   const d = loadDiary();
+  // UTC 날짜를 쓰면 자정~오전9시(KST) 사이엔 하루 전 날짜로 잘못 저장돼 관찰 경과일(testingDays)이
+  // 하루 어긋남 — saveLastOrder와 동일하게 kstToday()로 통일.
   if (status === 'none') { delete d[key]; }
-  else { d[key] = { status, startDate: status === 'testing' ? new Date().toISOString().slice(0, 10) : d[key]?.startDate }; }
+  else { d[key] = { status, startDate: status === 'testing' ? kstToday() : d[key]?.startDate }; }
   saveDiary(d);
   return d;
 }

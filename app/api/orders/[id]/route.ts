@@ -25,8 +25,15 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
   const uncancelling = order.status === '취소' && status !== '취소';
   const statusChanged = status !== order.status;
 
-  const { error } = await sb.from('baby_food_orders').update({ status }).eq('id', id);
+  // eq('status', order.status)로 "내가 읽은 상태 그대로일 때만" 바뀌게 해서, 관리자 화면 이중클릭
+  // 이나 두 기기에서 동시에 상태를 바꿀 때 취소 환불(applyCancelReversal)이 두 번 실행되는 걸 막음.
+  const { data: updated, error } = await sb
+    .from('baby_food_orders').update({ status })
+    .eq('id', id).eq('status', order.status).select('id');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!updated || updated.length === 0) {
+    return NextResponse.json({ error: '다른 곳에서 이미 상태가 변경됐어요 — 새로고침 후 다시 시도해주세요' }, { status: 409 });
+  }
 
   if (becomingCancelled) await applyCancelReversal(sb, order, 1);
   else if (uncancelling) await applyCancelReversal(sb, order, -1);

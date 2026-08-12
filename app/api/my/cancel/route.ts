@@ -25,8 +25,14 @@ export async function POST(req: NextRequest) {
     if (order.customer_phone !== phone || norm(order.baby_name) !== name) return bad('본인 주문만 취소할 수 있어요');
     if (order.status !== '접수') return bad('이미 준비가 시작된 주문은 취소할 수 없어요. 문의해주세요.');
 
-    const { error } = await sb.from('baby_food_orders').update({ status: '취소' }).eq('id', orderId);
+    // eq('status', order.status)로 "내가 확인한 상태 그대로일 때만" 변경되게 함 — 안 그러면
+    // 연타/중복 요청 두 개가 둘 다 status==='접수'를 확인하고 둘 다 통과해서 잔액/포인트가
+    // applyCancelReversal로 두 번 환불되는 사고가 생김.
+    const { data: updated, error } = await sb
+      .from('baby_food_orders').update({ status: '취소' })
+      .eq('id', orderId).eq('status', order.status).select('id');
     if (error) return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
+    if (!updated || updated.length === 0) return bad('이미 처리된 주문이에요');
 
     await applyCancelReversal(sb, order, 1);
     const text = statusPushText('취소', order.delivery_date);
