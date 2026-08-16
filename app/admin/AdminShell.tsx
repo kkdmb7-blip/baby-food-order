@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/supabase';
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
+import { slicesOn, qtyOn } from '@/lib/orderItems';
 
 type Tab = '오늘주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
@@ -169,10 +170,10 @@ export default function AdminShell({
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
         {tab === '배송' && <DeliveryGroups orders={orders} today={today} />}
 
-        {tab === '조리표' && <CookingSheet orders={orders} getQty={getQty} today={today} />}
+        {tab === '조리표' && <CookingSheet orders={orders} today={today} />}
 
         {/* ── 탭 3: 주소록 ────────────────────────────────── */}
-        {tab === '주소록' && <AddressBook orders={orders} today={today} getQty={getQty} />}
+        {tab === '주소록' && <AddressBook orders={orders} today={today} />}
 
         {/* ── 탭 4: 메뉴 관리 ─────────────────────────────── */}
         {tab === '메뉴관리' && (
@@ -195,19 +196,27 @@ export default function AdminShell({
 }
 
 // ── 조리표 ────────────────────────────────────────────────────────
-function CookingSheet({ orders, getQty, today }: { orders: Order[]; getQty: (o: Order, m: MenuType) => number; today: string }) {
-  // 단계 → 용량 → 주문 목록
-  const groups: { stage: string; volume: number; orders: Order[] }[] = [];
-  for (const stage of STAGES) {
-    for (const opt of STAGE_OPTIONS[stage]) {
-      const list = orders.filter(o => o.stage === stage && o.volume === opt.volume);
-      if (list.length > 0) groups.push({ stage, volume: opt.volume, orders: list });
+function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
+  // ⚠️ 예전엔 주문의 stage/volume으로 묶어서, 복합주문(stage='mixed', volume=null)이
+  // 어느 그룹에도 안 잡혀 화면 조리표에서 통째로 빠졌음 — 인쇄용 조리표와 동일하게
+  // "그날 몫 세트" 단위로 묶는다.
+  type Row = { order: Order; menus: Record<string, number>; qty: number };
+  const totals: Record<MenuType, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
+  const groupMap = new Map<string, { stage: string; volume: number; rows: Row[] }>();
+  for (const o of orders) {
+    for (const s of slicesOn(o as any, today)) {
+      for (const m of MENU_TYPES) totals[m] += s.menus[m] || 0;
+      const key = `${s.stage ?? '-'}|${s.volume ?? 0}`;
+      if (!groupMap.has(key)) groupMap.set(key, { stage: String(s.stage ?? '-'), volume: Number(s.volume ?? 0), rows: [] });
+      groupMap.get(key)!.rows.push({ order: o, menus: s.menus, qty: s.qty });
     }
   }
-
-  // 메뉴별 합계
-  const totals: Record<MenuType, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
-  for (const o of orders) for (const m of MENU_TYPES) totals[m] += getQty(o, m);
+  const STAGE_ORDER: string[] = [...STAGES];
+  const groups = [...groupMap.values()].sort((a, b) => {
+    const ai = STAGE_ORDER.indexOf(a.stage), bi = STAGE_ORDER.indexOf(b.stage);
+    if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    return a.volume - b.volume;
+  });
 
   return (
     <div>
@@ -219,19 +228,21 @@ function CookingSheet({ orders, getQty, today }: { orders: Order[]; getQty: (o: 
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-5 space-y-5">
+        {groups.length === 0 && <div className="text-center text-stone-400 text-sm py-6">오늘 조리할 주문이 없어요</div>}
         {groups.map(g => (
           <div key={`${g.stage}-${g.volume}`}>
             <div className="font-bold text-sm border-b-2 border-stone-900 pb-1 mb-2">
-              ■ {g.stage} ({g.volume}g) — {g.orders.length}명
+              ■ {g.stage}{g.volume ? ` (${g.volume}g)` : ''} — {g.rows.length}명 / {g.rows.reduce((s, r) => s + r.qty, 0)}팩
             </div>
             <table className="w-full text-sm">
               <tbody>
-                {g.orders.map(o => (
-                  <tr key={o.id} className="border-b border-stone-100">
-                    <td className="py-1.5 font-bold w-24">{o.baby_name}</td>
+                {g.rows.map((row, ri) => (
+                  <tr key={`${row.order.id}-${ri}`} className="border-b border-stone-100">
+                    <td className="py-1.5 font-bold w-24">{row.order.baby_name}</td>
                     <td className="py-1.5">
-                      {MENU_TYPES.filter(m => getQty(o, m) > 0).map(m => `${m.replace('기타단백질','기타')} ${getQty(o, m)}팩`).join(' · ')}
+                      {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${m.replace('기타단백질','기타')} ${row.menus[m]}팩`).join(' · ')}
                     </td>
+                    <td className="py-1.5 text-right text-stone-500 text-xs w-12">{row.qty}팩</td>
                   </tr>
                 ))}
               </tbody>
@@ -273,7 +284,8 @@ function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
         <div className="flex items-center gap-2">
           <span className="font-bold text-stone-900">{o.baby_name}</span>
           <span className="text-xs text-stone-500">{formatPhone(o.customer_phone)}</span>
-          <span className="text-xs font-bold text-amber-700">{o.total_qty}팩</span>
+          {/* 복합주문은 total_qty가 전체 날짜 합계라 그날 배송량과 다름 — 그날 몫만 표시 */}
+          <span className="text-xs font-bold text-amber-700">{qtyOn(o as any, today)}팩</span>
         </div>
         <div className="text-xs text-stone-600 truncate">
           {o.address}{o.address_detail ? ' ' + o.address_detail : ''}
@@ -324,7 +336,7 @@ function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
   );
 }
 
-function AddressBook({ orders, today, getQty }: { orders: Order[]; today: string; getQty: (o: Order, m: MenuType) => number }) {
+function AddressBook({ orders, today }: { orders: Order[]; today: string }) {
   return (
     <div>
       <div className="flex gap-2 mb-4 no-print">
@@ -347,9 +359,13 @@ function AddressBook({ orders, today, getQty }: { orders: Order[]; today: string
                 {o.address}{o.address_detail ? ' ' + o.address_detail : ''}
                 {o.door_password && <span className="ml-2 text-xs text-stone-500">🔑 {o.door_password}</span>}
               </div>
+              {/* 복합주문은 stage='mixed'라 그날 실제 단계·용량이 안 보였고 팩수도 전체합계였음 */}
               <div className="text-xs text-stone-500 mt-0.5">
-                {o.stage} · {o.volume}g ·{' '}
-                {MENU_TYPES.filter(m=>getQty(o,m)>0).map(m=>`${m} ${getQty(o,m)}`).join(' / ')} · 총 {o.total_qty}팩
+                {slicesOn(o as any, today).map(s => `${s.stage ?? '-'}${s.volume ? ` ${s.volume}g` : ''}`).join(' / ') || `${o.stage} · ${o.volume}g`}
+                {' · '}
+                {MENU_TYPES.map(m => ({ m, q: slicesOn(o as any, today).reduce((s, x) => s + (x.menus[m] || 0), 0) }))
+                  .filter(x => x.q > 0).map(x => `${x.m} ${x.q}`).join(' / ')}
+                {' · 총 '}{qtyOn(o as any, today)}팩
               </div>
             </div>
           </div>
@@ -448,9 +464,14 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 잔여 {c.prepaid_balance}팩
               </div>
             </div>
-            {c.is_regular && c.regular_schedule.length > 0 && (
+            {/* regular_schedule은 배열이 아니라 { stage, volume, slots:[{day,qty}] } 객체 —
+                예전엔 배열로 다뤄서(.length/.map) 정기배송 스케줄이 화면에 전혀 안 나왔음 */}
+            {c.is_regular && (c.regular_schedule?.slots?.length ?? 0) > 0 && (
               <div className="text-xs text-stone-500 mb-2">
-                정기: {c.regular_schedule.map((s: any) => `${s.day}요일 ${s.qty}팩`).join(' · ')}
+                정기: {c.regular_schedule?.stage}
+                {c.regular_schedule?.volume ? ` ${c.regular_schedule.volume}g` : ''}
+                {' · '}
+                {(c.regular_schedule?.slots || []).map(s => `${s.day} ${s.qty}팩`).join(' · ')}
               </div>
             )}
             <div className="flex gap-2">

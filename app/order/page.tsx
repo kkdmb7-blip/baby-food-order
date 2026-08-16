@@ -687,7 +687,9 @@ export default function OrderPage() {
 
     const totalQty = dateOrders.reduce((sum, d) => sum + dateQty(d), 0);
     const totalPrice = dateOrders.reduce((sum, d) => sum + datePrice(d, tier), 0);
-    const firstDate = dateOrders[0].delivery_date;
+    // 주문 행의 delivery_date는 관리자 목록 정렬·엑셀의 기준이 되는데, 사용자가 날짜를 추가한
+    // 순서(dateOrders[0])를 그대로 쓰면 가장 이른 날이 아닐 수 있어 목록이 뒤죽박죽 보였음.
+    const firstDate = [...dateOrders.map(d => d.delivery_date).filter(Boolean)].sort()[0] || dateOrders[0].delivery_date;
 
     // 반찬 세트(volume=0)도 반드시 포함시켜야 함 — 예전엔 `s.volume` 조건에 걸려 빠지는 바람에
     // 서버가 받는 items에 반찬이 아예 없어서 총액 0원 → "가격 계산 오류"로 주문이 거부됐음.
@@ -1488,14 +1490,22 @@ export default function OrderPage() {
         <div className="bg-white rounded-2xl p-7 shadow-sm border border-amber-100 text-center">
           <div className="text-5xl mb-4">🍱</div>
           <h1 className="text-xl font-bold text-stone-900 mb-2">주문이 접수됐어요!</h1>
-          <p className="text-sm text-stone-500 mb-5 leading-relaxed">오늘 오후 12~18시에 배송됩니다</p>
+          {/* 주문은 항상 "내일 이후" 조리분인데 안내는 "오늘 오후 배송"으로 고정돼 있어서
+              실제 배송일과 다른 안내가 나갔음 — 실제 조리일을 그대로 보여준다. */}
+          <p className="text-sm text-stone-500 mb-5 leading-relaxed">
+            {[...new Set(dateOrders.map(d => d.delivery_date).filter(Boolean))].sort().join(', ')}
+            <br />조리 후 당일 오후 12~18시에 배송됩니다
+          </p>
           <div className="bg-amber-50 rounded-xl px-4 py-3 text-xs text-stone-700 leading-loose text-left mb-4 space-y-2">
             {dateOrders.map(d => (
               <div key={d.id}>
                 <div className="font-bold text-amber-700">{d.delivery_date} ({dateQty(d)}팩)</div>
-                {d.sets.filter(s=>s.stage&&s.volume).map(s => (
+                {/* 반찬 세트는 volume=0이라 `s.volume` 조건에 걸려 완료 화면에서만 안 보였음 */}
+                {d.sets.filter(isFilledSet).map(s => (
                   <div key={s.id} className="pl-3">
-                    {s.stage} {s.volume}g — {s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}`).join(' / ')}
+                    {isBanchanSet(s)
+                      ? `반찬 세트 ${setQtyTotal(s)}세트`
+                      : `${s.stage} ${s.volume}g — ${s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}`).join(' / ')}`}
                   </div>
                 ))}
               </div>

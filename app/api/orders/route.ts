@@ -214,7 +214,8 @@ export async function POST(req: NextRequest) {
     void fetch(new URL('/api/notify', req.url), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, total_qty, total_price: net_price, customer_phone, address })
+      // items까지 넘겨야 알림 메일에 날짜별 구성이 풀려 나옴(복합주문이 'mixed'로만 오던 문제)
+      body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, items, total_qty, total_price: net_price, customer_phone, address })
     }).catch(() => {});
 
     return NextResponse.json({

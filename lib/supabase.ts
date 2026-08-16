@@ -57,8 +57,17 @@ export type Customer = {
   phone: string;
   prepaid_balance: number;
   is_regular: boolean;
-  regular_schedule: RegularSlot[];
+  // ⚠️ 실제 저장 형태는 배열이 아니라 객체 { stage, volume, slots:[{day,qty}] } 임
+  // (api/my/regular이 그렇게 씀). 타입만 RegularSlot[]로 돼 있어서 관리자 화면이
+  // regular_schedule.length / .map()을 쓰다가 아무것도 표시하지 못했음.
+  regular_schedule: RegularSchedule | null;
   memo: string | null;
+};
+
+export type RegularSchedule = {
+  stage?: StageType;
+  volume?: number;
+  slots?: RegularSlot[];
 };
 
 export type WeeklyMenu = {

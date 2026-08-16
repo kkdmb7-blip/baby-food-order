@@ -40,6 +40,9 @@ export default function LoginPage() {
             onChange={e => setPw(e.target.value)}
             placeholder="비밀번호"
             autoFocus
+            // 비밀번호가 숫자로만 돼 있어서 폰에서 문자 자판이 뜨면 입력이 번거로움
+            inputMode="numeric"
+            autoComplete="current-password"
             className="w-full px-3.5 py-3 bg-white border border-brand-100 rounded-xl outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 mb-3"
           />
           {err && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
