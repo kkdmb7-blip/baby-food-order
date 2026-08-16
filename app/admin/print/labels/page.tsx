@@ -4,6 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
 import { orderDates, qtyOn, shiftDate } from '@/lib/orderItems';
+import { routeCodeOf } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -35,7 +36,9 @@ function splitAddr(o: Order) {
     || rest.match(/([가-힣0-9]+길)/)?.[1] || '';
   return { gu, dong, road };
 }
-function areaOf(o: Order): string {
+// 묶음·정렬 기준은 사장님이 엑셀에 매겨둔 배송 순번(routeCode).
+// 순번을 못 찾은 새 손님만 주소에서 동/도로명을 뽑아 묶고 맨 뒤로 보낸다.
+function areaLabel(o: Order): string {
   const { gu, dong, road } = splitAddr(o);
   if (dong) return [gu, dong].filter(Boolean).join(' ');
   if (road) return [gu, road].filter(Boolean).join(' ');
@@ -61,21 +64,27 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   const orders = all.filter(isDrivenByUs);
   const parcelCount = all.length - orders.length;
 
-  const groups = new Map<string, Order[]>();
+  // 배송 순번(엑셀 전체주소록의 맨 오른쪽 숫자)으로 묶고 정렬 — 인쇄물이 곧 도는 순서가 됨
+  type Grp = { code: number | null; label: string; list: Order[] };
+  const grpMap = new Map<string, Grp>();
+  let matched = 0;
   for (const o of orders) {
-    const k = areaOf(o);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k)!.push(o);
+    const code = routeCodeOf(String(o.address || ''));
+    if (code !== null) matched++;
+    const key = code !== null ? `c${code}` : `x${areaLabel(o)}`;
+    if (!grpMap.has(key)) grpMap.set(key, { code, label: areaLabel(o), list: [] });
+    grpMap.get(key)!.list.push(o);
   }
-  for (const list of groups.values()) {
-    list.sort((a, b) => String(a.address || '').localeCompare(String(b.address || '')));
+  for (const g of grpMap.values()) {
+    g.list.sort((a, b) => String(a.address || '').localeCompare(String(b.address || '')));
   }
-  // 같은 구끼리는 붙여두고(이동 동선), 구 안에서는 건수 많은 동네부터
-  const sorted = [...groups.entries()].sort((a, b) => {
-    const ga = splitAddr(a[1][0]).gu, gb = splitAddr(b[1][0]).gu;
-    if (ga !== gb) return ga.localeCompare(gb);
-    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+  const sorted = [...grpMap.values()].sort((a, b) => {
+    if (a.code === null && b.code === null) return a.label.localeCompare(b.label);
+    if (a.code === null) return 1;   // 순번 없는 새 손님은 맨 뒤
+    if (b.code === null) return -1;
+    return a.code - b.code;
   });
+  const unmatched = orders.length - matched;
 
   const dow = DOW_KOR[new Date(date + 'T00:00:00Z').getUTCDay()];
   let no = 0;
@@ -90,20 +99,27 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
           <span className="text-base font-black">배송 {date} ({dow})</span>
           <span className="font-bold">{orders.length}건</span>
           {parcelCount > 0 && <span className="text-stone-500">택배 {parcelCount}건 제외</span>}
+          {unmatched > 0 && <span className="text-red-600">구역 미지정 {unmatched}건</span>}
         </div>
         <PrintBar date={date} kind="labels" />
       </div>
 
       <table className="w-full border-collapse text-[12px] leading-tight">
         <tbody>
-          {sorted.map(([area, list]) => (
-            <React.Fragment key={area}>
+          {sorted.map(g => (
+            <React.Fragment key={g.code !== null ? `c${g.code}` : `x${g.label}`}>
               <tr>
                 <td colSpan={5} className="border-b border-black pt-1.5 pb-0.5 font-black text-[11px]">
-                  {area} <span className="font-normal text-stone-500">{list.length}건</span>
+                  {g.code !== null
+                    ? <><span className="text-[13px]">{g.code}</span>
+                        <span className="font-normal ml-1">
+                          {[...new Set(g.list.map(x => areaLabel(x)))].join(', ')}
+                        </span></>
+                    : <span className="text-red-600">구역 미지정 · {g.label}</span>}
+                  <span className="font-normal text-stone-500 ml-1">{g.list.length}건</span>
                 </td>
               </tr>
-              {list.map(o => {
+              {g.list.map(o => {
                 no++;
                 return (
                   <tr key={o.id} className="border-b border-stone-300">
