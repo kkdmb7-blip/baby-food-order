@@ -11,6 +11,15 @@ html, body {
   .no-print { display: none !important; }
   body { background: white !important; }
   .page-break { page-break-after: always; }
+
+  /* 조리표·주소록 인쇄용 — 종이에 그대로 옮겨지도록 */
+  @page { margin: 10mm; }
+  /* 배송방식 헤더의 검은 배경이 인쇄에서 날아가지 않게 (기본값은 배경 생략) */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  /* 한 사람 몫이 페이지 경계에서 잘리면 조리·배송 중 누락으로 이어짐 */
+  .break-inside-avoid, tr, section { break-inside: avoid; page-break-inside: avoid; }
+  /* 링크 뒤에 URL이 자동으로 붙어 지저분해지는 것 방지 */
+  a[href]:after { content: none !important; }
 }
 
 /* iOS Safari 폼 줌 방지 */
