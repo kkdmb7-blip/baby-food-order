@@ -78,10 +78,13 @@ export async function GET(req: Request) {
 
     const schedule: any[] = rows[0].yusik.schedule || [];
 
+    // 주방 데이터의 세 번째 메뉴 타입은 실제로 'other' — 'p3'만 매핑돼 있어서
+    // 기타단백질 메뉴가 통째로 누락됐음(주문폼에 재료가 안 뜨고 메뉴명도 안 보임)
     const TYPE_MAP: Record<string, { kor: string; key: 'hanwoo' | 'chicken' | 'p3' }> = {
       hanwoo:  { kor: '한우',       key: 'hanwoo' },
       chicken: { kor: '닭',         key: 'chicken' },
-      p3:      { kor: '기타단백질', key: 'p3' }
+      p3:      { kor: '기타단백질', key: 'p3' },
+      other:   { kor: '기타단백질', key: 'p3' }
     };
 
     const seen = new Set<string>();

@@ -484,11 +484,16 @@ export default function OrderPage() {
     }).then(r => r.json()).then(rows => {
       if (!rows?.[0]?.yusik?.schedule) { setDayMenus([]); return; }
       const schedule: any[] = rows[0].yusik.schedule;
-      const TYPE_KOR: Record<string, string> = { hanwoo:'한우', chicken:'닭', p3:'기타단백질' };
+      // ⚠️ 주방에서 넣는 세 번째 메뉴 타입은 실제로 'other'인데 'p3'만 매핑돼 있어서,
+      // 기타단백질이 '기타단백질' 키로 안 들어가고 'other'라는 엉뚱한 키로 들어갔음.
+      // 그 결과 수량·금액에는 포함되는데(Object.values 합산) 화면·조리표에는 표기가 빠지고
+      // 조리표에서는 "메뉴 미지정"으로 잡혔음. 두 표기를 모두 받아준다.
+      const TYPE_KOR: Record<string, string> = { hanwoo:'한우', chicken:'닭', p3:'기타단백질', other:'기타단백질' };
       const FIXED_SUFFIX: Record<string, string[]> = {
         hanwoo: ['한우육수','양파','채소상탕'],
         chicken: ['닭육수','양파','채소상탕'],
-        p3: ['양파','채소상탕']
+        p3: ['양파','채소상탕'],
+        other: ['양파','채소상탕']
       };
       const MAIN_PROTEIN: Record<string, string[]> = {
         hanwoo: ['한우'], chicken: ['닭가슴살','닭']
@@ -501,7 +506,7 @@ export default function OrderPage() {
         let mainItem = '';
         const middle: string[] = [];
         for (const s of withoutSuffix) {
-          if (!mainItem && (mainList.includes(s) || (type==='p3' && !mainItem))) { mainItem=s; }
+          if (!mainItem && (mainList.includes(s) || ((type==='p3'||type==='other') && !mainItem))) { mainItem=s; }
           else { middle.push(s); }
         }
         return [mainItem, ...middle, ...suffix].filter(Boolean).join(', ');
@@ -2372,7 +2377,8 @@ function MonthCalendar({
   const [byDate, setByDate] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [openDate, setOpenDate] = useState<string | null>(null);
-  const TYPE_KOR: Record<string, string> = { hanwoo: '한우', chicken: '닭', p3: '기타단백질' };
+  // 세 번째 메뉴 타입은 데이터상 'other'로 들어옴 ('p3'는 예전 표기) — 둘 다 받아준다
+  const TYPE_KOR: Record<string, string> = { hanwoo: '한우', chicken: '닭', p3: '기타단백질', other: '기타단백질' };
   const DOW_KOR: Record<number, string> = { 1: '월', 2: '화', 3: '수', 4: '목', 5: '금' };
 
   const weeks = useMemo(() => [0, 1, 2, 3].map(w => weekMonday(w)), []);
