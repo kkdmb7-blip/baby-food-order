@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, type StageType, type PriceTier } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { kstToday } from '@/lib/dates';
+import { notify, notifyError } from '@/lib/notify';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -188,6 +189,11 @@ export async function POST(req: NextRequest) {
 
     if (error) {
       console.error('[orders POST]', error);
+      // 손님은 "저장 실패"만 보고 떠나기 때문에 알려주지 않으면 사장님은 영영 모름
+      void notifyError('order-save', error, {
+        아기: baby_name, 연락처: customer_phone, 조리일: delivery_date,
+        수량: total_qty, 금액: net_price,
+      });
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     }
 
@@ -208,7 +214,28 @@ export async function POST(req: NextRequest) {
           await applyPointsDelta(sb, refCust.id, refCust.points || 0, referralBonus);
         }
       }
-    } catch (e) { console.error('[points]', e); }
+    } catch (e) {
+      // 포인트는 돈이라 조용히 넘기면 안 됨 — 주문은 이미 저장됐으니 흐름은 막지 않고 알림만
+      console.error('[points]', e);
+      void notifyError('points', e, { 아기: baby_name, 연락처: customer_phone, 주문ID: data.id });
+    }
+
+    // 텔레그램 즉시 알림 — 메일은 확인이 늦어서 새 주문을 놓치기 쉬움
+    {
+      const dateList = isMulti
+        ? [...new Set(items.map((d: any) => d.delivery_date).filter(Boolean))].sort().join(', ')
+        : delivery_date;
+      void notify('order', {
+        아기: baby_name,
+        조리일: dateList,
+        수량: `${total_qty}팩`,
+        금액: `${net_price.toLocaleString()}원`,
+        배송: delivery_method + (zone_group ? ` (${zone_group})` : ''),
+        주소: address,
+        연락처: customer_phone,
+        알레르기: allergies.length ? allergies.join(', ') : undefined,
+      }, '새 주문');
+    }
 
     // 이메일 알림 (실패 무시)
     void fetch(new URL('/api/notify', req.url), {
@@ -224,6 +251,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     console.error(e);
+    void notifyError('order-exception', e, { 단계: '주문 접수 처리 중' });
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
   }
 }

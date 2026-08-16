@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { applyCancelReversal } from '@/lib/orderCancel';
 import { sendStatusPush, statusPushText } from '@/lib/push';
+import { notify, notifyError } from '@/lib/notify';
 
 const norm = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
 
@@ -38,9 +39,18 @@ export async function POST(req: NextRequest) {
     const text = statusPushText('취소', order.delivery_date);
     if (text) void sendStatusPush(sb, order.customer_phone, text.title, text.body);
 
+    // 손님이 직접 취소한 건 사장님이 바로 알아야 조리·발주에 반영할 수 있음
+    void notify('cancel', {
+      아기: order.baby_name,
+      조리일: order.delivery_date,
+      수량: `${order.total_qty}팩`,
+      연락처: order.customer_phone,
+    }, '주문 취소(손님)');
+
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     console.error(e);
+    void notifyError('cancel-exception', e, { 단계: '손님 주문취소 처리 중' });
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
   }
 }

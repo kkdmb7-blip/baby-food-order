@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import ErrorReporter from './ErrorReporter';
 
 const SITE_URL = 'https://kkdmb.picolab.kr';
 const STORE_NAME = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
@@ -58,7 +59,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css"
         />
       </head>
-      <body className="bg-brand-50 min-h-screen text-stone-800 antialiased">{children}</body>
+      <body className="bg-brand-50 min-h-screen text-stone-800 antialiased">
+        <ErrorReporter />
+        {children}
+      </body>
     </html>
   );
 }
