@@ -133,14 +133,27 @@ function setQty(s: OrderSet, menu: MenuType, val: number): OrderSet {
 function setQtyTotal(s: OrderSet): number {
   return s._simpleQty ?? Object.values(s.menus).reduce((a, b) => a + b, 0);
 }
+// ⚠️ 반찬 세트는 용량 개념이 없어서 volume=0으로 담기는데, 0은 falsy라 `s.volume` 체크에
+// 전부 걸러져서 가격 합계·제출 데이터에서 통째로 빠져버렸음(반찬만 주문하면 합계 0원 →
+// 서버가 "가격 계산 오류"로 거부). 아래 헬퍼로 반찬을 명시적으로 구분해서 처리한다.
+function isBanchanSet(s: OrderSet): boolean {
+  return (s.stage as any) === '반찬세트';
+}
+// 주문에 담긴 유효한 세트인지 — 이유식은 단계+용량이, 반찬은 단계만 있으면 됨
+function isFilledSet(s: OrderSet): boolean {
+  if (setQtyTotal(s) <= 0) return false;
+  return isBanchanSet(s) ? true : !!(s.stage && s.volume);
+}
+function setPrice(s: OrderSet, tier: PriceTier): number {
+  if (isBanchanSet(s)) return getBanchanPrice(tier) * setQtyTotal(s);
+  if (!s.stage || !s.volume) return 0;
+  return getPrice(s.stage, s.volume, tier) * setQtyTotal(s);
+}
 function dateQty(d: DateOrder): number {
   return d.sets.reduce((sum, s) => sum + setQtyTotal(s), 0);
 }
 function datePrice(d: DateOrder, tier: PriceTier): number {
-  return d.sets.reduce((sum, s) => {
-    if (!s.stage || !s.volume) return sum;
-    return sum + getPrice(s.stage, s.volume, tier) * setQtyTotal(s);
-  }, 0);
+  return d.sets.reduce((sum, s) => sum + setPrice(s, tier), 0);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -273,19 +286,26 @@ export default function OrderPage() {
   const [zoneGroup, setZoneGroup] = useState<string | null>(null);
   const [deliveryKind, setDeliveryKind] = useState<string | null>(null); // '직배송'|'당일배송'|'택배익일배송'|null
   const [zoneChecking, setZoneChecking] = useState(false);
+  const [zoneError, setZoneError] = useState(false); // 배송지역 조회 실패 여부
+  // 마지막으로 검색한 주소 정보 — 배송지역 조회 실패 시 다시 시도용
+  const [lastZoneArgs, setLastZoneArgs] = useState<{ zonecode: string; sido: string; sigungu: string } | null>(null);
   const DIRECT_GU = ['강서구', '양천구']; // 서울 자체 직배송 지역 (두발히어로 무관)
   const tier: PriceTier = tierOf(deliveryKind); // 지역 가격 tier (직배송=기본가 / 기타=+500)
   const addressReady = !!address && deliveryKind !== null; // 주소·지역 확정 여부 (가격 노출 조건)
 
   // 주소 선택 시 배송 종류 판별
+  // 조회가 실패하면 예전엔 아무 안내 없이 deliveryKind만 null로 두고 다음 단계로 넘어갈 수 있었고,
+  // 제출할 때 '당일배송'으로 기본값이 박혀서 실제로 당일배송이 안 되는 지역인데도 당일배송으로
+  // 접수되는 문제가 있었음 — 실패를 화면에 알리고 다시 시도할 수 있게 함.
   async function resolveDelivery(zonecode: string, sido: string, sigungu: string) {
     const pc = String(zonecode || '').trim();
     const gu = String(sigungu || '');
+    setZoneError(false);
     // 강서·양천(서울) → 직배송
     if (String(sido || '').includes('서울') && DIRECT_GU.some(g => gu.includes(g))) {
       setDeliveryKind('직배송'); setZoneGroup(null); return;
     }
-    if (!/^\d{5}$/.test(pc)) return;
+    if (!/^\d{5}$/.test(pc)) { setDeliveryKind(null); setZoneGroup(null); setZoneError(true); return; }
     setZoneChecking(true); setDeliveryKind(null); setZoneGroup(null);
     try {
       const SB = 'https://ymghmfkqctckxxysxkvy.supabase.co';
@@ -293,10 +313,11 @@ export default function OrderPage() {
       const r = await fetch(`${SB}/rest/v1/dubal_zones?postal_code=eq.${pc}&select=zone_group`, {
         headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
       });
+      if (!r.ok) throw new Error('zone lookup failed');
       const rows = await r.json();
       if (Array.isArray(rows) && rows[0]?.zone_group) { setZoneGroup(rows[0].zone_group); setDeliveryKind('당일배송'); }
       else { setZoneGroup(null); setDeliveryKind('택배익일배송'); }
-    } catch { setDeliveryKind(null); }
+    } catch { setDeliveryKind(null); setZoneError(true); }
     finally { setZoneChecking(false); }
   }
 
@@ -308,9 +329,15 @@ export default function OrderPage() {
       oncomplete: (data: any) => {
         setAddress(data.roadAddress || data.address || '');
         setPostalCode(data.zonecode || '');
-        resolveDelivery(data.zonecode || '', data.sido || '', data.sigungu || '');
+        const args = { zonecode: data.zonecode || '', sido: data.sido || '', sigungu: data.sigungu || '' };
+        setLastZoneArgs(args);
+        resolveDelivery(args.zonecode, args.sido, args.sigungu);
       },
     }).open();
+  }
+  function retryResolveDelivery() {
+    if (!lastZoneArgs) { openPostcode(); return; }
+    resolveDelivery(lastZoneArgs.zonecode, lastZoneArgs.sido, lastZoneArgs.sigungu);
   }
 
   // Step 3 — 복합 주문
@@ -519,6 +546,15 @@ export default function OrderPage() {
       .then(d => setAvailablePoints(d?.customer?.points || 0)).catch(() => setAvailablePoints(0));
   }, [step, phone, babyName]);
 
+  // 포인트 입력칸은 입력 시점 기준으로만 상한을 걸어서, 포인트를 넣어둔 뒤 뒤로 가서 수량을
+  // 줄이면 사용액이 주문금액보다 커진 채로 남아 결제금액이 마이너스로 표시됐음 —
+  // 주문 내용/보유 포인트가 바뀔 때마다 다시 상한을 적용한다.
+  useEffect(() => {
+    const orderTotal = dateOrders.reduce((s, d) => s + datePrice(d, tier), 0);
+    const maxUse = Math.min(availablePoints, orderTotal);
+    setUsePoints(prev => (prev > maxUse ? Math.max(0, maxUse) : prev));
+  }, [dateOrders, tier, availablePoints]);
+
   // ── 뒤로가기 처리 ────────────────────────────────────────────────
   // 앱 진입 시 기준 히스토리 + 상태 변경 시 push → popstate로 이전 상태 복원
   useEffect(() => {
@@ -587,9 +623,9 @@ export default function OrderPage() {
     updDate(dateId, d => ({ ...d, sets: d.sets.map(s => s.id === setId ? fn(s) : s) }));
   }
 
-  // ── 완성된 세트만 필터 (stage+volume+메뉴 1개 이상) ─────────────
+  // ── 완성된 세트만 필터 (이유식=단계+용량+수량 / 반찬=수량) ──────
   function completeSets(d: DateOrder) {
-    return d.sets.filter(s => s.stage && s.volume && setQtyTotal(s) > 0);
+    return d.sets.filter(isFilledSet);
   }
 
   // 날짜 → 배송 그룹 (월+화=A / 목+금=B / 나머지=날짜 자체)
@@ -652,15 +688,17 @@ export default function OrderPage() {
     const totalPrice = dateOrders.reduce((sum, d) => sum + datePrice(d, tier), 0);
     const firstDate = dateOrders[0].delivery_date;
 
+    // 반찬 세트(volume=0)도 반드시 포함시켜야 함 — 예전엔 `s.volume` 조건에 걸려 빠지는 바람에
+    // 서버가 받는 items에 반찬이 아예 없어서 총액 0원 → "가격 계산 오류"로 주문이 거부됐음.
     const itemsPayload = dateOrders.map(d => ({
       delivery_date: d.delivery_date,
-      sets: d.sets.filter(s => s.stage && s.volume && setQtyTotal(s) > 0).map(s => ({
+      sets: d.sets.filter(isFilledSet).map(s => ({
         stage: s.stage, volume: s.volume,
-        price_per: getPrice(s.stage!, s.volume!, tier),
+        price_per: isBanchanSet(s) ? getBanchanPrice(tier) : getPrice(s.stage!, s.volume!, tier),
         simple: !!s._simpleQty,
         menus: s._simpleQty ? [] : MENU_TYPES.filter(m => s.menus[m] > 0).map(m => ({ menu: m, qty: s.menus[m] })),
         qty: setQtyTotal(s),
-        subtotal: getPrice(s.stage!, s.volume!, tier) * setQtyTotal(s)
+        subtotal: setPrice(s, tier)
       })),
       date_qty: dateQty(d),
       date_price: datePrice(d, tier)
@@ -683,7 +721,9 @@ export default function OrderPage() {
           use_points: usePoints,
           postal_code: postalCode,
           zone_group: zoneGroup,
-          delivery_method: deliveryKind || '당일배송',
+          // 지역 확인이 안 된 경우 '당일배송'으로 잡으면 실제로 당일 배송이 안 되는 지역인데도
+          // 당일배송으로 접수돼버림 — 확인 실패 시엔 보수적으로 택배 익일배송으로 접수한다(가격 동일).
+          delivery_method: deliveryKind || '택배익일배송',
           referrer_phone: referrerPhone.replace(/\D/g, ''),
           referrer_code: (() => { try { return localStorage.getItem(REF_CODE_KEY) || ''; } catch { return ''; } })(),
           acquisition_source: (() => { try { return localStorage.getItem(ACQ_SOURCE_KEY) || ''; } catch { return ''; } })(),
@@ -1604,6 +1644,15 @@ export default function OrderPage() {
               📦 이 지역은 당일배송 구역이 아니라 <span className="font-bold">택배 익일배송</span>으로 보내드려요. (배송료 동일)
             </div>
           )}
+          {zoneError && !zoneChecking && (
+            <div className="mb-3 bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 text-xs text-red-700 leading-relaxed">
+              ⚠️ 배송 지역을 확인하지 못했어요. 이대로 주문하시면 <span className="font-bold">택배 익일배송</span>으로 접수돼요.
+              <button type="button" onClick={retryResolveDelivery}
+                className="mt-2 w-full py-2 bg-white border border-red-300 rounded-lg text-red-700 font-bold">
+                다시 확인하기
+              </button>
+            </div>
+          )}
           <Field label="상세주소"><input value={addressDetail} onChange={e=>setAddressDetail(e.target.value)} placeholder="동·호수 등" className={iCls}/></Field>
           <Field label="현관 비밀번호 (선택)"><input value={doorPw} onChange={e=>setDoorPw(e.target.value)} placeholder="예: #1234*" className={iCls}/></Field>
           <Row2>
@@ -1883,9 +1932,12 @@ export default function OrderPage() {
                   {/* 단계·용량·메뉴 세트 — 아코디언 */}
                   {d.sets.map((s, si) => {
                     const isSetOpen = (openSetId[d.id] ?? d.sets[0]?.id) === s.id;
-                    const setQtyTotal = Object.values(s.menus).reduce((a,b)=>a+b,0);
+                    // ⚠️ 예전엔 여기서 같은 이름의 지역변수(setQtyTotal)를 만들어 모듈 함수를 가렸는데,
+                    // 그 계산엔 간단주문 팩수(_simpleQty)가 빠져 있어서 "지난번과 똑같이 주문"으로
+                    // 불러온 세트가 팩수 0으로 보였음(가격은 정상 계산돼서 더 헷갈림).
+                    const qtyOfSet = setQtyTotal(s);
                     const setSummary = s.stage && s.volume
-                      ? `${s.stage} ${s.volume}g${setQtyTotal > 0 ? ` · ${setQtyTotal}팩` : ''}`
+                      ? `${s.stage} ${s.volume}g${qtyOfSet > 0 ? ` · ${qtyOfSet}팩` : ''}`
                       : '단계·용량 미선택';
                     return (
                       <div key={s.id} className="border border-amber-100 rounded-xl overflow-hidden bg-amber-50">
@@ -2075,10 +2127,10 @@ export default function OrderPage() {
           {dateOrders.map((d, di) => (
             <div key={d.id} className="bg-white rounded-xl border border-amber-200 p-4 mb-3 text-sm">
               <div className="font-bold text-amber-700 mb-2">{di+1}번째 — {d.delivery_date} ({dateQty(d)}팩 · {datePrice(d, tier).toLocaleString()}원)</div>
-              {d.sets.filter(s=>s.stage&&(s.volume||(s.stage as any)==='반찬세트')).map(s => (
+              {d.sets.filter(isFilledSet).map(s => (
                 <div key={s.id} className="pl-3 mb-1 text-stone-700">
-                  {(s.stage as any)==='반찬세트'
-                    ? <span className="font-medium text-emerald-700">반찬 세트 {s._simpleQty}세트 · {((s._simpleQty??0)*getBanchanPrice(tier)).toLocaleString()}원</span>
+                  {isBanchanSet(s)
+                    ? <span className="font-medium text-emerald-700">반찬 세트 {setQtyTotal(s)}세트 · {setPrice(s, tier).toLocaleString()}원</span>
                     : <><span className="font-medium">{s.stage} {s.volume}g</span>{' — '}{s._simpleQty?`${s._simpleQty}팩`:MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}</>
                   }
                 </div>

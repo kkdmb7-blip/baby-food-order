@@ -58,7 +58,9 @@ export function weekDateOptions(weekOffset = 0): { value: string; label: string;
     const day = d.getUTCDate();
     const value = kstDateStr(ts);
     const label = `${m}/${day} (${COOKING_DAY_KOR[dow]})`;
-    const past = value < todayStr;
+    // 서버가 "조리일은 내일 이후"만 허용하므로(api/orders) 오늘도 마감 처리해야 함 —
+    // `<`로 두면 오늘 날짜가 선택 가능해서, 주문을 다 채우고 마지막 제출에서야 거부당했음.
+    const past = value <= todayStr;
     out.push({ value, label, dow, past });
   }
   return out;
@@ -107,7 +109,8 @@ export function allWeekDays(weekOffset = 0): { value: string; label: string; dow
     const d = new Date(ts);
     const dow = d.getUTCDay();
     const value = kstDateStr(ts);
-    return { value, label: `${d.getUTCMonth()+1}/${d.getUTCDate()} (${DOW_KOR[dow]})`, dow, past: value < todayStr, isBanchan: dow === 3 };
+    // 메뉴보기 화면에서도 그대로 주문으로 이어지므로 주문 가능 기준(내일 이후)과 동일하게 맞춤
+    return { value, label: `${d.getUTCMonth()+1}/${d.getUTCDate()} (${DOW_KOR[dow]})`, dow, past: value <= todayStr, isBanchan: dow === 3 };
   });
 }
 
