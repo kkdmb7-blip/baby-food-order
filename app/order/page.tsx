@@ -4,7 +4,7 @@ import {
   STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
-import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays } from '@/lib/dates';
+import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
 import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
 import {
   recommendStage, stageGuide, stageTransitionNote,
@@ -100,7 +100,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   const raw = atob(b64);
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
-async function subscribePush(phone: string): Promise<'ok' | 'denied' | 'unsupported' | 'error'> {
+async function subscribePush(phone: string, babyName: string): Promise<'ok' | 'denied' | 'unsupported' | 'error'> {
   const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   if (!vapidKey || !('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
   try {
@@ -111,7 +111,7 @@ async function subscribePush(phone: string): Promise<'ok' | 'denied' | 'unsuppor
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) as BufferSource });
     const r = await fetch('/api/push/subscribe', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, subscription: sub.toJSON() }),
+      body: JSON.stringify({ phone, baby_name: babyName, subscription: sub.toJSON() }),
     });
     const d = await r.json();
     return d.ok ? 'ok' : 'error';
@@ -201,7 +201,8 @@ export default function OrderPage() {
   }
   const [symptoms, setSymptoms] = useState<SymptomEntry[]>([]);
   function logSymptom(foodKey: string, symptom: string) {
-    setSymptoms(addSymptom({ foodKey, symptom, date: new Date().toISOString().slice(0, 10) }));
+    // UTC 기준이면 자정~오전9시(KST) 사이 기록이 하루 전으로 남아 알레르기 관찰 기간이 어긋남
+    setSymptoms(addSymptom({ foodKey, symptom, date: kstToday() }));
   }
   function delSymptom(idx: number) { setSymptoms(removeSymptom(idx)); }
 
@@ -215,7 +216,7 @@ export default function OrderPage() {
   async function handleSubscribePush() {
     setPushStatus('loading');
     const digits = myPhone.replace(/\D/g, '');
-    const result = await subscribePush(digits);
+    const result = await subscribePush(digits, myName.trim());
     setPushStatus(result);
   }
   // ── 배송상태 알림 배너 ──────────────────────────────────────────
@@ -1145,8 +1146,10 @@ export default function OrderPage() {
           <button onClick={() => goMode('home')} className="text-stone-400 text-lg">←</button>
           <h1 className="text-lg font-bold text-stone-900 flex-1">메뉴 보기 · 주문</h1>
           <div className="flex gap-1">
+            {/* 예전엔 이유식 선택(menuSels)만 지우고 반찬 수량(banchanQtys)은 안 지워서,
+                주를 바꾸면 지난주 날짜의 반찬이 그대로 남아 다음주 주문에 섞여 들어갔음 */}
             {[0,1].map(w => (
-              <button key={w} onClick={() => { setWeekOffset(w); setExpandedDate(null); setMenuSels({}); }}
+              <button key={w} onClick={() => { setWeekOffset(w); setExpandedDate(null); setMenuSels({}); setBanchanQtys({}); }}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${weekOffset===w?'bg-amber-500 border-amber-500 text-white':'bg-white border-stone-200 text-stone-500'}`}>
                 {w===0?'이번주':'다음주'}
               </button>
@@ -2486,7 +2489,7 @@ function AdminLink() {
   return (
     <div className="mt-10 pt-4 border-t border-stone-100 text-center">
       <a href="/admin" className="text-[11px] text-stone-300 hover:text-stone-500 active:text-stone-500 py-2 px-3 inline-block">
-        사장님 로그인
+        관리자 로그인
       </a>
     </div>
   );

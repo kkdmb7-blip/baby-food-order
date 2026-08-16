@@ -7,6 +7,11 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* 관리자 탭 바 등 가로 스크롤 영역에서 스크롤바 숨김 —
+   AdminShell이 no-scrollbar를 쓰고 있는데 정의가 없어서 실제로는 스크롤바가 그대로 보였음 */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 /* 아이폰 노치·홈바에 UI가 가리지 않도록 (PWA로 홈화면에 추가해서 쓰는 앱이라 필수) */
 .safe-bottom { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
 .safe-top { padding-top: env(safe-area-inset-top); }

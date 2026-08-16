@@ -5,7 +5,7 @@ import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/s
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 
-type Tab = '오늘주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '엑셀';
+type Tab = '오늘주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -87,7 +87,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['오늘주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '엑셀'];
+  const tabs: Tab[] = ['오늘주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -183,6 +183,9 @@ export default function AdminShell({
         {tab === '고객관리' && (
           <CustomerManager customers={customers} onUpdate={(c: Customer[]) => setCustomers(c)} />
         )}
+
+        {/* ── 후기 관리 ───────────────────────────────────── */}
+        {tab === '후기' && <ReviewManager />}
 
         {/* ── 탭 6: 엑셀 ──────────────────────────────────── */}
         {tab === '엑셀' && <ExcelDownload today={today} />}
@@ -461,6 +464,68 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── 후기 관리 ─────────────────────────────────────────────────────
+// 후기는 승인 절차 없이 바로 손님 화면에 공개되는데(is_approved 기본 true) 정작 내릴 방법이
+// 없어서, 부적절한 후기가 올라와도 손쓸 수가 없었음 — 여기서 공개/숨김을 전환한다.
+type AdminReview = { id: string; baby_name: string; rating: number; content: string; created_at: string; is_approved: boolean };
+
+function ReviewManager() {
+  const [reviews, setReviews] = useState<AdminReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const d = await fetch('/api/reviews?all=1').then(r => r.json());
+      if (d.ok) setReviews(d.reviews);
+    } catch {}
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function toggle(r: AdminReview) {
+    setBusy(r.id);
+    const next = !r.is_approved;
+    const d = await fetch('/api/reviews', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: r.id, is_approved: next }),
+    }).then(x => x.json()).catch(() => ({ ok: false }));
+    if (d.ok) setReviews(prev => prev.map(x => x.id === r.id ? { ...x, is_approved: next } : x));
+    setBusy(null);
+  }
+
+  if (loading) return <div className="text-center py-10 text-stone-400 text-sm">불러오는 중…</div>;
+  if (reviews.length === 0) return <Empty text="아직 등록된 후기가 없어요" />;
+
+  const shown = reviews.filter(r => r.is_approved).length;
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-stone-500">
+        전체 {reviews.length}개 · 공개 중 {shown}개 · 숨김 {reviews.length - shown}개
+        <span className="block mt-0.5 text-stone-400">숨김으로 바꾸면 손님 화면과 평균 별점에서 즉시 빠집니다.</span>
+      </div>
+      {reviews.map(r => (
+        <div key={r.id} className={`bg-white rounded-xl border p-4 ${r.is_approved ? 'border-stone-200' : 'border-stone-200 bg-stone-50 opacity-70'}`}>
+          <div className="flex items-start justify-between gap-3 mb-1.5">
+            <div className="min-w-0">
+              <span className="font-bold text-stone-900 mr-2">{r.baby_name} 부모님</span>
+              <span className="text-amber-500 text-sm">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+              <div className="text-[11px] text-stone-400 mt-0.5">{fmtDateTime(r.created_at)}</div>
+            </div>
+            <button onClick={() => toggle(r)} disabled={busy === r.id}
+              className={`text-[11px] px-2.5 py-1 rounded-full border font-bold whitespace-nowrap disabled:opacity-50 ${
+                r.is_approved ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-stone-200 text-stone-600 border-stone-300'}`}>
+              {busy === r.id ? '처리 중…' : r.is_approved ? '공개 중 → 숨기기' : '숨김 → 공개하기'}
+            </button>
+          </div>
+          <p className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{r.content}</p>
+        </div>
+      ))}
     </div>
   );
 }

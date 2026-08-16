@@ -35,8 +35,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // 확대를 막아두면 시력이 불편한 분이 글씨를 키울 수 없다(접근성 위반).
+  // iOS 입력창 자동확대는 globals.css에서 input font-size:16px로 이미 막고 있어서
+  // userScalable을 열어도 폼이 튀지 않는다.
+  maximumScale: 5,
+  userScalable: true,
   themeColor: '#e88936'
 };
 

@@ -3,6 +3,8 @@
 // 사진은 손님 휴대폰에만 저장되고 서버로 절대 업로드되지 않음 (프라이버시).
 // ────────────────────────────────────────────────────────────────
 
+import { kstToday } from './dates';
+
 export type Photo = { id: string; date: string; note: string; blob: Blob };
 export type PhotoMeta = { id: string; date: string; note: string; url: string };
 
@@ -46,7 +48,8 @@ export async function addPhoto(file: File, note: string): Promise<void> {
     const tx = db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).put({
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      date: new Date().toISOString().slice(0, 10),
+      // UTC로 찍으면 자정~오전9시(KST)에 담은 사진이 하루 전 날짜로 기록됨
+      date: kstToday(),
       note: note.slice(0, 100), blob,
     });
     tx.oncomplete = () => resolve();
@@ -54,6 +57,10 @@ export async function addPhoto(file: File, note: string): Promise<void> {
   });
   db.close();
 }
+
+// createObjectURL로 만든 주소는 직접 해제하지 않으면 그 blob이 메모리에 계속 남는다.
+// 사진 추가·삭제 때마다 목록을 다시 불러오므로, 안 지우면 볼수록 메모리가 쌓임(특히 폰).
+let issuedUrls: string[] = [];
 
 export async function listPhotos(): Promise<PhotoMeta[]> {
   const db = await openDB();
@@ -64,9 +71,16 @@ export async function listPhotos(): Promise<PhotoMeta[]> {
     req.onerror = () => reject(req.error);
   });
   db.close();
+  // 이전 목록에서 만든 주소 해제 후 새로 발급
+  issuedUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch {} });
+  issuedUrls = [];
   return items
     .sort((a, b) => (a.date < b.date ? 1 : -1) || (a.id < b.id ? 1 : -1))
-    .map(p => ({ id: p.id, date: p.date, note: p.note, url: URL.createObjectURL(p.blob) }));
+    .map(p => {
+      const url = URL.createObjectURL(p.blob);
+      issuedUrls.push(url);
+      return { id: p.id, date: p.date, note: p.note, url };
+    });
 }
 
 export async function deletePhoto(id: string): Promise<void> {
