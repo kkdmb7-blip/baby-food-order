@@ -1283,9 +1283,9 @@ export default function OrderPage() {
 
         {/* 하단 주문 버튼 */}
         {totalMenuQty > 0 && (
-          <div className="fixed bottom-0 left-0 right-0 px-4 pb-6 pt-3 bg-gradient-to-t from-amber-50">
+          <div className="fixed bottom-0 left-0 right-0 px-4 pt-3 safe-bottom bg-gradient-to-t from-amber-50 via-amber-50/95 to-transparent">
             <button onClick={goOrderFromMenu}
-              className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg text-sm">
+              className="w-full max-w-md mx-auto block py-4 bg-amber-500 text-white font-bold rounded-2xl shadow-lg shadow-amber-500/25 text-sm">
               {(() => {
                 const bTotal = Object.values(banchanQtys).reduce((a,b)=>a+b,0);
                 const yTotal = totalMenuQty - bTotal;
@@ -2476,34 +2476,38 @@ function MonthCalendar({
 
 // ── 공통 컴포넌트 ─────────────────────────────────────────────────
 function Wrap({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-md mx-auto px-4 py-6 pb-36">{children}</div>;
+  return <div className="max-w-md mx-auto px-4 py-6 pb-36 safe-top">{children}</div>;
 }
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section><h2 className="text-lg font-bold text-stone-900 mb-4">{title}</h2>{children}</section>;
+  return <section><h2 className="text-[19px] font-extrabold text-stone-900 mb-4 tracking-[-0.02em]">{title}</h2>{children}</section>;
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block mb-3"><span className="text-xs text-stone-600 font-medium mb-1.5 block">{label}</span>{children}</label>;
+  return <label className="block mb-3.5"><span className="text-xs text-stone-500 font-semibold mb-1.5 block tracking-[-0.01em]">{label}</span>{children}</label>;
 }
 function SRow({ k, v }: { k: string; v: string }) {
   return <div className="flex justify-between gap-3 py-1 border-b border-stone-50 last:border-0"><span className="text-stone-400">{k}</span><span className="text-stone-900 font-medium text-right">{v}</span></div>;
 }
 function StepBar({ current, total }: { current: number; total: number }) {
-  return <div className="flex gap-1 mt-2">{Array.from({length:total}).map((_,i)=><div key={i} className={`h-1 flex-1 rounded-full ${i+1<=current?'bg-amber-500':'bg-amber-100'}`}/>)}</div>;
+  return <div className="flex gap-1 mt-2">{Array.from({length:total}).map((_,i)=>
+    <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${i+1<=current?'bg-amber-500':'bg-amber-100'}`}/>)}</div>;
 }
 function PrimaryBtn({ onClick, disabled, children }: { onClick:()=>void; disabled?:boolean; children:React.ReactNode }) {
-  return <button onClick={onClick} disabled={disabled} className="flex-1 py-3.5 bg-amber-500 text-white font-bold rounded-xl shadow-sm active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 transition">{children}</button>;
+  return <button onClick={onClick} disabled={disabled} className="flex-1 py-3.5 bg-amber-500 text-white font-bold rounded-xl shadow-sm shadow-amber-500/25 active:bg-amber-600 disabled:bg-stone-200 disabled:text-stone-400 disabled:shadow-none">{children}</button>;
 }
 function BackBtn({ onClick }: { onClick:()=>void }) {
-  return <button onClick={onClick} className="px-5 py-3.5 bg-white border border-amber-100 text-stone-600 font-medium rounded-xl">이전</button>;
+  return <button onClick={onClick} className="px-5 py-3.5 bg-white border border-amber-100 text-stone-600 font-semibold rounded-xl active:bg-amber-50">이전</button>;
 }
 function Row2({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-2 mt-5">{children}</div>;
 }
 function QtyCtrl({ value, onChange }: { value:number; onChange:(v:number)=>void }) {
-  return <div className="flex items-center gap-2">
-    <button onClick={()=>onChange(value-1)} disabled={value<=0} className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-30 flex items-center justify-center">−</button>
-    <span className="w-7 text-center font-bold text-stone-900 text-base">{value}</span>
-    <button onClick={()=>onChange(value+1)} disabled={value>=10} className="w-9 h-9 rounded-lg bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-30 flex items-center justify-center">+</button>
+  // 터치 타깃을 44px 가깝게 키움(모바일 접근성 권장치) + 선택된 수량은 색으로 구분
+  return <div className="flex items-center gap-1.5">
+    <button aria-label="수량 줄이기" onClick={()=>onChange(value-1)} disabled={value<=0}
+      className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-25 flex items-center justify-center active:bg-amber-200">−</button>
+    <span className={`w-8 text-center font-extrabold text-[17px] tabular-nums ${value>0?'text-amber-700':'text-stone-300'}`}>{value}</span>
+    <button aria-label="수량 늘리기" onClick={()=>onChange(value+1)} disabled={value>=10}
+      className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 font-black text-xl leading-none disabled:opacity-25 flex items-center justify-center active:bg-amber-200">+</button>
   </div>;
 }
 // ── 알레르기 등록 UI ──────────────────────────────────────────────

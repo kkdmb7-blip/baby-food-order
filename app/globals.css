@@ -7,6 +7,37 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* 아이폰 노치·홈바에 UI가 가리지 않도록 (PWA로 홈화면에 추가해서 쓰는 앱이라 필수) */
+.safe-bottom { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+
+/* 눌리는 느낌 — 모바일에서 탭했는지 확실히 알 수 있게 살짝 눌렸다 돌아옴 */
+button:not(:disabled), a[role="button"], label.tappable {
+  transition: transform .08s ease, filter .08s ease, background-color .15s ease, border-color .15s ease;
+}
+button:not(:disabled):active, a[role="button"]:active, label.tappable:active {
+  transform: scale(0.97);
+}
+
+/* 키보드 탐색 시에만 포커스 링 — 마우스·터치로 누를 땐 안 나오게 */
+:focus-visible {
+  outline: 2px solid #e88936;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+button:focus:not(:focus-visible) { outline: none; }
+
+/* 화면 전환·애니메이션을 줄이도록 설정한 사용자 존중 (접근성) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  button:not(:disabled):active { transform: none; }
+}
+
 @media print {
   .no-print { display: none !important; }
   body { background: white !important; }

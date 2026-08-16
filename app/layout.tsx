@@ -43,6 +43,18 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
+      <head>
+        {/* tailwind.config에 Pretendard가 지정돼 있는데 정작 폰트를 불러오는 코드가 없어서
+            그동안 시스템 기본 글꼴로 표시됐음. 한글 자간·굵기가 확연히 달라지는 부분이라 로드해준다.
+            (dynamic-subset = 화면에 쓰인 글자만 내려받아 용량 부담이 거의 없음) */}
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossOrigin="" />
+        <link
+          rel="stylesheet"
+          as="style"
+          crossOrigin=""
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css"
+        />
+      </head>
       <body className="bg-brand-50 min-h-screen text-stone-800 antialiased">{children}</body>
     </html>
   );
