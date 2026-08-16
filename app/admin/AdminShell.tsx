@@ -6,7 +6,7 @@ import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
 
-type Tab = '오늘주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
+type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -19,16 +19,25 @@ const NEXT_STATUS: Record<OrderStatus, OrderStatus> = {
   접수: '준비중', 준비중: '배송완료', 배송완료: '접수', 취소: '접수'
 };
 
+function shiftDay(date: string, days: number): string {
+  const t = new Date(date + 'T00:00:00Z').getTime() + days * 86400000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
 export default function AdminShell({
-  initialOrders, customers: initCustomers, weeklyMenus: initMenus, today, weekStart
+  initialOrders, customers: initCustomers, weeklyMenus: initMenus,
+  today, selectedDate, upcoming, recentOrders, weekStart
 }: {
   initialOrders: Order[];
   customers: Customer[];
   weeklyMenus: WeeklyMenu[];
   today: string;
+  selectedDate: string;
+  upcoming: { date: string; count: number; qty: number }[];
+  recentOrders: Order[];
   weekStart: string;
 }) {
-  const [tab, setTab] = useState<Tab>('오늘주문');
+  const [tab, setTab] = useState<Tab>('주문');
   const [orders, setOrders] = useState<Order[]>(initialOrders);
   const [customers, setCustomers] = useState<Customer[]>(initCustomers);
   const [menus, setMenus] = useState<WeeklyMenu[]>(initMenus);
@@ -88,7 +97,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['오늘주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
+  const tabs: Tab[] = ['주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -100,12 +109,41 @@ export default function AdminShell({
             로그아웃
           </button>
         </div>
+
+        {/* 조리일 선택 — 주문은 항상 "내일 이후" 조리분이라 오늘 기준으로만 보면
+            접수 당일엔 대시보드가 전부 비어 보였음. 조리할 날짜를 직접 고를 수 있게 함. */}
+        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-stone-500 font-bold">조리일</span>
+          <a href={`/admin?date=${shiftDay(selectedDate, -1)}`}
+            className="px-2 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</a>
+          <span className="text-sm font-bold text-stone-900">
+            {selectedDate}
+            {selectedDate === today && <span className="ml-1 text-[11px] text-amber-700">(오늘)</span>}
+          </span>
+          <a href={`/admin?date=${shiftDay(selectedDate, 1)}`}
+            className="px-2 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</a>
+          {selectedDate !== today && (
+            <a href="/admin" className="text-[11px] text-amber-700 font-bold underline underline-offset-2">오늘로</a>
+          )}
+          {upcoming.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap ml-1">
+              {upcoming.slice(0, 6).map(u => (
+                <a key={u.date} href={`/admin?date=${u.date}`}
+                  className={`text-[11px] px-2 py-1 rounded-lg border font-bold ${
+                    u.date === selectedDate ? 'bg-amber-500 border-amber-500 text-white'
+                    : 'bg-white border-amber-200 text-amber-800'}`}>
+                  {u.date.slice(5)} · {u.count}건 {u.qty}팩
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="max-w-5xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
           {tabs.map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap ${tab === t ? 'border-amber-500 text-amber-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>
               {t}
-              {t === '오늘주문' && <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 rounded-full">{orders.filter(o=>o.status!=='취소').length}</span>}
+              {t === '주문' && <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 rounded-full">{orders.filter(o=>o.status!=='취소').length}</span>}
             </button>
           ))}
         </div>
@@ -113,9 +151,14 @@ export default function AdminShell({
 
       <main className="max-w-5xl mx-auto px-4 py-5">
         {/* ── 탭 1: 오늘 주문 ─────────────────────────────── */}
-        {tab === '오늘주문' && (
+        {tab === '주문' && (
           <div className="space-y-3">
-            {orders.length === 0 && <Empty text={`${today} 주문이 없어요`} />}
+            <div className="text-sm font-bold text-stone-700">
+              {selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span>
+            </div>
+            {orders.length === 0 && (
+              <Empty text={`${selectedDate}에 조리할 주문이 없어요. 위 날짜 버튼으로 다른 날을 확인해보세요`} />
+            )}
             {orders.map(o => (
               <div key={o.id} className="bg-white rounded-xl border border-stone-200 p-4">
                 <div className="flex items-start justify-between gap-3 mb-2">
@@ -161,6 +204,36 @@ export default function AdminShell({
                 {o.memo && <div className="mt-1 text-xs text-stone-500 italic">💬 {o.memo}</div>}
               </div>
             ))}
+
+            {/* 접수 당일엔 조리일이 미래라 위 목록이 비어 있음 — 방금 들어온 주문을
+                확인할 곳이 없어서 "0건"으로만 보이던 문제 때문에 따로 둔다. */}
+            {recentOrders.length > 0 && (
+              <div className="pt-4">
+                <div className="text-sm font-bold text-stone-700 mb-2">최근 접수된 주문</div>
+                <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
+                  {recentOrders.map(o => {
+                    const dates = (Array.isArray(o.items) && (o.items as any[])[0]?.delivery_date)
+                      ? [...new Set((o.items as any[]).map(i => i.delivery_date).filter(Boolean))].sort()
+                      : [o.delivery_date];
+                    return (
+                      <a key={o.id} href={`/admin?date=${dates[0]}`} className="block px-4 py-2.5 hover:bg-stone-50">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="font-bold text-stone-900 mr-2">{o.baby_name}</span>
+                            <span className="text-xs text-stone-500">{fmtDateTime(o.created_at)} 접수</span>
+                          </div>
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full border font-bold whitespace-nowrap ${STATUS_CLS[o.status]}`}>{o.status}</span>
+                        </div>
+                        <div className="text-xs text-stone-600 mt-0.5">
+                          조리일 <span className="font-bold text-amber-700">{dates.join(', ')}</span>
+                          {' · '}{o.total_qty}팩 · {o.total_price.toLocaleString()}원
+                        </div>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -168,12 +241,12 @@ export default function AdminShell({
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
-        {tab === '배송' && <DeliveryGroups orders={orders} today={today} />}
+        {tab === '배송' && <DeliveryGroups orders={orders} today={selectedDate} />}
 
-        {tab === '조리표' && <CookingSheet orders={orders} today={today} />}
+        {tab === '조리표' && <CookingSheet orders={orders} today={selectedDate} />}
 
         {/* ── 탭 3: 주소록 ────────────────────────────────── */}
-        {tab === '주소록' && <AddressBook orders={orders} today={today} />}
+        {tab === '주소록' && <AddressBook orders={orders} today={selectedDate} />}
 
         {/* ── 탭 4: 메뉴 관리 ─────────────────────────────── */}
         {tab === '메뉴관리' && (
