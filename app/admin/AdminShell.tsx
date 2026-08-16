@@ -364,17 +364,26 @@ function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
   );
 }
 
-function AddressBook({ orders, today }: { orders: Order[]; today: string }) {
+function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: string }) {
+  // 인쇄물과 동일하게 택배(익일)는 제외 — 직접 배달하는 것만 주소록에 필요
+  const orders = allOrders.filter(o => {
+    const m = o.delivery_method;
+    if (m === '택배익일배송') return false;
+    if (m === '직배송' || m === '당일배송') return true;
+    return /강서|양천/.test(`${o.address || ''} ${o.address_detail || ''}`);
+  });
+  const parcelCount = allOrders.length - orders.length;
   return (
     <div>
-      <div className="flex gap-2 mb-4 no-print">
+      <div className="flex gap-2 mb-4 no-print items-center">
         <button onClick={() => window.open(`/admin/print/labels?date=${today}`, '_blank')}
           className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
           🖨 배송 주소록 프린트
         </button>
+        {parcelCount > 0 && <span className="text-xs text-stone-500">택배 {parcelCount}건은 제외됨</span>}
       </div>
       <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
-        {orders.length === 0 && <div className="p-8 text-center text-stone-500 text-sm">주문 없음</div>}
+        {orders.length === 0 && <div className="p-8 text-center text-stone-500 text-sm">직접 배송할 주문 없음</div>}
         {orders.map((o, i) => (
           <div key={o.id} className="px-4 py-3 flex items-start gap-3">
             <span className="text-stone-400 text-sm w-5 pt-0.5">{i+1}</span>

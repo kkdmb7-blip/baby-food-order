@@ -114,13 +114,12 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       <PrintAuto />
       <style>{`@media print { @page { size: A4 landscape; margin: 6mm; } }`}</style>
 
-      <div className="flex justify-between items-end mb-2 border-b-2 border-black pb-1.5">
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <h1 className="text-xl font-black">조리표</h1>
-          <span className="text-base font-bold">{date} ({dow})</span>
-          <span className="text-sm">총 {orders.length}명 · {totalPacks}팩{banchanTotal > 0 && ` · 반찬 ${banchanTotal}세트`}</span>
-          <span className="text-[11px] text-stone-600">
-            칸 순서 한우 / 닭 / 기타 · 검정 = 작은 용량 · <span className="text-red-600 font-bold">빨강 = 큰 용량</span>
+      <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
+        <div className="flex items-baseline gap-2 flex-wrap text-[12px]">
+          <span className="text-base font-black">조리 {date} ({dow})</span>
+          <span className="font-bold">{orders.length}명 · {totalPacks}팩{banchanTotal > 0 && ` · 반찬 ${banchanTotal}`}</span>
+          <span className="text-[11px] text-stone-500">
+            한우/닭/기타 · <span className="text-red-600 font-bold">빨강=큰용량</span>
           </span>
         </div>
         <PrintBar date={date} kind="cooking" />
@@ -132,12 +131,11 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
           <table key={sec.stage} className="border-collapse text-[12px] leading-none break-inside-avoid">
             <thead>
               <tr>
-                <th colSpan={4} className="border-2 border-black bg-black text-white px-1.5 py-1 text-[13px]">
+                <th colSpan={4} className="border border-black px-1 py-0.5 text-[12px] text-left">
                   {sec.stage}
-                  <span className="ml-1.5 font-normal text-[10px]">
-                    {SMALL_VOLUME[sec.stage]}g / <span className="text-red-300">{BIG_VOLUME[sec.stage]}g</span>
+                  <span className="ml-1 font-normal text-[10px] text-stone-600">
+                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.list.length}명
                   </span>
-                  <span className="ml-1.5 font-normal text-[10px]">{sec.list.length}명</span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
@@ -196,8 +194,8 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
           <table className="border-collapse text-[12px] leading-none break-inside-avoid">
             <thead>
               <tr>
-                <th colSpan={2} className="border-2 border-black bg-black text-white px-1.5 py-1 text-[13px]">
-                  반찬 세트<span className="ml-1.5 font-normal text-[10px]">{banchan.length}명</span>
+                <th colSpan={2} className="border border-black px-1 py-0.5 text-[12px] text-left">
+                  반찬 세트<span className="ml-1 font-normal text-[10px] text-stone-600">{banchan.length}명</span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
