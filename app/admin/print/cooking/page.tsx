@@ -47,6 +47,18 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
   });
   const totalPacks = orders.reduce((sum, o) => sum + qtyOn(o as any, date), 0);
   const banchanTotal = banchanRows.reduce((s, r) => s + r.qty, 0);
+  // 조리는 "단계+용량"이 다르면 완전히 다른 작업이라(중기1단계 240g 한우와 310g 한우는 따로 만듦),
+  // 메뉴별 총합만 적어두면 실제로 몇 개씩 만들지 알 수 없음 — 단계·용량별 × 메뉴별로 쪼개서 보여준다.
+  const matrix = groups.map(g => {
+    const menus: Record<string, number> = {};
+    let sum = 0, unspec = 0;
+    for (const r of g.rows) {
+      for (const m of MENU_TYPES) menus[m] = (menus[m] || 0) + (r.menus[m] || 0);
+      sum += r.qty;
+      unspec += Math.max(0, r.qty - MENU_TYPES.reduce((s, m) => s + (r.menus[m] || 0), 0));
+    }
+    return { stage: g.stage, volume: g.volume, menus, sum, unspec, people: g.rows.length };
+  });
   // 주문 팩수보다 메뉴 지정 수가 적은 경우가 실제로 있음(간단주문 등) — 메뉴 합계만 보고
   // 조리하면 그만큼 덜 만들게 되므로 "미지정"으로 따로 드러낸다.
   const menuSpecified = Object.values(totals).reduce((a, b) => a + b, 0);
@@ -74,27 +86,49 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
 
       {/* ① 먼저 얼마나 만들지 — 조리 시작 전에 보는 숫자라 맨 위로 */}
       <div className="mb-5">
-        <div className="font-black text-sm mb-2">■ 오늘 만들 총량</div>
-        <div className="grid grid-cols-4 gap-2 text-center">
-          {MENU_TYPES.map(m => (
-            <div key={m} className="border-2 border-black rounded p-2">
-              <div className="text-[11px] text-stone-600 mb-0.5">{m.replace('기타단백질', '기타단백질')}</div>
-              <div className="text-3xl font-black leading-none">{totals[m]}</div>
-              <div className="text-[10px] text-stone-500 mt-0.5">팩</div>
-            </div>
-          ))}
-          <div className="border-2 border-black rounded p-2 bg-stone-100">
-            <div className="text-[11px] text-stone-600 mb-0.5">이유식 전체</div>
-            <div className="text-3xl font-black leading-none">{totalPacks - banchanTotal}</div>
-            <div className="text-[10px] text-stone-500 mt-0.5">팩</div>
-          </div>
-        </div>
+        <div className="font-black text-sm mb-2">■ 오늘 만들 총량 (단계·용량별)</div>
+        <table className="w-full border-2 border-black text-sm">
+          <thead>
+            <tr className="bg-stone-200">
+              <th className="border border-black py-1.5 px-2 text-left">단계 · 용량</th>
+              {MENU_TYPES.map(m => (
+                <th key={m} className="border border-black py-1.5 px-1 w-16">{m.replace('기타단백질', '기타')}</th>
+              ))}
+              <th className="border border-black py-1.5 px-1 w-16">합계</th>
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.map(r => (
+              <tr key={`${r.stage}-${r.volume}`}>
+                <td className="border border-black py-2 px-2 font-black">
+                  {r.stage}{r.volume ? ` ${r.volume}g` : ''}
+                  <span className="ml-1 text-[11px] font-normal text-stone-600">({r.people}명)</span>
+                </td>
+                {MENU_TYPES.map(m => (
+                  <td key={m} className="border border-black py-2 px-1 text-center text-xl font-black">
+                    {r.menus[m] ? r.menus[m] : <span className="text-stone-300 text-base">·</span>}
+                  </td>
+                ))}
+                <td className="border border-black py-2 px-1 text-center text-xl font-black bg-stone-100">
+                  {r.sum}
+                  {r.unspec > 0 && <div className="text-[10px] font-bold leading-tight">미지정 {r.unspec}</div>}
+                </td>
+              </tr>
+            ))}
+            {matrix.length > 0 && (
+              <tr className="bg-stone-200">
+                <td className="border border-black py-1.5 px-2 font-black text-right">이유식 합계</td>
+                {MENU_TYPES.map(m => (
+                  <td key={m} className="border border-black py-1.5 px-1 text-center font-black">{totals[m]}</td>
+                ))}
+                <td className="border border-black py-1.5 px-1 text-center font-black">{totalPacks - banchanTotal}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
         {unspecified > 0 && (
-          <div className="mt-2 border-2 border-black rounded p-2 flex items-center justify-between">
-            <span className="font-bold text-sm">
-              ⚠ 메뉴 미지정 {unspecified}팩 — 주문 팩수보다 메뉴 지정이 적어요. 손님께 확인 후 조리해주세요
-            </span>
-            <span className="text-2xl font-black">{unspecified}<span className="text-sm font-normal ml-1">팩</span></span>
+          <div className="mt-2 border-2 border-black rounded p-2 text-sm font-bold">
+            ⚠ 메뉴 미지정 {unspecified}팩 — 주문 팩수보다 메뉴 지정이 적어요. 손님께 확인 후 조리해주세요
           </div>
         )}
         {banchanTotal > 0 && (
