@@ -19,11 +19,13 @@ const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
 );
 
 type PersonRow = {
+  orderId: string;
   name: string;
   volume: number;
   isBig: boolean;
   menus: Record<string, number>;
   allergy: boolean;
+  multi: boolean; // 같은 사람이 다른 단계도 주문했는지 (포장 시 합쳐야 함)
 };
 
 export default async function CookingPrint({ searchParams }: { searchParams: { date?: string } }) {
@@ -54,14 +56,34 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       if (!has && !unspec) continue;
       if (!byStage.has(stage)) byStage.set(stage, []);
       byStage.get(stage)!.push({
+        orderId: o.id,
         name: o.baby_name + (unspec > 0 ? ` (미지정${unspec})` : ''),
         volume: Number(s.volume) || 0,
         isBig: Number(s.volume) === BIG_VOLUME[stage],
         menus,
         allergy: (o.allergies || []).length > 0,
+        multi: false,
       });
     }
   }
+
+  // ⚠️ 한 사람이 중기1+중기2, 중기+완료기처럼 여러 단계를 같이 시키는 경우가 있음.
+  // 단계별 블록으로 나눠 놓으면 같은 사람이 여러 블록에 흩어져서, 표시가 없으면
+  // 포장할 때 각각 다른 손님으로 보고 따로 담게 됨 — 합쳐야 한다는 표시를 남긴다.
+  const stagesByOrder = new Map<string, string[]>();
+  for (const [stage, list] of byStage) {
+    for (const p of list) {
+      const arr = stagesByOrder.get(p.orderId) || [];
+      if (!arr.includes(stage)) arr.push(stage);
+      stagesByOrder.set(p.orderId, arr);
+    }
+  }
+  const multiOrders = [...stagesByOrder.entries()].filter(([, st]) => st.length > 1);
+  const multiIds = new Set(multiOrders.map(([id]) => id));
+  for (const list of byStage.values()) {
+    for (const p of list) p.multi = multiIds.has(p.orderId);
+  }
+  const nameOf = (id: string) => orders.find(o => o.id === id)?.baby_name || '';
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있음
   for (const list of byStage.values()) {
     list.sort((a, b) => a.volume - b.volume || a.name.localeCompare(b.name));
@@ -134,6 +156,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 return (
                   <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
                     <td className="border border-black px-1 py-[4px] font-bold whitespace-nowrap max-w-[70px] overflow-hidden">
+                      {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
                     </td>
                     {MENU_TYPES.map(m => (
@@ -197,6 +220,20 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
           </table>
         )}
       </div>
+
+      {/* 여러 단계를 같이 시킨 사람 — 블록이 나뉘어 있어서 포장할 때 합쳐야 함 */}
+      {multiOrders.length > 0 && (
+        <div className="mt-2 border-2 border-blue-700 px-2 py-1 text-[11px]">
+          <span className="font-black text-blue-700">+ 여러 단계 함께 주문 — 포장할 때 한 봉투로 합쳐주세요</span>
+          <span className="ml-2">
+            {multiOrders.map(([id, st], i) => (
+              <span key={i} className="mr-3">
+                <span className="font-black">{nameOf(id)}</span> {st.join(' + ')}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
 
       {/* 알레르기 — 재료를 빼드리는 게 아니라(불가) 교차오염 주의용 */}
       {allergyRows.length > 0 && (
