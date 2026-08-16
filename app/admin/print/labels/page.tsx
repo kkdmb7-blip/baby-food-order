@@ -20,19 +20,26 @@ function isDrivenByUs(o: Order): boolean {
   return /강서|양천/.test(`${o.address || ''} ${o.address_detail || ''}`);
 }
 
-// 동네 묶음은 "구" 단위 — 손님이 "강서구화곡동"처럼 붙여 쓰기도 해서 동까지 키로 잡으면
-// 같은 동네가 갈라짐. 구로 묶고 그 안에서 주소순 정렬하면 같은 동끼리 붙는다.
-function areaOf(o: Order): string {
-  const addr = String(o.address || '').replace(/^(서울특별시|서울시|서울)\s*/, '').trim();
-  const gu = addr.match(/([가-힣]+구)/)?.[1];
-  if (gu) return gu;
-  return o.zone_group ? String(o.zone_group) : '기타';
-}
-function dongOf(o: Order): string {
-  const addr = String(o.address || '').replace(/^(서울특별시|서울시|서울)\s*/, '').trim();
-  const gu = addr.match(/([가-힣]+구)/)?.[1] || '';
+// 동네 묶음 — 동 단위로 세분화. 손님이 "강서구화곡동"처럼 붙여 쓰는 경우가 있어서
+// 구를 먼저 떼어낸 뒤 동을 찾아야 "강서구"와 "강서구 화곡동"으로 갈라지지 않는다.
+// 도로명주소(예: 강서구 화곡로 12)에는 동이 아예 없으므로 그때는 도로명으로 묶는다
+// — 같은 길이면 사실상 같은 동네라 배송 동선 기준으로도 맞음.
+function splitAddr(o: Order) {
+  const addr = String(o.address || '').replace(/^(서울특별시|서울시|서울|경기도|인천광역시|부산광역시)\s*/, '').trim();
+  const gu = addr.match(/([가-힣]+[구군시])/)?.[1] || '';
   const rest = gu ? addr.slice(addr.indexOf(gu) + gu.length) : addr;
-  return rest.match(/([가-힣]+[동읍면])/)?.[1] || '';
+  // "목동로"의 '목동'을 동으로 오인하면 안 되므로 뒤에 로/길이 오는 경우는 제외
+  const dong = rest.match(/([가-힣]+[0-9]*[동읍면리])(?![로길])/)?.[1] || '';
+  // "곰달래로35길"은 "곰달래로"로 묶어야 같은 길이 흩어지지 않음 (로/대로 우선, 없으면 길)
+  const road = rest.match(/([가-힣]+(?:대로|로))/)?.[1]
+    || rest.match(/([가-힣0-9]+길)/)?.[1] || '';
+  return { gu, dong, road };
+}
+function areaOf(o: Order): string {
+  const { gu, dong, road } = splitAddr(o);
+  if (dong) return [gu, dong].filter(Boolean).join(' ');
+  if (road) return [gu, road].filter(Boolean).join(' ');
+  return gu || (o.zone_group ? String(o.zone_group) : '기타');
 }
 // "없음", "-" 같이 의미 없는 값은 지면만 차지하므로 표시하지 않음
 function doorPw(o: Order): string {
@@ -63,7 +70,12 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   for (const list of groups.values()) {
     list.sort((a, b) => String(a.address || '').localeCompare(String(b.address || '')));
   }
-  const sorted = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  // 같은 구끼리는 붙여두고(이동 동선), 구 안에서는 건수 많은 동네부터
+  const sorted = [...groups.entries()].sort((a, b) => {
+    const ga = splitAddr(a[1][0]).gu, gb = splitAddr(b[1][0]).gu;
+    if (ga !== gb) return ga.localeCompare(gb);
+    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+  });
 
   const dow = DOW_KOR[new Date(date + 'T00:00:00Z').getUTCDay()];
   let no = 0;
@@ -98,7 +110,6 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
                     <td className="py-[3px] pr-1 w-4 align-top text-stone-400 text-[10px]">{no}</td>
                     <td className="py-[3px] pr-1.5 w-[58px] align-top font-bold whitespace-nowrap">{o.baby_name}</td>
                     <td className="py-[3px] pr-1.5 align-top">
-                      {dongOf(o) && <span className="font-bold">[{dongOf(o)}] </span>}
                       {o.address}
                       {o.address_detail && <span className="font-bold"> {o.address_detail}</span>}
                       {doorPw(o) && <span className="text-[11px] text-stone-600"> 🔑{doorPw(o)}</span>}
