@@ -4,7 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
 import { orderDates, qtyOn, shiftDate } from '@/lib/orderItems';
-import { routeCodeOf } from '@/lib/routeCode';
+import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -64,12 +64,22 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   const orders = all.filter(isDrivenByUs);
   const parcelCount = all.length - orders.length;
 
+  // 사장님이 직접 지정·수정한 순번이 있으면 그게 우선 (엑셀 기본 매핑보다 위)
+  const { data: overrideRows } = await sb.from('baby_food_route_codes').select('addr_key, code');
+  const overrides = new Map<string, number>();
+  (overrideRows || []).forEach((r: any) => overrides.set(r.addr_key, Number(r.code)));
+  const codeOf = (o: Order): number | null => {
+    const k = addrKey(String(o.address || ''));
+    if (k && overrides.has(k)) return overrides.get(k)!;
+    return routeCodeOf(String(o.address || ''));
+  };
+
   // 배송 순번(엑셀 전체주소록의 맨 오른쪽 숫자)으로 묶고 정렬 — 인쇄물이 곧 도는 순서가 됨
   type Grp = { code: number | null; label: string; list: Order[] };
   const grpMap = new Map<string, Grp>();
   let matched = 0;
   for (const o of orders) {
-    const code = routeCodeOf(String(o.address || ''));
+    const code = codeOf(o);
     if (code !== null) matched++;
     const key = code !== null ? `c${code}` : `x${areaLabel(o)}`;
     if (!grpMap.has(key)) grpMap.set(key, { code, label: areaLabel(o), list: [] });

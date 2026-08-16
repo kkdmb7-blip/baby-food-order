@@ -5,6 +5,7 @@ import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/s
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
+import { routeCodeOf, addrKey } from '@/lib/routeCode';
 
 type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
@@ -373,20 +374,81 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
     return /강서|양천/.test(`${o.address || ''} ${o.address_detail || ''}`);
   });
   const parcelCount = allOrders.length - orders.length;
+
+  // 배송 순번 — 엑셀 기본 매핑 + 사장님이 저장한 값(우선)
+  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/route-code').then(r => r.json()).then(d => {
+      if (!d.ok) return;
+      const m: Record<string, number> = {};
+      (d.rows || []).forEach((r: any) => { m[r.addr_key] = Number(r.code); });
+      setOverrides(m);
+    }).catch(() => {});
+  }, []);
+
+  const codeOf = (o: Order): number | null => {
+    const k = addrKey(String(o.address || ''));
+    if (k && overrides[k] !== undefined) return overrides[k];
+    return routeCodeOf(String(o.address || ''));
+  };
+
+  async function saveCode(o: Order, raw: string) {
+    const k = addrKey(String(o.address || ''));
+    if (!k) { setMsg('이 주소는 순번을 붙일 수 없어요 (주소 형식 확인 필요)'); return; }
+    setSaving(o.id); setMsg(null);
+    const value = raw.trim() === '' ? null : Number(raw);
+    const d = await fetch('/api/route-code', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: o.address, code: value }),
+    }).then(r => r.json()).catch(() => ({ ok: false, error: '저장 실패' }));
+    setSaving(null);
+    if (!d.ok) { setMsg(d.error || '저장 실패'); return; }
+    setOverrides(prev => {
+      const next = { ...prev };
+      if (d.code === null) delete next[k]; else next[k] = d.code;
+      return next;
+    });
+    setMsg(d.code === null ? '순번을 지웠어요 (기본값으로 되돌아감)' : `순번 ${d.code} 저장됨 — 같은 주소는 다음부터 자동 적용돼요`);
+    setTimeout(() => setMsg(null), 3000);
+  }
+
+  // 순번대로 정렬 — 인쇄물과 같은 순서로 보이게
+  const sorted = [...orders].sort((a, b) => {
+    const ca = codeOf(a), cb = codeOf(b);
+    if (ca === null && cb === null) return 0;
+    if (ca === null) return 1;
+    if (cb === null) return -1;
+    return ca - cb;
+  });
+
   return (
     <div>
-      <div className="flex gap-2 mb-4 no-print items-center">
+      <div className="flex gap-2 mb-3 no-print items-center flex-wrap">
         <button onClick={() => window.open(`/admin/print/labels?date=${today}`, '_blank')}
           className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
           🖨 배송 주소록 프린트
         </button>
         {parcelCount > 0 && <span className="text-xs text-stone-500">택배 {parcelCount}건은 제외됨</span>}
+        <span className="text-xs text-stone-400">순번 칸에 숫자를 넣으면 저장돼요 (비우면 기본값)</span>
       </div>
+      {msg && <div className="mb-3 text-sm text-center text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2">{msg}</div>}
       <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
         {orders.length === 0 && <div className="p-8 text-center text-stone-500 text-sm">직접 배송할 주문 없음</div>}
-        {orders.map((o, i) => (
+        {sorted.map(o => (
           <div key={o.id} className="px-4 py-3 flex items-start gap-3">
-            <span className="text-stone-400 text-sm w-5 pt-0.5">{i+1}</span>
+            <div className="pt-0.5">
+              <input
+                type="text" inputMode="decimal"
+                defaultValue={codeOf(o) ?? ''}
+                placeholder="순번"
+                onBlur={e => { const v = e.target.value; if (v !== String(codeOf(o) ?? '')) saveCode(o, v); }}
+                disabled={saving === o.id}
+                className={`w-14 px-1.5 py-1 border rounded-lg text-sm text-center font-bold outline-none focus:border-amber-400 disabled:opacity-50 ${
+                  codeOf(o) === null ? 'border-red-300 bg-red-50 text-red-700' : 'border-stone-200'}`}
+              />
+            </div>
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="font-bold text-stone-900">{o.baby_name}</span>
