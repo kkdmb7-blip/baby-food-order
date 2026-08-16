@@ -887,6 +887,7 @@ export default function OrderPage() {
           <div className="mt-3">
             <AllergyEditor allergies={allergies} toggle={toggleAllergy} open={allergyOpen} setOpen={setAllergyOpen} />
           </div>
+          <AdminLink />
         </Wrap>
       );
     }
@@ -1047,6 +1048,7 @@ export default function OrderPage() {
           <FoodDiary diary={diary} update={updateFood} open={diaryOpen} setOpen={setDiaryOpen}
             symptoms={symptoms} onLog={logSymptom} onDel={delSymptom} />
         </div>
+        <AdminLink />
       </Wrap>
     );
   }
@@ -2477,6 +2479,17 @@ function MonthCalendar({
 // ── 공통 컴포넌트 ─────────────────────────────────────────────────
 function Wrap({ children }: { children: React.ReactNode }) {
   return <div className="max-w-md mx-auto px-4 py-6 pb-36 safe-top">{children}</div>;
+}
+// 홈 화면에서 앱을 설치(PWA)해서 쓰면 브라우저 주소창이 없어서 /admin으로 갈 방법이 없었음 —
+// 손님에게는 눈에 안 띄되 사장님은 언제든 누를 수 있는 위치(맨 아래)에 조용히 둔다.
+function AdminLink() {
+  return (
+    <div className="mt-10 pt-4 border-t border-stone-100 text-center">
+      <a href="/admin" className="text-[11px] text-stone-300 hover:text-stone-500 active:text-stone-500 py-2 px-3 inline-block">
+        사장님 로그인
+      </a>
+    </div>
+  );
 }
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return <section><h2 className="text-[19px] font-extrabold text-stone-900 mb-4 tracking-[-0.02em]">{title}</h2>{children}</section>;
