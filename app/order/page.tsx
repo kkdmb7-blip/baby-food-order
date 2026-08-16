@@ -1388,7 +1388,7 @@ export default function OrderPage() {
             </div>
 
             {/* ⑧ 정기배송 신청 */}
-            <RegularSetup phone={myPhone.replace(/\D/g, '')} initial={cust} onSaved={() => fetchMyOrders(myPhone)} />
+            <RegularSetup phone={myPhone.replace(/\D/g, '')} babyName={myName.trim()} initial={cust} onSaved={() => fetchMyOrders(myPhone)} />
 
             {/* D 주문 목록 + 상태 */}
             {myData.orders.length === 0 ? (
@@ -2197,8 +2197,9 @@ export default function OrderPage() {
 }
 
 // ── ⑧ 정기배송 신청 ──────────────────────────────────────────────
-function RegularSetup({ phone, initial, onSaved }: {
+function RegularSetup({ phone, babyName, initial, onSaved }: {
   phone: string;
+  babyName: string;
   initial: { is_regular?: boolean; regular_schedule?: any; postal_code?: string | null } | null;
   onSaved: () => void;
 }) {
@@ -2256,7 +2257,7 @@ function RegularSetup({ phone, initial, onSaved }: {
       const slots = Object.entries(qtys).filter(([, q]) => q > 0).map(([day, qty]) => ({ day, qty }));
       const r = await fetch('/api/my/regular', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, active, stage, volume, slots, postal_code: postalCode }),
+        body: JSON.stringify({ phone, baby_name: babyName, active, stage, volume, slots, postal_code: postalCode }),
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');

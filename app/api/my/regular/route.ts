@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, STAGES, getPrice, type StageType } from '@/lib/supabase';
 
-// POST /api/my/regular — 정기배송 신청/해지 (전화번호 게이트)
-// body: { phone, baby_name?, active, stage, volume, slots:[{day,qty}] }
+const norm = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
+
+// POST /api/my/regular — 정기배송 신청/해지
+// body: { phone, baby_name, active, stage, volume, slots:[{day,qty}] }
+// ⚠️ 예전엔 전화번호 형식만 확인해서, 남의 번호만 알면 그 사람 정기배송을 해지하거나
+// 수량을 바꿀 수 있었음(/api/my, /api/my/cancel은 전화번호+아기이름 2요소를 보는데 여기만 빠져 있었음).
 export async function POST(req: NextRequest) {
   try {
     const b = await req.json();
     const phone = String(b.phone || '').replace(/\D/g, '');
+    const name = norm(b.baby_name || '');
     if (!/^\d{10,11}$/.test(phone)) return bad('연락처를 확인해주세요');
+    if (!name) return bad('아기 이름을 입력해주세요');
 
     const active = !!b.active;
     const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
@@ -27,7 +33,17 @@ export async function POST(req: NextRequest) {
 
     const sb = supabaseService();
     const { data: existing } = await sb
-      .from('baby_food_customers').select('id').eq('phone', phone).maybeSingle();
+      .from('baby_food_customers').select('id, baby_name').eq('phone', phone).maybeSingle();
+
+    // 2요소 확인 — 이 번호로 알려진 아기 이름(고객정보 또는 주문이력)과 일치해야 함
+    const knownNames = new Set<string>();
+    if (existing?.baby_name) knownNames.add(norm(existing.baby_name));
+    const { data: priorOrders } = await sb
+      .from('baby_food_orders').select('baby_name').eq('customer_phone', phone).limit(20);
+    (priorOrders || []).forEach(o => { if (o.baby_name) knownNames.add(norm(o.baby_name)); });
+    if (knownNames.size > 0 && !knownNames.has(name)) {
+      return bad('연락처와 아기 이름이 일치하지 않아요');
+    }
 
     const patch: any = { is_regular: active, regular_schedule };
     if (postal_code) patch.postal_code = postal_code; // 정기배송 tier 판별용

@@ -3,6 +3,7 @@ import { supabaseService, type Order } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import * as XLSX from 'xlsx';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
+import { menuTotal, orderDates } from '@/lib/orderItems';
 
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
@@ -18,18 +19,18 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const rows = (data as Order[]).map(o => {
-    const items = Array.isArray(o.items) ? o.items : [];
-    const getQty = (menu: string) => items.find((i: any) => i.menu === menu)?.qty || 0;
+    // 신형(중첩) items 구조에선 메뉴가 items[].sets[].menus[] 안에 있어서, 예전처럼
+    // items에서 바로 menu를 찾으면 전부 0으로 나왔음 — 두 구조를 모두 흡수하는 헬퍼 사용.
     return {
-      조리일: o.delivery_date,
+      조리일: orderDates(o as any).join(', ') || o.delivery_date,
       상태: o.status,
       아기이름: o.baby_name,
       개월수: o.months,
       단계: o.stage,
       용량: o.volume,
-      한우: getQty('한우'),
-      닭: getQty('닭'),
-      기타단백질: getQty('기타단백질'),
+      한우: menuTotal(o as any, '한우'),
+      닭: menuTotal(o as any, '닭'),
+      기타단백질: menuTotal(o as any, '기타단백질'),
       총팩수: o.total_qty,
       총금액: o.total_price,
       주소: o.address,

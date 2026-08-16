@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
-import { supabaseService, MENU_TYPES, type Order, type MenuType } from '@/lib/supabase';
+import { supabaseService, MENU_TYPES, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
+import { orderDates, slicesOn, qtyOn, menuQtyOn, shiftDate } from '@/lib/orderItems';
 import PrintAuto from '../PrintAuto';
 
 export const dynamic = 'force-dynamic';
@@ -11,13 +12,12 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   const date = searchParams.date || kstToday();
 
   const sb = supabaseService();
+  // 조리표와 동일 — 복합주문의 두 번째 날짜분도 그 날 라벨에 잡히도록 items 기준으로 거른다.
   const { data } = await sb.from('baby_food_orders').select('*')
-    .eq('delivery_date', date).neq('status', '취소').order('baby_name');
-  const orders: Order[] = data || [];
-
-  function getQty(o: Order, m: MenuType) {
-    return (o.items as any[]).find(i => i.menu === m)?.qty || 0;
-  }
+    .gte('delivery_date', shiftDate(date, -21))
+    .lte('delivery_date', shiftDate(date, 21))
+    .neq('status', '취소').order('baby_name').limit(500);
+  const orders: Order[] = (data || []).filter(o => orderDates(o as any).includes(date));
 
   const storeName = (process.env.NEXT_PUBLIC_STORE_NAME || '이유식').trim();
 
@@ -48,12 +48,12 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
             </div>
             <div className="border-t border-stone-300 pt-1.5 flex justify-between items-end">
               <div className="text-xs leading-snug">
-                <strong>{o.stage} · {o.volume}g</strong><br />
-                {MENU_TYPES.filter(m => getQty(o, m) > 0).map(m => `${m.replace('기타단백질','기타')} ${getQty(o,m)}`).join(' / ')}
+                <strong>{slicesOn(o as any, date).map(s => `${s.stage ?? '-'}${s.volume ? ` ${s.volume}g` : ''}`).join(' / ') || `${o.stage} · ${o.volume}g`}</strong><br />
+                {MENU_TYPES.filter(m => menuQtyOn(o as any, date, m) > 0).map(m => `${m.replace('기타단백질','기타')} ${menuQtyOn(o as any, date, m)}`).join(' / ')}
                 {o.memo && <div className="text-[11px] text-stone-600 mt-0.5">⚠ {o.memo}</div>}
               </div>
               <div className="text-right">
-                <div className="font-bold text-lg">{o.total_qty}팩</div>
+                <div className="font-bold text-lg">{qtyOn(o as any, date)}팩</div>
                 <div className="text-[9px] text-stone-400">{o.id.slice(0,8)}</div>
               </div>
             </div>
