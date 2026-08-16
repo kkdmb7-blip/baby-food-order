@@ -799,8 +799,8 @@ export default function OrderPage() {
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
             <span className="text-2xl">🚫</span>
             <div>
-              <div className="text-sm font-bold text-stone-900">알레르기 재료 자동 표시</div>
-              <div className="text-xs text-stone-500 mt-0.5">등록해두신 알레르기 재료가 들어가면 메뉴에 표시해드려요 (참고용 — 최종 확인은 보호자님이 함께 해주세요)</div>
+              <div className="text-sm font-bold text-stone-900">알레르기 메뉴 자동 차단</div>
+              <div className="text-xs text-stone-500 mt-0.5">등록해두신 재료가 들어간 메뉴는 주문 자체가 막혀요. 재료만 빼고 조리해드리는 건 어려워서, 아예 선택되지 않게 해뒀어요 (최종 확인은 보호자님이 함께 해주세요)</div>
             </div>
           </div>
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
@@ -1261,8 +1261,13 @@ export default function OrderPage() {
                       )}
 
                       {/* 이유식 메뉴별 수량 */}
-                      {!isBanchan && sel.volume && day.menus.map((m, i) => (
-                        <div key={i} className="flex items-center gap-2">
+                      {/* ⚠️ 알레르기 재료는 조리 과정에서 빼드릴 수 없음 — 예전엔 경고만 띄우고
+                          주문은 되게 해서 "빼주겠지"라는 오해를 줄 수 있었음. 해당 메뉴는 아예 못 고르게 막는다. */}
+                      {!isBanchan && sel.volume && day.menus.map((m, i) => {
+                        const hits = matchAllergens(m.ingredients, allergies);
+                        const blocked = hits.length > 0;
+                        return (
+                        <div key={i} className={`flex items-center gap-2 ${blocked ? 'opacity-70' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
@@ -1273,15 +1278,26 @@ export default function OrderPage() {
                               {reactions[m.name] === 'like' && <span className="flex-shrink-0 text-[10px]">👍</span>}
                             </div>
                             <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
-                            <AllergyBadge ingredients={m.ingredients} allergies={allergies} />
-                            <ReactionCtrl name={m.name} current={reactions[m.name]} onRate={rateMenu} />
+                            {blocked ? (
+                              <div className="mt-1 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 leading-relaxed">
+                                🚫 {hits.map(h => h.label).join(', ')} 들어있어 주문할 수 없어요
+                                <div className="font-normal text-rose-600 mt-0.5">재료를 빼고 조리해드릴 수는 없어서 막아뒀어요. 알레르기 등록을 바꾸시려면 홈에서 수정해주세요.</div>
+                              </div>
+                            ) : (
+                              <ReactionCtrl name={m.name} current={reactions[m.name]} onRate={rateMenu} />
+                            )}
                           </div>
-                          <QtyCtrl
-                            value={sel.qtys[m.type as MenuType] ?? 0}
-                            onChange={v => updMenuSel(day.date, s => ({ ...s, qtys: { ...s.qtys, [m.type as MenuType]: Math.max(0, Math.min(10, v)) } }))}
-                          />
+                          {blocked ? (
+                            <span className="text-[11px] font-bold text-rose-600 whitespace-nowrap px-2">주문 불가</span>
+                          ) : (
+                            <QtyCtrl
+                              value={sel.qtys[m.type as MenuType] ?? 0}
+                              onChange={v => updMenuSel(day.date, s => ({ ...s, qtys: { ...s.qtys, [m.type as MenuType]: Math.max(0, Math.min(10, v)) } }))}
+                            />
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                       {!isBanchan && !sel.volume && (
                         <div className="text-xs text-stone-400">단계와 용량을 먼저 선택해주세요</div>
                       )}
