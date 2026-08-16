@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService } from '@/lib/supabase';
 import { kstToday, thisWeekMonday } from '@/lib/dates';
-import { orderDates, qtyOn, shiftDate } from '@/lib/orderItems';
+import { orderDates, shiftDate } from '@/lib/orderItems';
 import AdminShell from './AdminShell';
 
 export const dynamic = 'force-dynamic';
@@ -33,28 +33,9 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
 
   const all = ordersRes.data || [];
 
-  // 앞으로 조리할 날짜별 요약 (오늘 포함) — 접수된 주문이 언제 조리되는지 한눈에
-  const upcomingMap = new Map<string, { count: number; qty: number }>();
-  for (const o of all) {
-    for (const d of orderDates(o as any)) {
-      if (d < today) continue;
-      const cur = upcomingMap.get(d) || { count: 0, qty: 0 };
-      cur.count++; cur.qty += qtyOn(o as any, d);
-      upcomingMap.set(d, cur);
-    }
-  }
-  const upcoming = [...upcomingMap.entries()]
-    .map(([date, v]) => ({ date, ...v }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  // 요청 날짜가 없으면 오늘 → 없으면 가장 가까운 조리 예정일
-  const selectedDate = requested || (upcomingMap.has(today) ? today : (upcoming[0]?.date || today));
+  // 기본은 항상 오늘. 다른 날은 사장님이 날짜를 직접 골라서 본다.
+  const selectedDate = requested || today;
   const selectedOrders = all.filter(o => orderDates(o as any).includes(selectedDate));
-
-  // 최근 접수분 (조리일과 무관하게 "방금 들어온 주문" 확인용)
-  const recentOrders = [...all]
-    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-    .slice(0, 15);
 
   return (
     <AdminShell
@@ -63,8 +44,6 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
       weeklyMenus={menusRes.data || []}
       today={today}
       selectedDate={selectedDate}
-      upcoming={upcoming}
-      recentOrders={recentOrders}
       weekStart={weekStart}
     />
   );

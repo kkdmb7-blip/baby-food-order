@@ -26,15 +26,13 @@ function shiftDay(date: string, days: number): string {
 
 export default function AdminShell({
   initialOrders, customers: initCustomers, weeklyMenus: initMenus,
-  today, selectedDate, upcoming, recentOrders, weekStart
+  today, selectedDate, weekStart
 }: {
   initialOrders: Order[];
   customers: Customer[];
   weeklyMenus: WeeklyMenu[];
   today: string;
   selectedDate: string;
-  upcoming: { date: string; count: number; qty: number }[];
-  recentOrders: Order[];
   weekStart: string;
 }) {
   const [tab, setTab] = useState<Tab>('주문');
@@ -110,32 +108,19 @@ export default function AdminShell({
           </button>
         </div>
 
-        {/* 조리일 선택 — 주문은 항상 "내일 이후" 조리분이라 오늘 기준으로만 보면
-            접수 당일엔 대시보드가 전부 비어 보였음. 조리할 날짜를 직접 고를 수 있게 함. */}
-        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-2 flex-wrap">
+        {/* 조리일 선택 — 기본은 오늘, 다른 날은 직접 골라서 본다.
+            (주문은 항상 "내일 이후" 조리분이라 오늘만 볼 수 있으면 확인이 안 됐음) */}
+        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-2">
           <span className="text-xs text-stone-500 font-bold">조리일</span>
-          <a href={`/admin?date=${shiftDay(selectedDate, -1)}`}
-            className="px-2 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</a>
-          <span className="text-sm font-bold text-stone-900">
-            {selectedDate}
-            {selectedDate === today && <span className="ml-1 text-[11px] text-amber-700">(오늘)</span>}
-          </span>
-          <a href={`/admin?date=${shiftDay(selectedDate, 1)}`}
-            className="px-2 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</a>
+          <a href={`/admin?date=${shiftDay(selectedDate, -1)}`} aria-label="하루 전"
+            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</a>
+          <input type="date" value={selectedDate}
+            onChange={e => { if (e.target.value) router.push(`/admin?date=${e.target.value}`); }}
+            className="px-2 py-1 border border-stone-200 rounded-lg text-sm font-bold bg-white" />
+          <a href={`/admin?date=${shiftDay(selectedDate, 1)}`} aria-label="하루 후"
+            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</a>
           {selectedDate !== today && (
-            <a href="/admin" className="text-[11px] text-amber-700 font-bold underline underline-offset-2">오늘로</a>
-          )}
-          {upcoming.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap ml-1">
-              {upcoming.slice(0, 6).map(u => (
-                <a key={u.date} href={`/admin?date=${u.date}`}
-                  className={`text-[11px] px-2 py-1 rounded-lg border font-bold ${
-                    u.date === selectedDate ? 'bg-amber-500 border-amber-500 text-white'
-                    : 'bg-white border-amber-200 text-amber-800'}`}>
-                  {u.date.slice(5)} · {u.count}건 {u.qty}팩
-                </a>
-              ))}
-            </div>
+            <a href="/admin" className="text-xs text-amber-700 font-bold underline underline-offset-2">오늘</a>
           )}
         </div>
         <div className="max-w-5xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
@@ -157,7 +142,7 @@ export default function AdminShell({
               {selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span>
             </div>
             {orders.length === 0 && (
-              <Empty text={`${selectedDate}에 조리할 주문이 없어요. 위 날짜 버튼으로 다른 날을 확인해보세요`} />
+              <Empty text={`${selectedDate}에 조리할 주문이 없어요`} />
             )}
             {orders.map(o => (
               <div key={o.id} className="bg-white rounded-xl border border-stone-200 p-4">
@@ -204,36 +189,6 @@ export default function AdminShell({
                 {o.memo && <div className="mt-1 text-xs text-stone-500 italic">💬 {o.memo}</div>}
               </div>
             ))}
-
-            {/* 접수 당일엔 조리일이 미래라 위 목록이 비어 있음 — 방금 들어온 주문을
-                확인할 곳이 없어서 "0건"으로만 보이던 문제 때문에 따로 둔다. */}
-            {recentOrders.length > 0 && (
-              <div className="pt-4">
-                <div className="text-sm font-bold text-stone-700 mb-2">최근 접수된 주문</div>
-                <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
-                  {recentOrders.map(o => {
-                    const dates = (Array.isArray(o.items) && (o.items as any[])[0]?.delivery_date)
-                      ? [...new Set((o.items as any[]).map(i => i.delivery_date).filter(Boolean))].sort()
-                      : [o.delivery_date];
-                    return (
-                      <a key={o.id} href={`/admin?date=${dates[0]}`} className="block px-4 py-2.5 hover:bg-stone-50">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <span className="font-bold text-stone-900 mr-2">{o.baby_name}</span>
-                            <span className="text-xs text-stone-500">{fmtDateTime(o.created_at)} 접수</span>
-                          </div>
-                          <span className={`text-[11px] px-2 py-0.5 rounded-full border font-bold whitespace-nowrap ${STATUS_CLS[o.status]}`}>{o.status}</span>
-                        </div>
-                        <div className="text-xs text-stone-600 mt-0.5">
-                          조리일 <span className="font-bold text-amber-700">{dates.join(', ')}</span>
-                          {' · '}{o.total_qty}팩 · {o.total_price.toLocaleString()}원
-                        </div>
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
