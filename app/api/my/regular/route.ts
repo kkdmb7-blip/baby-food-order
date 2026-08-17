@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, STAGES, getPrice, type StageType } from '@/lib/supabase';
+import { supabaseService, STAGES, MENU_TYPES, getPrice, type StageType } from '@/lib/supabase';
 
 const norm = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
 
@@ -17,17 +17,31 @@ export async function POST(req: NextRequest) {
 
     const active = !!b.active;
     const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
+    const address = String(b.address || '').trim().slice(0, 200) || null;
+    const address_detail = String(b.address_detail || '').trim().slice(0, 100) || null;
+    const door_password = String(b.door_password || '').trim().slice(0, 30) || null;
     let regular_schedule: any = {};
     if (active) {
       const stage = String(b.stage || '') as StageType;
       const volume = Number(b.volume);
+      // 요일별로 한우/닭/기타 팩수를 따로 받는다 — qty만 받으면 자동 생성된 주문이
+      // 조리표에서 "메뉴 미지정"으로 떠서 사장님이 무엇을 만들지 알 수 없음.
       const slots = Array.isArray(b.slots)
-        ? b.slots.filter((s: any) => ['월', '화', '목', '금'].includes(s.day) && Number(s.qty) > 0)
-            .map((s: any) => ({ day: s.day, qty: Math.min(10, Math.max(0, Number(s.qty))) }))
+        ? b.slots
+            .filter((s: any) => ['월', '화', '목', '금'].includes(s.day))
+            .map((s: any) => {
+              const menus = MENU_TYPES.map(m => ({
+                menu: m, qty: Math.min(10, Math.max(0, Number(s.menus?.[m]) || 0)),
+              })).filter(m => m.qty > 0);
+              return { day: s.day, qty: menus.reduce((a: number, m: any) => a + m.qty, 0), menus };
+            })
+            .filter((s: any) => s.qty > 0)
         : [];
       if (!STAGES.includes(stage)) return bad('단계를 선택해주세요');
       if (!getPrice(stage, volume)) return bad('용량을 선택해주세요');
-      if (slots.length === 0) return bad('요일과 수량을 1개 이상 선택해주세요');
+      if (slots.length === 0) return bad('요일과 메뉴별 팩 수를 1개 이상 선택해주세요');
+      // 배송지가 없으면 자동 주문이 생겨도 배송을 못 나감 — 신청 단계에서 막는다
+      if (!address) return bad('배송지를 검색해서 넣어주세요');
       regular_schedule = { stage, volume, slots };
     }
 
@@ -47,6 +61,11 @@ export async function POST(req: NextRequest) {
 
     const patch: any = { is_regular: active, regular_schedule };
     if (postal_code) patch.postal_code = postal_code; // 정기배송 tier 판별용
+    // 배송지는 자동 주문의 배송 주소가 되므로 반드시 같이 저장 — 예전엔 앱이 주소를 받아놓고도
+    // 보내지 않아서, 자동 주문이 생기면 주소가 '(정기배송 등록 주소)'로 찍혀 배송이 불가능했음.
+    if (address) patch.address = address;
+    if (address_detail !== null) patch.address_detail = address_detail;
+    if (door_password !== null) patch.door_password = door_password;
     if (existing) {
       const { error } = await sb.from('baby_food_customers').update(patch).eq('id', existing.id);
       if (error) return NextResponse.json({ ok: false, error: '저장 실패' }, { status: 500 });

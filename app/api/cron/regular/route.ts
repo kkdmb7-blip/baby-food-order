@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, getPrice, type StageType, type PriceTier } from '@/lib/supabase';
+import { supabaseService, getPrice, MIN_ORDER_QTY, type StageType, type PriceTier } from '@/lib/supabase';
+import { notify } from '@/lib/notify';
 
 // GET /api/cron/regular — 정기배송 자동 주문 생성 (Vercel Cron 전용)
 // 안전장치: ① CRON_SECRET 인증 ② REGULAR_AUTO_ENABLED=true 일 때만 실제 생성 ③ 중복 방지
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
   const sb = supabaseService();
   const { data: regulars, error } = await sb
     .from('baby_food_customers')
-    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code')
+    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code, address, address_detail, door_password')
     .eq('is_regular', true);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
@@ -40,11 +41,21 @@ export async function GET(req: NextRequest) {
   }
 
   const plan: any[] = [];
+  const skipped: { phone: string; reason: string }[] = [];
   let created = 0;
 
   for (const c of regulars || []) {
-    const sched = c.regular_schedule as any; // { stage, volume, slots:[{day,qty}] }
-    if (!sched?.stage || !sched?.volume || !Array.isArray(sched?.slots)) continue;
+    const sched = c.regular_schedule as any; // { stage, volume, slots:[{day, qty, menus:[{menu,qty}]}] }
+    if (!sched?.stage || !sched?.volume || !Array.isArray(sched?.slots)) {
+      skipped.push({ phone: mask(c.phone), reason: '스케줄 정보 없음' });
+      continue;
+    }
+    // 주소가 없으면 배송을 나갈 수 없는 주문이 생긴다 — 만들지 않고 사장님께 알린다.
+    // (예전엔 address를 '(정기배송 등록 주소)'라는 문자열로 넣어서 주소록에 그대로 찍혔음)
+    if (!c.address) {
+      skipped.push({ phone: mask(c.phone), reason: '배송지 미등록' });
+      continue;
+    }
     const stage = sched.stage as StageType;
     const volume = Number(sched.volume);
 
@@ -69,7 +80,18 @@ export async function GET(req: NextRequest) {
     for (const u of upcoming) {
       const slot = sched.slots.find((s: any) => s.day === u.day && Number(s.qty) > 0);
       if (!slot) continue;
-      const qty = Number(slot.qty);
+      // 조리표는 메뉴별 팩수로 찍히므로 menus를 그대로 실어야 함 — 없으면 "메뉴 미지정"이 된다.
+      // 수량 기준은 menus 합으로 통일(청구는 하고 조리표엔 안 뜨는 팩이 생기지 않게).
+      const menus = Array.isArray(slot.menus)
+        ? slot.menus.filter((m: any) => Number(m?.qty) > 0).map((m: any) => ({ menu: String(m.menu), qty: Number(m.qty) }))
+        : [];
+      const qty = menus.length > 0
+        ? menus.reduce((a: number, m: any) => a + m.qty, 0)
+        : Number(slot.qty);
+      if (qty < MIN_ORDER_QTY) { // 서버 주문 검증과 같은 규칙 — 통과 못 할 주문은 만들지 않음
+        skipped.push({ phone: mask(c.phone), reason: `${u.day} ${qty}팩 — 최소 ${MIN_ORDER_QTY}팩 미달` });
+        continue;
+      }
 
       // ③ 중복 방지 — 같은 전화·배송일·정기 주문이 이미 있으면 건너뜀
       const { data: exists } = await sb
@@ -87,24 +109,41 @@ export async function GET(req: NextRequest) {
       if (enabled) {
         const items = [{
           delivery_date: u.date,
-          sets: [{ stage, volume, price_per: pricePer, simple: true, menus: [], qty, subtotal: pricePer * qty }],
+          sets: [{
+            stage, volume, price_per: pricePer,
+            simple: menus.length === 0, menus,
+            qty, subtotal: pricePer * qty,
+          }],
           date_qty: qty, date_price: pricePer * qty,
         }];
         const { error: ie } = await sb.from('baby_food_orders').insert({
           baby_name: c.baby_name || '정기배송', months: 0, customer_phone: c.phone,
-          address: '(정기배송 등록 주소)', stage, volume, items,
+          address: c.address, address_detail: c.address_detail || null,
+          door_password: c.door_password || null,
+          stage, volume, items,
           total_qty: qty, total_price: pricePer * qty, delivery_date: u.date,
           order_type: '정기', status: '접수', customer_id: c.id,
           postal_code: c.postal_code || null, zone_group: zoneGroup, delivery_method: deliveryMethod,
         });
-        if (!ie) created++;
+        if (ie) skipped.push({ phone: mask(c.phone), reason: `저장 실패: ${ie.message}` });
+        else created++;
       }
     }
+  }
+
+  // 자동 주문이 조용히 안 만들어지는 게 가장 위험함 — 건너뛴 게 있으면 사장님께 알린다
+  if (skipped.length > 0) {
+    void notify('regular-skip', {
+      건너뜀: `${skipped.length}건`,
+      사유: skipped.map(s => `${s.phone} ${s.reason}`).join(' / ').slice(0, 300),
+    }, '정기배송 자동주문 누락');
   }
 
   return NextResponse.json({
     ok: true, enabled, dryRun: !enabled,
     regularCustomers: regulars?.length || 0,
-    plannedOrders: plan.length, createdOrders: created, plan,
+    plannedOrders: plan.length, createdOrders: created, plan, skipped,
   });
 }
+
+function mask(phone: string) { return '****' + String(phone || '').slice(-4); }

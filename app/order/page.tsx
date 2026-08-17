@@ -2640,23 +2640,42 @@ export default function OrderPage() {
 function RegularSetup({ phone, babyName, initial, onSaved }: {
   phone: string;
   babyName: string;
-  initial: { is_regular?: boolean; regular_schedule?: any; postal_code?: string | null } | null;
+  initial: {
+    is_regular?: boolean; regular_schedule?: any; postal_code?: string | null;
+    address?: string | null; address_detail?: string | null; door_password?: string | null;
+  } | null;
   onSaved: () => void;
 }) {
   const sched = initial?.regular_schedule || {};
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<StageType | null>(sched.stage ?? null);
   const [volume, setVolume] = useState<number | null>(sched.volume ?? null);
-  const initQtys: Record<string, number> = { 월: 0, 화: 0, 목: 0, 금: 0 };
-  (sched.slots || []).forEach((s: any) => { if (s.day in initQtys) initQtys[s.day] = s.qty; });
-  const [qtys, setQtys] = useState<Record<string, number>>(initQtys);
+  // 요일 → 메뉴별 팩수. 팩수만 받으면 자동 주문이 조리표에 "메뉴 미지정"으로 떠서 조리를 못 함.
+  const DAYS = ['월', '화', '목', '금'] as const;
+  const emptyDayMenus = () => ({ 한우: 0, 닭: 0, 기타단백질: 0 } as Record<MenuType, number>);
+  const initMenus: Record<string, Record<MenuType, number>> =
+    { 월: emptyDayMenus(), 화: emptyDayMenus(), 목: emptyDayMenus(), 금: emptyDayMenus() };
+  (sched.slots || []).forEach((s: any) => {
+    if (!(s.day in initMenus)) return;
+    if (Array.isArray(s.menus) && s.menus.length > 0) {
+      s.menus.forEach((m: any) => { if (m?.menu in initMenus[s.day]) initMenus[s.day][m.menu as MenuType] = Number(m.qty) || 0; });
+    } else if (Number(s.qty) > 0) {
+      initMenus[s.day].한우 = Number(s.qty); // 메뉴 구분 없이 저장됐던 예전 신청 — 한우로 옮겨두고 고치게 함
+    }
+  });
+  const [dayMenus, setDayMenus] = useState(initMenus);
+  const dayQty = (day: string) => MENU_TYPES.reduce((a, m) => a + (dayMenus[day]?.[m] || 0), 0);
+  // 받는 요일이 하나라도 있고, 받는 요일 전부가 최소 팩수를 넘어야 자동 주문이 서버 검증을 통과함
+  const regularValid = DAYS.some(d => dayQty(d) > 0) && DAYS.every(d => dayQty(d) === 0 || dayQty(d) >= MIN_ORDER_QTY);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const isActive = !!initial?.is_regular;
 
   // 주소·지역 tier (가격 노출 조건)
   const [postalCode, setPostalCode] = useState(initial?.postal_code || '');
-  const [addr, setAddr] = useState('');
+  const [addr, setAddr] = useState(initial?.address || '');
+  const [addrDetail, setAddrDetail] = useState(initial?.address_detail || '');
+  const [regDoorPw, setRegDoorPw] = useState(initial?.door_password || '');
   const [tier, setTier] = useState<PriceTier | null>(null);
   const [checking, setChecking] = useState(false);
   const DIRECT_GU = ['강서구', '양천구'];
@@ -2694,10 +2713,13 @@ function RegularSetup({ phone, babyName, initial, onSaved }: {
   async function save(active: boolean) {
     setSaving(true); setMsg(null);
     try {
-      const slots = Object.entries(qtys).filter(([, q]) => q > 0).map(([day, qty]) => ({ day, qty }));
+      const slots = DAYS.filter(d => dayQty(d) > 0).map(day => ({ day, menus: dayMenus[day] }));
       const r = await fetch('/api/my/regular', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, baby_name: babyName, active, stage, volume, slots, postal_code: postalCode }),
+        body: JSON.stringify({
+          phone, baby_name: babyName, active, stage, volume, slots,
+          postal_code: postalCode, address: addr, address_detail: addrDetail, door_password: regDoorPw,
+        }),
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
@@ -2738,6 +2760,13 @@ function RegularSetup({ phone, babyName, initial, onSaved }: {
                 {tier === '기타' && <span className="ml-1 text-emerald-600 font-bold">· 당일/택배</span>}
               </div>
             )}
+            {/* 자동 주문에 그대로 실려 나가는 주소 — 동·호수가 없으면 배송을 못 함 */}
+            <input value={addrDetail} onChange={e => setAddrDetail(e.target.value)} maxLength={50}
+              placeholder="상세주소 (동·호수)"
+              className="mt-1.5 w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-[16px] outline-none focus:border-emerald-400" />
+            <input value={regDoorPw} onChange={e => setRegDoorPw(e.target.value)} maxLength={20}
+              placeholder="현관 비밀번호 (선택)"
+              className="mt-1.5 w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-[16px] outline-none focus:border-emerald-400" />
           </div>
           {/* 단계 */}
           <div className="grid grid-cols-4 gap-1.5">
@@ -2764,20 +2793,40 @@ function RegularSetup({ phone, babyName, initial, onSaved }: {
               </div>
             </>
           )}
-          {/* 요일별 수량 */}
-          <div className="space-y-1.5">
-            {['월', '화', '목', '금'].map(day => (
-              <div key={day} className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-1.5">
-                <span className="text-sm font-bold text-stone-700">{day}요일</span>
-                <QtyCtrl value={qtys[day]} onChange={v => setQtys(p => ({ ...p, [day]: Math.max(0, Math.min(10, v)) }))} />
-              </div>
-            ))}
+          {/* 요일별 메뉴 팩수 — 조리표에 한우/닭/기타가 찍히게 하려면 여기서 나눠 받아야 함 */}
+          <div className="space-y-2">
+            {DAYS.map(day => {
+              const q = dayQty(day);
+              return (
+                <div key={day} className={`rounded-xl px-3 py-2 border ${q > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-100'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-bold text-stone-700">{day}요일</span>
+                    <span className={`text-[11px] font-bold ${q > 0 ? 'text-emerald-700' : 'text-stone-400'}`}>{q > 0 ? `${q}팩` : '안 받음'}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {MENU_TYPES.map(m => (
+                      <div key={m} className="flex items-center justify-between">
+                        <span className="text-xs text-stone-600">{menuLabel(m)}</span>
+                        <QtyCtrl value={dayMenus[day][m]}
+                          onChange={v => setDayMenus(p => ({ ...p, [day]: { ...p[day], [m]: Math.max(0, Math.min(10, v)) } }))} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+          {/* 1회 배송 최소 팩수 — 자동 주문도 같은 규칙을 타므로 신청 때 미리 알려준다 */}
+          {DAYS.some(d => dayQty(d) > 0 && dayQty(d) < MIN_ORDER_QTY) && (
+            <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 leading-relaxed">
+              받는 요일은 하루 {MIN_ORDER_QTY}팩 이상이어야 해요 ({DAYS.filter(d => dayQty(d) > 0 && dayQty(d) < MIN_ORDER_QTY).map(d => `${d} ${dayQty(d)}팩`).join(', ')})
+            </div>
+          )}
           {msg && <div className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">{msg}</div>}
           <div className="flex gap-2">
-            <button onClick={() => save(true)} disabled={saving || !stage || !volume || !postalCode}
+            <button onClick={() => save(true)} disabled={saving || !stage || !volume || !postalCode || !addr || !regularValid}
               className="flex-1 py-2.5 bg-emerald-500 text-white text-sm font-bold rounded-xl disabled:bg-stone-200">
-              {saving ? '저장 중…' : !postalCode ? '배송지를 입력해주세요' : isActive ? '변경 저장' : '정기배송 신청'}
+              {saving ? '저장 중…' : (!postalCode || !addr) ? '배송지를 입력해주세요' : !regularValid ? `받는 요일마다 ${MIN_ORDER_QTY}팩 이상 담아주세요` : isActive ? '변경 저장' : '정기배송 신청'}
             </button>
             {isActive && (
               <button onClick={() => save(false)} disabled={saving}
