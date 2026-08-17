@@ -15,6 +15,7 @@ function ensureConfigured() {
 // 홈 화면 상태배너와 같은 문구로 통일
 export function statusPushText(status: string, deliveryDate: string): { title: string; body: string } | null {
   if (status === '준비중') return { title: '🧑‍🍳 주문을 준비하고 있어요!', body: `${deliveryDate} 배송분` };
+  if (status === '배송중') return { title: '🚚 배송을 출발했어요!', body: `${deliveryDate} 배송분 · 곧 도착합니다` };
   if (status === '배송완료') return { title: '✅ 배송이 완료됐어요!', body: `${deliveryDate} 배송분` };
   if (status === '취소') return { title: '❌ 주문이 취소됐어요', body: `${deliveryDate} 배송분` };
   return null;

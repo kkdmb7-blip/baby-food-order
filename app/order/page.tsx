@@ -47,6 +47,44 @@ type SavedInfo = {
 function loadSaved(): SavedInfo | null {
   try { const s = localStorage.getItem(SAVED_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
 }
+
+// ── 배송지 주소록 ────────────────────────────────────────────────
+// 주소를 하나만 저장하면 이사하거나 "이번만 친정으로" 받을 때 기존 주소를 덮어쓰게 되고,
+// 그러면 다음 주문이 엉뚱한 곳으로 감. 여러 개 저장 + 기본 배송지 지정 방식으로 둔다.
+export type SavedAddress = {
+  id: string;
+  label: string;              // 집 / 친정 등 손님이 붙이는 이름
+  address: string;
+  addressDetail: string;
+  doorPw: string;
+  postalCode?: string;
+  zoneGroup?: string | null;
+  deliveryKind?: string | null;
+  isDefault?: boolean;
+};
+const ADDR_BOOK_KEY = 'bfo_address_book';
+
+function loadAddrBook(): SavedAddress[] {
+  try {
+    const raw = localStorage.getItem(ADDR_BOOK_KEY);
+    if (raw) return JSON.parse(raw);
+    // 예전에 주소 하나만 저장해 쓰던 손님은 그 주소를 주소록 첫 항목으로 옮겨준다
+    const s = loadSaved();
+    if (s?.address) {
+      const migrated: SavedAddress[] = [{
+        id: 'a1', label: '기본 배송지', address: s.address, addressDetail: s.addressDetail || '',
+        doorPw: s.doorPw || '', postalCode: s.postalCode, zoneGroup: s.zoneGroup,
+        deliveryKind: s.deliveryKind, isDefault: true,
+      }];
+      localStorage.setItem(ADDR_BOOK_KEY, JSON.stringify(migrated));
+      return migrated;
+    }
+  } catch {}
+  return [];
+}
+function saveAddrBook(list: SavedAddress[]) {
+  try { localStorage.setItem(ADDR_BOOK_KEY, JSON.stringify(list)); } catch {}
+}
 const ACQ_SOURCE_KEY = 'bfo_acquisition_source'; // 유입경로 — 최초 1회만 기록(퍼스트터치)
 const REF_CODE_KEY = 'bfo_referral_code'; // 공유링크(?ref=코드)로 들어온 추천인 코드
 const INTRO_SEEN_KEY = 'bfo_intro_seen';
@@ -283,6 +321,12 @@ export default function OrderPage() {
   const [addressDetail, setAddressDetail] = useState('');
   const [doorPw, setDoorPw] = useState('');
   const [customerRequest, setCustomerRequest] = useState('');
+  // 예전에 주문하신 손님이면(엑셀에서 가져온 3,148명) 주소를 다시 입력하지 않아도 되게
+  const [knownAddr, setKnownAddr] = useState<{ address: string; door_password: string } | null>(null);
+  // 배송지 여러 개를 저장해두고 골라 쓴다 — 이사하거나 이번만 친정으로 받는 경우가 흔한데
+  // 주소가 하나뿐이면 매번 덮어쓰게 되고, 그러면 다음 주문이 엉뚱한 곳으로 감.
+  const [addrBook, setAddrBook] = useState<SavedAddress[]>([]);
+  const [selectedAddrId, setSelectedAddrId] = useState<string | null>(null);
   // 배송권역: 직배송(강서·양천) / 당일배송(두발히어로) / 택배익일배송
   const [postalCode, setPostalCode] = useState('');
   const [zoneGroup, setZoneGroup] = useState<string | null>(null);
@@ -340,6 +384,62 @@ export default function OrderPage() {
   function retryResolveDelivery() {
     if (!lastZoneArgs) { openPostcode(); return; }
     resolveDelivery(lastZoneArgs.zonecode, lastZoneArgs.sido, lastZoneArgs.sigungu);
+  }
+
+  // ── 배송지 주소록 조작 ──────────────────────────────────────────
+  function pickAddress(a: SavedAddress) {
+    setSelectedAddrId(a.id);
+    setAddress(a.address); setAddressDetail(a.addressDetail); setDoorPw(a.doorPw);
+    setPostalCode(a.postalCode || '');
+    setZoneGroup(a.zoneGroup ?? null);
+    setDeliveryKind(a.deliveryKind ?? null);
+    setZoneError(!a.deliveryKind); // 배송지역 정보가 없는 예전 주소면 다시 확인 필요
+    setKnownAddr(null);
+  }
+  function setDefaultAddress(id: string) {
+    const next = addrBook.map(a => ({ ...a, isDefault: a.id === id }));
+    setAddrBook(next); saveAddrBook(next);
+  }
+  function removeAddress(id: string) {
+    if (!confirm('이 배송지를 목록에서 지울까요?')) return;
+    const next = addrBook.filter(a => a.id !== id);
+    // 기본 배송지를 지웠으면 남은 첫 번째를 기본으로
+    if (next.length && !next.some(a => a.isDefault)) next[0].isDefault = true;
+    setAddrBook(next); saveAddrBook(next);
+    if (selectedAddrId === id) {
+      setSelectedAddrId(null);
+      setAddress(''); setAddressDetail(''); setDoorPw('');
+      setPostalCode(''); setZoneGroup(null); setDeliveryKind(null);
+    }
+  }
+  function renameAddress(id: string) {
+    const cur = addrBook.find(a => a.id === id);
+    const label = prompt('배송지 이름 (예: 집, 친정, 회사)', cur?.label || '')?.trim();
+    if (label === undefined || label === '') return;
+    const next = addrBook.map(a => a.id === id ? { ...a, label: label.slice(0, 12) } : a);
+    setAddrBook(next); saveAddrBook(next);
+  }
+  /** 주문에 사용한 주소를 주소록에 반영 (같은 주소면 갱신, 없으면 추가) */
+  function rememberAddress() {
+    const addr = address.trim();
+    if (!addr) return;
+    const same = addrBook.find(a => a.address.trim() === addr && a.addressDetail.trim() === addressDetail.trim());
+    let next: SavedAddress[];
+    if (same) {
+      next = addrBook.map(a => a.id === same.id
+        ? { ...a, doorPw: doorPw.trim(), postalCode, zoneGroup, deliveryKind } : a);
+    } else {
+      const entry: SavedAddress = {
+        id: 'a' + Date.now(),
+        label: addrBook.length === 0 ? '기본 배송지' : `배송지 ${addrBook.length + 1}`,
+        address: addr, addressDetail: addressDetail.trim(), doorPw: doorPw.trim(),
+        postalCode, zoneGroup, deliveryKind,
+        isDefault: addrBook.length === 0,
+      };
+      next = [...addrBook, entry];
+      setSelectedAddrId(entry.id);
+    }
+    setAddrBook(next); saveAddrBook(next);
   }
 
   // Step 3 — 복합 주문
@@ -422,6 +522,18 @@ export default function OrderPage() {
       if (a) setAllergies(JSON.parse(a));
       else if (s?.allergies) setAllergies(s.allergies);
     } catch {}
+    // 배송지 주소록 — 기본 배송지가 있으면 그걸로 시작
+    const book = loadAddrBook();
+    setAddrBook(book);
+    const def = book.find(a => a.isDefault) || book[0];
+    if (def) {
+      setSelectedAddrId(def.id);
+      setAddress(def.address); setAddressDetail(def.addressDetail); setDoorPw(def.doorPw);
+      if (def.postalCode) setPostalCode(def.postalCode);
+      setZoneGroup(def.zoneGroup ?? null);
+      setDeliveryKind(def.deliveryKind ?? null);
+    }
+
     setDiary(loadDiary());
     setLastOrder(loadLastOrder());
     setReactions(loadReactions());
@@ -434,7 +546,7 @@ export default function OrderPage() {
         if (!d?.ok || !Array.isArray(d.orders)) return;
         const seen = loadSeenStatus();
         const firstTime = !hasSeenStatusRecord();
-        const NOTABLE = ['준비중', '배송완료', '취소'];
+        const NOTABLE = ['준비중', '배송중', '배송완료', '취소'];
         const alerts: { id: string; status: string; delivery_date: string }[] = [];
         const nextSeen: Record<string, string> = { ...seen };
         for (const o of d.orders) {
@@ -534,6 +646,23 @@ export default function OrderPage() {
   }, [currentWeekStart]);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
+
+  // 배송정보 단계에서 연락처를 다 넣으면, 예전 주문 이력으로 주소를 찾아본다.
+  // (이름까지 맞아야 서버가 돌려주므로 남의 주소는 조회되지 않음)
+  useEffect(() => {
+    if (step !== 2) return;
+    const digits = phone.replace(/\D/g, '');
+    const nm = babyName.trim();
+    if (!/^\d{10,11}$/.test(digits) || !nm || address) { setKnownAddr(null); return; }
+    let alive = true;
+    fetch('/api/known-customer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: digits, baby_name: nm }),
+    }).then(r => r.json()).then(d => {
+      if (alive && d.found && d.address) setKnownAddr({ address: d.address, door_password: d.door_password || '' });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [step, phone, babyName, address]);
 
   // 카카오(다음) 우편번호 스크립트 로드
   useEffect(() => {
@@ -742,6 +871,9 @@ export default function OrderPage() {
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
       const firstSet = dateOrders[0]?.sets[0];
+      // 이번에 쓴 주소를 주소록에 반영 — 새 주소면 추가되고, 기존 주소면 갱신만 된다.
+      // (기본 배송지는 손님이 직접 지정하므로 여기서 임의로 바꾸지 않음)
+      rememberAddress();
       doSave({
         babyName: babyName.trim(), months, phone: phone.replace(/[^\d]/g,''),
         address: address.trim(), addressDetail: addressDetail.trim(), doorPw: doorPw.trim(),
@@ -916,6 +1048,8 @@ export default function OrderPage() {
             {statusAlerts.map(a => {
               const info = a.status === '배송완료'
                 ? { emoji: '✅', text: '배송이 완료됐어요!', cls: 'bg-emerald-50 border-emerald-200 text-emerald-800' }
+                : a.status === '배송중'
+                  ? { emoji: '🚚', text: '배송을 출발했어요! 곧 도착합니다', cls: 'bg-violet-50 border-violet-200 text-violet-800' }
                 : a.status === '준비중'
                   ? { emoji: '🧑‍🍳', text: '주문을 준비하고 있어요!', cls: 'bg-blue-50 border-blue-200 text-blue-800' }
                   : { emoji: '❌', text: '주문이 취소됐어요', cls: 'bg-stone-100 border-stone-200 text-stone-600' };
@@ -1351,6 +1485,7 @@ export default function OrderPage() {
     const STATUS_STYLE: Record<string, string> = {
       '접수': 'bg-amber-100 text-amber-800',
       '준비중': 'bg-blue-100 text-blue-800',
+      '배송중': 'bg-violet-100 text-violet-800',
       '배송완료': 'bg-emerald-100 text-emerald-800',
       '취소': 'bg-stone-100 text-stone-500',
     };
@@ -1654,15 +1789,85 @@ export default function OrderPage() {
               <p className="text-[11px] text-stone-400 mt-1">친구·지인 추천으로 오셨다면 입력해주세요. 첫 주문에 한해 두 분 다 3,000P를 드려요!</p>
             </Field>
           )}
+          {/* 저장해둔 배송지 목록 — 기본 배송지로 시작하되 이번 주문만 다른 곳으로 고를 수 있음 */}
+          {addrBook.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs text-stone-500 font-semibold mb-1.5">배송지 선택</div>
+              <div className="space-y-1.5">
+                {addrBook.map(a => {
+                  const on = selectedAddrId === a.id;
+                  return (
+                    <div key={a.id}
+                      className={`rounded-xl border px-3 py-2.5 ${on ? 'border-amber-400 bg-amber-50' : 'border-stone-200 bg-white'}`}>
+                      <button type="button" onClick={() => pickAddress(a)} className="w-full text-left">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 ${on ? 'border-amber-500 bg-amber-500' : 'border-stone-300'}`} />
+                          <span className="text-xs font-bold text-stone-800">{a.label}</span>
+                          {a.isDefault && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-full font-bold">기본</span>}
+                        </div>
+                        <div className="text-sm text-stone-700 pl-5">{a.address}{a.addressDetail ? ' ' + a.addressDetail : ''}</div>
+                      </button>
+                      <div className="flex gap-2 pl-5 mt-1.5">
+                        {!a.isDefault && (
+                          <button type="button" onClick={() => setDefaultAddress(a.id)}
+                            className="text-[11px] text-amber-700 font-bold">기본으로</button>
+                        )}
+                        <button type="button" onClick={() => renameAddress(a.id)}
+                          className="text-[11px] text-stone-500">이름변경</button>
+                        <button type="button" onClick={() => removeAddress(a.id)}
+                          className="text-[11px] text-stone-400">삭제</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <button type="button"
+                onClick={() => { setSelectedAddrId(null); setAddress(''); setAddressDetail(''); setDoorPw(''); setPostalCode(''); setZoneGroup(null); setDeliveryKind(null); openPostcode(); }}
+                className="w-full mt-2 py-2.5 border border-dashed border-amber-300 rounded-xl text-amber-700 text-xs font-bold">
+                + 새 배송지 추가
+              </button>
+            </div>
+          )}
+
+          {/* 예전 주문 이력에서 찾은 주소는 "제안"일 뿐 자동으로 채우지 않는다 —
+              이사했거나 이번만 다른 곳으로 받는데 자동으로 채우면 예전 집으로 가는 사고가 남 */}
+          {knownAddr && !address && (
+            <div className="mb-3 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-3">
+              <div className="text-xs text-emerald-800 font-bold mb-1">전에 주문하셨던 주소예요</div>
+              <div className="text-sm text-stone-700 mb-1">{knownAddr.address}</div>
+              <div className="text-[11px] text-stone-500 mb-2">이사하셨거나 이번만 다른 곳으로 받으시면 아래에서 새로 검색해주세요.</div>
+              <div className="flex gap-2">
+                <button type="button"
+                  onClick={() => {
+                    setAddress(knownAddr.address);
+                    if (knownAddr.door_password) setDoorPw(knownAddr.door_password);
+                    // 예전 주소는 지번이라 우편번호를 모름 — 배송지역·가격은 주소검색을 해야 정확해짐
+                    setDeliveryKind(null); setPostalCode(''); setZoneGroup(null); setZoneError(true);
+                    setKnownAddr(null);
+                  }}
+                  className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold">
+                  이 주소 그대로
+                </button>
+                <button type="button" onClick={() => setKnownAddr(null)}
+                  className="px-3 py-2 bg-white border border-emerald-200 text-emerald-700 rounded-lg text-xs font-bold">
+                  다른 주소로
+                </button>
+              </div>
+            </div>
+          )}
           <Field label="주소">
             <button onClick={openPostcode} type="button"
               className="w-full py-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-800 font-bold text-sm active:bg-amber-100 transition">
               🔍 주소 검색 {address ? '(다시 찾기)' : ''}
             </button>
             {address && (
-              <div className="mt-2 text-sm text-stone-800 bg-white border border-stone-200 rounded-xl px-3 py-2.5">
-                {postalCode && <span className="text-xs text-stone-400">[{postalCode}] </span>}{address}
-              </div>
+              <>
+                <div className="mt-2 text-sm text-stone-800 bg-white border border-stone-200 rounded-xl px-3 py-2.5">
+                  {postalCode && <span className="text-xs text-stone-400">[{postalCode}] </span>}{address}
+                </div>
+                {/* 이번만 다른 곳으로 받는 경우가 있어서, 언제든 바꿀 수 있다는 걸 알려둠 */}
+                <p className="text-[11px] text-stone-400 mt-1">이번에만 다른 곳으로 받으시려면 위에서 다시 검색하시면 돼요.</p>
+              </>
             )}
           </Field>
           {/* 배송 종류 배너 */}

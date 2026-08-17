@@ -4,7 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { applyCancelReversal } from '@/lib/orderCancel';
 import { sendStatusPush, statusPushText } from '@/lib/push';
 
-const STATUSES = ['접수', '준비중', '배송완료', '취소'];
+const STATUSES = ['접수', '준비중', '배송중', '배송완료', '취소'];
 
 export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });

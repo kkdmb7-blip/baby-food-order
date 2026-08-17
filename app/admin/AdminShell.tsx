@@ -12,12 +12,13 @@ type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴�
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
   준비중:  'bg-sky-100 text-sky-800 border-sky-200',
+  배송중:  'bg-violet-100 text-violet-800 border-violet-200',
   배송완료:'bg-emerald-100 text-emerald-800 border-emerald-200',
   취소:    'bg-stone-100 text-stone-500 border-stone-200'
 };
 
 const NEXT_STATUS: Record<OrderStatus, OrderStatus> = {
-  접수: '준비중', 준비중: '배송완료', 배송완료: '접수', 취소: '접수'
+  접수: '준비중', 준비중: '배송중', 배송중: '배송완료', 배송완료: '접수', 취소: '접수'
 };
 
 function shiftDay(date: string, days: number): string {

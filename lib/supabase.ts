@@ -19,7 +19,7 @@ export function supabaseAnon() {
 
 export type MenuType = '한우' | '닭' | '기타단백질';
 export type StageType = '중기1단계' | '중기2단계' | '후기' | '완료기';
-export type OrderStatus = '접수' | '준비중' | '배송완료' | '취소';
+export type OrderStatus = '접수' | '준비중' | '배송중' | '배송완료' | '취소';
 export type OrderType = '일반' | '정기' | '선결제';
 
 export type OrderItem = { menu: MenuType; qty: number };
