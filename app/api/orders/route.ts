@@ -267,16 +267,29 @@ export async function GET(req: NextRequest) {
   const date = p.get('date');
   const status = p.get('status');
 
+  // 이름·연락처로 찾기 — 문의 전화가 왔을 때 날짜를 옮겨가며 눈으로 찾던 걸 없앰.
+  // 검색일 때는 날짜 범위를 걸지 않고 전체에서 찾는다(언제 주문했는지 모르는 게 보통이라).
+  const search = String(p.get('q') || '').trim();
+
   const sb = supabaseService();
-  let q = sb.from('baby_food_orders').select('*').order('delivery_date').order('created_at', { ascending: false });
-  if (date) q = q.eq('delivery_date', date);
-  else {
+  let q = sb.from('baby_food_orders').select('*')
+    .order('delivery_date', { ascending: false }).order('created_at', { ascending: false });
+
+  if (search) {
+    const digits = search.replace(/\D/g, '');
+    // 숫자를 넣으면 연락처로, 글자를 넣으면 아기 이름으로 (부분 일치)
+    q = digits.length >= 4
+      ? q.ilike('customer_phone', `%${digits}%`)
+      : q.ilike('baby_name', `%${search}%`);
+  } else if (date) {
+    q = q.eq('delivery_date', date);
+  } else {
     if (from) q = q.gte('delivery_date', from);
     if (to) q = q.lte('delivery_date', to);
   }
   if (status) q = q.eq('status', status);
 
-  const { data, error } = await q.limit(500);
+  const { data, error } = await q.limit(search ? 100 : 500);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ orders: data });
 }

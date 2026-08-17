@@ -27,10 +27,11 @@ function shiftDay(date: string, days: number): string {
 }
 
 export default function AdminShell({
-  initialOrders, customers: initCustomers, weeklyMenus: initMenus,
+  initialOrders, cancelledOrders, customers: initCustomers, weeklyMenus: initMenus,
   today, selectedDate, weekStart
 }: {
   initialOrders: Order[];
+  cancelledOrders: Order[];
   customers: Customer[];
   weeklyMenus: WeeklyMenu[];
   today: string;
@@ -39,6 +40,13 @@ export default function AdminShell({
 }) {
   const [tab, setTab] = useState<Tab>('주문');
   const [orders, setOrders] = useState<Order[]>(initialOrders);
+  // 주문 찾기 — 문의 전화가 오면 날짜를 옮겨가며 눈으로 찾아야 했음
+  const [search, setSearch] = useState('');
+  const [searchResult, setSearchResult] = useState<Order[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  // 상태 필터 + 일괄 선택
+  const [filter, setFilter] = useState<'전체' | '미입금' | '접수' | '준비중' | '배송중' | '배송완료'>('전체');
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [customers, setCustomers] = useState<Customer[]>(initCustomers);
   const [menus, setMenus] = useState<WeeklyMenu[]>(initMenus);
   const router = useRouter();
@@ -56,6 +64,38 @@ export default function AdminShell({
   async function logout() {
     await fetch('/api/auth', { method: 'DELETE' });
     router.push('/admin/login');
+  }
+
+  async function runSearch() {
+    const q = search.trim();
+    if (!q) { setSearchResult(null); return; }
+    setSearching(true);
+    const d = await fetch(`/api/orders?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => null);
+    setSearching(false);
+    setSearchResult(d?.orders || []);
+  }
+
+  // 배송 나갈 때 10건을 하나씩 누르지 않아도 되게
+  async function bulkStatus(next: OrderStatus) {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    if (!confirm(`${ids.length}건을 '${next}'(으)로 바꿀까요?`)) return;
+    setOrders(prev => prev.map(o => picked.has(o.id) ? { ...o, status: next } : o));
+    setPicked(new Set());
+    await Promise.all(ids.map(id => fetch(`/api/orders/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: next }),
+    }).catch(() => {})));
+    router.refresh();
+  }
+
+  async function saveMemo(o: Order, memo: string) {
+    if ((o.memo || '') === memo.trim()) return;
+    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, memo: memo.trim() || null } : x));
+    await fetch(`/api/orders/${o.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo }),
+    }).catch(() => {});
   }
 
   async function togglePaid(o: Order) {
@@ -151,6 +191,46 @@ export default function AdminShell({
         {/* ── 탭 1: 오늘 주문 ─────────────────────────────── */}
         {tab === '주문' && (
           <div className="space-y-3">
+            {/* 주문 찾기 — 이름 또는 연락처. 날짜와 무관하게 전체에서 찾는다 */}
+            <div className="flex gap-2">
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runSearch(); }}
+                placeholder="이름 또는 연락처로 주문 찾기"
+                className="flex-1 px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-amber-400" />
+              <button onClick={runSearch} disabled={searching}
+                className="px-4 py-2 bg-stone-800 text-white rounded-lg text-sm font-bold disabled:opacity-50">
+                {searching ? '찾는 중' : '찾기'}
+              </button>
+              {searchResult && (
+                <button onClick={() => { setSearch(''); setSearchResult(null); }}
+                  className="px-3 py-2 border border-stone-200 rounded-lg text-sm">닫기</button>
+              )}
+            </div>
+
+            {searchResult && (
+              <div className="bg-white rounded-xl border border-stone-300 p-3">
+                <div className="text-sm font-bold text-stone-700 mb-2">검색 결과 {searchResult.length}건</div>
+                {searchResult.length === 0 && <div className="text-sm text-stone-400 py-3 text-center">일치하는 주문이 없어요</div>}
+                <div className="divide-y divide-stone-100">
+                  {searchResult.map(o => (
+                    <a key={o.id} href={`/admin?date=${o.delivery_date}`} className="block py-2 hover:bg-stone-50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-stone-900">{o.baby_name}
+                          <span className="ml-2 text-xs font-normal text-stone-500">{formatPhone(o.customer_phone)}</span>
+                        </span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full border font-bold ${STATUS_CLS[o.status]}`}>{o.status}</span>
+                      </div>
+                      <div className="text-xs text-stone-600 mt-0.5">
+                        조리일 <span className="font-bold text-amber-700">{o.delivery_date}</span>
+                        {' · '}{o.total_qty}팩 · {o.total_price.toLocaleString()}원
+                        {!o.paid && o.order_type !== '선결제' && <span className="ml-1 text-rose-600 font-bold">미입금</span>}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="text-sm font-bold text-stone-700 flex items-center gap-2 flex-wrap">
               <span>{selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span></span>
               {(() => {
@@ -166,18 +246,58 @@ export default function AdminShell({
                 );
               })()}
             </div>
+            {/* 상태 필터 — "미입금만", "준비중만" 같은 걸 걸 수 있게 */}
+            <div className="flex gap-1.5 flex-wrap">
+              {(['전체', '미입금', '접수', '준비중', '배송중', '배송완료'] as const).map(f => {
+                const n = f === '전체' ? orders.length
+                  : f === '미입금' ? orders.filter(o => !o.paid && o.order_type !== '선결제').length
+                  : orders.filter(o => o.status === f).length;
+                return (
+                  <button key={f} onClick={() => { setFilter(f); setPicked(new Set()); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                      filter === f ? 'bg-stone-800 border-stone-800 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                    {f} {n}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 일괄 처리 — 배송 나갈 때 하나씩 누르지 않아도 되게 */}
+            {picked.size > 0 && (
+              <div className="sticky top-[132px] z-10 bg-stone-800 text-white rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold">{picked.size}건 선택</span>
+                <button onClick={() => bulkStatus('준비중')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">준비중</button>
+                <button onClick={() => bulkStatus('배송중')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">배송중</button>
+                <button onClick={() => bulkStatus('배송완료')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">배송완료</button>
+                <button onClick={() => setPicked(new Set())} className="text-xs px-2 py-1 ml-auto opacity-70">선택 해제</button>
+              </div>
+            )}
+
             {orders.length === 0 && (
               <Empty text={`${selectedDate}에 조리할 주문이 없어요`} />
             )}
-            {orders.map(o => (
+            {orders.filter(o =>
+              filter === '전체' ? true
+              : filter === '미입금' ? (!o.paid && o.order_type !== '선결제')
+              : o.status === filter
+            ).map(o => (
               <div key={o.id} className="bg-white rounded-xl border border-stone-200 p-4">
                 <div className="flex items-start justify-between gap-3 mb-2">
-                  <div>
-                    <span className="font-bold text-stone-900 mr-2">{o.baby_name}</span>
-                    <span className="text-xs text-stone-500">{o.months}개월</span>
-                    {o.order_type !== '일반' && (
-                      <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">{o.order_type}</span>
-                    )}
+                  <div className="flex items-start gap-2">
+                    <input type="checkbox" checked={picked.has(o.id)}
+                      onChange={e => setPicked(prev => {
+                        const n = new Set(prev);
+                        if (e.target.checked) n.add(o.id); else n.delete(o.id);
+                        return n;
+                      })}
+                      className="mt-1 w-4 h-4 accent-stone-800" />
+                    <div>
+                      <span className="font-bold text-stone-900 mr-2">{o.baby_name}</span>
+                      <span className="text-xs text-stone-500">{o.months}개월</span>
+                      {o.order_type !== '일반' && (
+                        <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">{o.order_type}</span>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => changeStatus(o.id, NEXT_STATUS[o.status])}
@@ -223,9 +343,33 @@ export default function AdminShell({
                   {o.door_password && <span className="ml-2">🔑 {o.door_password}</span>}
                   <span className="ml-3">📞 {formatPhone(o.customer_phone)}</span>
                 </div>
-                {o.memo && <div className="mt-1 text-xs text-stone-500 italic">💬 {o.memo}</div>}
+                {/* 메모 — 표시만 되고 적을 곳이 없었음. 조리표에도 함께 나감 */}
+                <input
+                  defaultValue={o.memo || ''}
+                  onBlur={e => saveMemo(o, e.target.value)}
+                  maxLength={200}
+                  placeholder="메모 남기기 (조리표에도 표시돼요)"
+                  className="mt-2 w-full px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs outline-none focus:border-amber-400 bg-stone-50"
+                />
               </div>
             ))}
+
+            {/* 취소된 주문 — 조리·배송에서는 빠지지만 "취소된 게 있었는지"는 확인돼야 함 */}
+            {cancelledOrders.length > 0 && (
+              <div className="pt-2">
+                <div className="text-xs font-bold text-stone-500 mb-1.5">이 날짜의 취소된 주문 {cancelledOrders.length}건</div>
+                <div className="bg-stone-100 rounded-xl divide-y divide-stone-200">
+                  {cancelledOrders.map(o => (
+                    <div key={o.id} className="px-3 py-2 flex items-center justify-between gap-2 text-sm">
+                      <span className="text-stone-500 line-through">{o.baby_name}</span>
+                      <span className="text-xs text-stone-400">
+                        {o.total_qty}팩 · {o.total_price.toLocaleString()}원 · {formatPhone(o.customer_phone)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -740,12 +884,12 @@ function StatsTab() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-white rounded-xl border border-stone-200 p-4">
-          <div className="text-xs text-stone-400 mb-1">오늘 매출</div>
+          <div className="text-xs text-stone-400 mb-1">오늘 접수 매출</div>
           <div className="text-xl font-black text-stone-900">{stats.today.revenue.toLocaleString()}원</div>
           <div className="text-[11px] text-stone-400 mt-0.5">주문 {stats.today.orders}건</div>
         </div>
         <div className="bg-white rounded-xl border border-stone-200 p-4">
-          <div className="text-xs text-stone-400 mb-1">이번 달 매출</div>
+          <div className="text-xs text-stone-400 mb-1">이번 달 접수 매출</div>
           <div className="text-xl font-black text-amber-700">{stats.thisMonth.revenue.toLocaleString()}원</div>
           <div className="text-[11px] text-stone-400 mt-0.5">주문 {stats.thisMonth.orders}건</div>
         </div>

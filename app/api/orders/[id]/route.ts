@@ -10,10 +10,20 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const id = ctx.params.id;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'invalid id' }, { status: 400 });
-  const { status } = await req.json().catch(() => ({}));
-  if (!STATUSES.includes(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 });
+  const body = await req.json().catch(() => ({}));
+  const { status } = body;
 
   const sb = supabaseService();
+
+  // 메모만 저장하는 경우 — 상태 변경 로직(취소 환불 등)을 타지 않게 여기서 끝낸다
+  if (status === undefined && typeof body.memo === 'string') {
+    const memo = String(body.memo).slice(0, 200).trim() || null;
+    const { error } = await sb.from('baby_food_orders').update({ memo }).eq('id', id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, memo });
+  }
+
+  if (!STATUSES.includes(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 });
 
   const { data: order } = await sb
     .from('baby_food_orders')
