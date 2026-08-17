@@ -497,7 +497,21 @@ export default function OrderPage() {
   const [menuStage, setMenuStage] = useState<StageType | null>(null); // 레거시 (미사용)
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   // 날짜별 독립 단계 선택 가능
-  type MenuSel2 = { stage: StageType | null; volume: number | null; qtys: Record<MenuType, number> };
+  // ⚠️ 예전엔 날짜당 stage·volume 하나에 qtys 하나만 들고 있어서, 단계나 용량을 바꾸면
+  // 담아둔 수량이 리셋됐음 — 한 날짜에 중기1 240 + 중기1 310처럼 여러 조합을 시키는 손님이
+  // 이 화면에서는 아예 주문을 못 했다. 조합(단계|용량)별로 따로 보관해서 전부 담을 수 있게 함.
+  // stage·volume은 "지금 편집 중인 조합"을 가리키는 커서일 뿐, 바꿔도 담은 건 그대로 남는다.
+  type MenuSel2 = {
+    stage: StageType | null;
+    volume: number | null;
+    byCombo: Record<string, Record<MenuType, number>>; // '중기1단계|240' → {한우,닭,기타단백질}
+  };
+  const comboKey = (stage: StageType, volume: number) => `${stage}|${volume}`;
+  const parseCombo = (key: string) => {
+    const i = key.lastIndexOf('|');
+    return { stage: key.slice(0, i) as StageType, volume: Number(key.slice(i + 1)) };
+  };
+  const comboQty = (q?: Record<MenuType, number>) => q ? MENU_TYPES.reduce((a, m) => a + (q[m] || 0), 0) : 0;
   const [menuSels, setMenuSels] = useState<Record<string, MenuSel2>>({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -1421,22 +1435,34 @@ export default function OrderPage() {
   // ── 메뉴보기 화면 ─────────────────────────────────────────────
   if (mode === 'menu') {
     // 날짜별 독립 helpers
-    const menuSelOf = (date: string): MenuSel2 =>
-      menuSels[date] ?? { stage: null, volume: null, qtys: emptyMenus() };
+    const EMPTY_SEL: MenuSel2 = { stage: null, volume: null, byCombo: {} };
+    const menuSelOf = (date: string): MenuSel2 => menuSels[date] ?? EMPTY_SEL;
     const updMenuSel = (date: string, fn: (s: MenuSel2) => MenuSel2) =>
-      setMenuSels(prev => ({ ...prev, [date]: fn(prev[date] ?? { stage: null, volume: null, qtys: emptyMenus() }) }));
+      setMenuSels(prev => ({ ...prev, [date]: fn(prev[date] ?? EMPTY_SEL) }));
 
-    const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
-      s + MENU_TYPES.reduce((a, m) => a + (sel.qtys[m] || 0), 0), 0)
+    // 지금 편집 중인 조합의 수량 (단계·용량을 아직 안 고르면 빈 값)
+    const curQtys = (sel: MenuSel2): Record<MenuType, number> =>
+      sel.stage && sel.volume ? (sel.byCombo[comboKey(sel.stage, sel.volume)] ?? emptyMenus()) : emptyMenus();
+    // 그 날짜에 담긴 조합 전부 (수량 0인 건 제외)
+    const combosOf = (sel: MenuSel2) =>
+      Object.entries(sel.byCombo)
+        .filter(([, q]) => comboQty(q) > 0)
+        .map(([key, q]) => ({ key, ...parseCombo(key), qtys: q, qty: comboQty(q) }))
+        .sort((a, b) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage) || a.volume - b.volume);
+    const dayQtyOf = (sel: MenuSel2) => combosOf(sel).reduce((a, c) => a + c.qty, 0);
+
+    const totalMenuQty = Object.values(menuSels).reduce((s, sel) => s + dayQtyOf(sel), 0)
       + Object.values(banchanQtys).reduce((a, b) => a + b, 0);
     // 정책: 메뉴보기(주소 전)에서는 가격 미표시
 
     const goOrderFromMenu = () => {
+      // 한 날짜에 담긴 조합 전부를 세트로 만든다 (중기1 240 + 중기1 310처럼 여러 개 가능)
       const yushikOrders: DateOrder[] = Object.entries(menuSels)
-        .filter(([, sel]) => sel.stage && sel.volume && Object.values(sel.qtys).some(q => q > 0))
-        .map(([date, sel]) => ({
+        .map(([date, sel]) => ({ date, combos: combosOf(sel) }))
+        .filter(({ combos }) => combos.length > 0)
+        .map(({ date, combos }) => ({
           id: uid(), delivery_date: date,
-          sets: [{ id: uid(), stage: sel.stage!, volume: sel.volume!, menus: sel.qtys }]
+          sets: combos.map(c => ({ id: uid(), stage: c.stage, volume: c.volume, menus: c.qtys })),
         }));
       const banchanOrders: DateOrder[] = Object.entries(banchanQtys)
         .filter(([, qty]) => qty > 0)
@@ -1503,8 +1529,10 @@ export default function OrderPage() {
               const isOpen = expandedDate === day.date;
               const sel = menuSelOf(day.date);
               const bQty = banchanQtys[day.date] ?? 0;
-              const dayQty = isBanchan ? bQty : MENU_TYPES.reduce((a,m)=>a+(sel.qtys[m]||0),0);
+              const combos = combosOf(sel);
+              const dayQty = isBanchan ? bQty : dayQtyOf(sel);
               const selVolOpts = sel.stage ? STAGE_OPTIONS[sel.stage] : [];
+              const qtysNow = curQtys(sel);
               return (
                 <div key={day.date} className={`bg-white rounded-xl border overflow-hidden ${isBanchan ? 'border-emerald-200' : 'border-amber-100'}`}>
                   {/* 날짜 헤더 */}
@@ -1515,7 +1543,12 @@ export default function OrderPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-stone-900 text-sm">{day.label}</span>
                       {isBanchan && <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">반찬</span>}
-                      {!isBanchan && sel.stage && <span className="text-[10px] text-stone-500">{sel.stage}{sel.volume ? ` ${sel.volume}g` : ''}</span>}
+                      {/* 담은 조합을 접힌 상태에서도 알 수 있게 — 여러 개일 수 있음 */}
+                      {!isBanchan && combos.length > 0 && (
+                        <span className="text-[10px] text-stone-500">
+                          {combos.map(c => `${c.stage.replace('중기1단계','중1').replace('중기2단계','중2').replace('완료기','완료')} ${c.volume}g`).join(' + ')}
+                        </span>
+                      )}
                       {dayQty > 0 && (
                         <span className={`text-xs px-2 py-0.5 rounded-full font-bold text-white ${isBanchan ? 'bg-emerald-500' : 'bg-amber-500'}`}>
                           {isBanchan ? `${dayQty}세트` : `${dayQty}팩`}
@@ -1555,17 +1588,50 @@ export default function OrderPage() {
                         </div>
                       )}
 
-                      {/* 이유식 단계 선택 */}
+                      {/* 담아둔 조합 목록 — 단계·용량을 바꿔도 사라지지 않는다는 걸 눈으로 확인할 수 있게 */}
+                      {!isBanchan && combos.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 space-y-1.5">
+                          <div className="text-[11px] font-bold text-amber-800">담은 것 ({dayQty}팩)</div>
+                          {combos.map(c => {
+                            const editing = sel.stage === c.stage && sel.volume === c.volume;
+                            return (
+                              <div key={c.key} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 border ${editing ? 'bg-white border-amber-400' : 'bg-white/70 border-transparent'}`}>
+                                <button onClick={() => updMenuSel(day.date, s => ({ ...s, stage: c.stage, volume: c.volume }))}
+                                  className="flex-1 text-left">
+                                  <div className="text-xs font-bold text-stone-800">{c.stage} {c.volume}g · {c.qty}팩</div>
+                                  <div className="text-[11px] text-stone-500">
+                                    {MENU_TYPES.filter(m => c.qtys[m] > 0).map(m => `${menuLabel(m)} ${c.qtys[m]}`).join(' · ')}
+                                  </div>
+                                </button>
+                                <button onClick={() => updMenuSel(day.date, s => {
+                                    const next = { ...s.byCombo }; delete next[c.key];
+                                    return { ...s, byCombo: next };
+                                  })}
+                                  aria-label="이 조합 지우기"
+                                  className="w-7 h-7 flex items-center justify-center text-stone-400 border border-stone-200 rounded-lg bg-white">×</button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* 이유식 단계 선택 — 바꿔도 담아둔 수량은 유지된다(조합별로 따로 보관) */}
                       {!isBanchan && <div>
-                        <div className="text-[11px] text-stone-500 mb-1.5">단계</div>
+                        <div className="text-[11px] text-stone-500 mb-1.5">
+                          단계 {combos.length > 0 && <span className="text-amber-700 font-bold">— 다른 단계·용량도 이어서 담을 수 있어요</span>}
+                        </div>
                         <div className="grid grid-cols-4 gap-1.5">
-                          {STAGES.map(st => (
-                            <button key={st}
-                              onClick={() => updMenuSel(day.date, s => ({ ...s, stage: st, volume: null, qtys: emptyMenus() }))}
-                              className={`py-2 rounded-lg text-xs font-bold border transition ${sel.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                              {st.replace('중기1단계','중1').replace('중기2단계','중2').replace('후기','후기').replace('완료기','완료')}
-                            </button>
-                          ))}
+                          {STAGES.map(st => {
+                            const has = combos.some(c => c.stage === st);
+                            return (
+                              <button key={st}
+                                onClick={() => updMenuSel(day.date, s => ({ ...s, stage: st, volume: null }))}
+                                className={`relative py-2 rounded-lg text-xs font-bold border transition ${sel.stage===st?'bg-amber-500 border-amber-500 text-white':has?'bg-amber-50 border-amber-300 text-amber-800':'bg-white border-amber-100 text-stone-700'}`}>
+                                {st.replace('중기1단계','중1').replace('중기2단계','중2').replace('후기','후기').replace('완료기','완료')}
+                                {has && sel.stage!==st && <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 rounded-full" />}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>}
 
@@ -1574,13 +1640,16 @@ export default function OrderPage() {
                         <div>
                           <div className="text-[11px] text-stone-500 mb-1.5">용량</div>
                           <div className="flex gap-2">
-                            {selVolOpts.map(opt => (
-                              <button key={opt.volume}
-                                onClick={() => updMenuSel(day.date, s => ({ ...s, volume: opt.volume, qtys: emptyMenus() }))}
-                                className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                {opt.volume}g
-                              </button>
-                            ))}
+                            {selVolOpts.map(opt => {
+                              const q = comboQty(sel.byCombo[comboKey(sel.stage!, opt.volume)]);
+                              return (
+                                <button key={opt.volume}
+                                  onClick={() => updMenuSel(day.date, s => ({ ...s, volume: opt.volume }))}
+                                  className={`flex-1 py-2 rounded-xl border text-xs font-bold transition ${sel.volume===opt.volume?'bg-amber-500 border-amber-500 text-white':q>0?'bg-amber-50 border-amber-300 text-amber-800':'bg-white border-amber-100 text-stone-700'}`}>
+                                  {opt.volume}g{q > 0 && <span className="ml-1">· {q}팩</span>}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -1621,8 +1690,14 @@ export default function OrderPage() {
                             <span className="text-[11px] font-bold text-stone-400 whitespace-nowrap px-2">전화 문의</span>
                           ) : (
                             <QtyCtrl
-                              value={sel.qtys[m.type as MenuType] ?? 0}
-                              onChange={v => updMenuSel(day.date, s => ({ ...s, qtys: { ...s.qtys, [m.type as MenuType]: Math.max(0, Math.min(10, v)) } }))}
+                              value={qtysNow[m.type as MenuType] ?? 0}
+                              onChange={v => updMenuSel(day.date, s => {
+                                if (!s.stage || !s.volume) return s;
+                                // 지금 고른 조합(단계|용량) 칸에만 기록 — 다른 조합에 담아둔 건 건드리지 않는다
+                                const k = comboKey(s.stage, s.volume);
+                                const cur = s.byCombo[k] ?? emptyMenus();
+                                return { ...s, byCombo: { ...s.byCombo, [k]: { ...cur, [m.type as MenuType]: Math.max(0, Math.min(10, v)) } } };
+                              })}
                             />
                           )}
                         </div>
