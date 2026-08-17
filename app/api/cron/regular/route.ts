@@ -59,6 +59,18 @@ export async function GET(req: NextRequest) {
     const stage = sched.stage as StageType;
     const volume = Number(sched.volume);
 
+    // baby_food_orders.months는 CHECK (months > 0) — 예전엔 0을 넣어서 저장이 매번 실패했고
+    // 그 오류를 아무도 못 봤음(created만 세고 실패는 버렸음). 고객의 최근 주문 개월수를 그대로 쓴다.
+    const { data: lastOrder } = await sb
+      .from('baby_food_orders').select('months')
+      .eq('customer_phone', c.phone).gt('months', 0)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const months = Number(lastOrder?.months) > 0 ? Number(lastOrder!.months) : null;
+    if (!months) {
+      skipped.push({ phone: mask(c.phone), reason: '개월수 확인 불가(주문 이력 없음)' });
+      continue;
+    }
+
     // 고객 배송지(postal_code)로 tier·배송종류 판별
     let tier: PriceTier = '기타';
     let deliveryMethod = '당일배송';
@@ -117,7 +129,7 @@ export async function GET(req: NextRequest) {
           date_qty: qty, date_price: pricePer * qty,
         }];
         const { error: ie } = await sb.from('baby_food_orders').insert({
-          baby_name: c.baby_name || '정기배송', months: 0, customer_phone: c.phone,
+          baby_name: c.baby_name || '정기배송', months, customer_phone: c.phone,
           address: c.address, address_detail: c.address_detail || null,
           door_password: c.door_password || null,
           stage, volume, items,
