@@ -132,8 +132,9 @@ export async function GET(req: NextRequest) {
         .maybeSingle();
       if (exists) {
         if (exists.status !== '접수') continue; // 이미 조리·배송 단계면 그대로 둠
-        const same = JSON.stringify(exists.items) === JSON.stringify(items);
-        if (same) continue;
+        // ⚠️ JSON.stringify로 비교하면 안 됨 — jsonb는 저장할 때 키 순서를 재정렬하므로
+        // 내용이 같아도 문자열이 달라져서 매일 밤 전부 불필요하게 갱신됐음(갱신 4건이 계속 찍힘).
+        if (sig(exists.items) === sig(items)) continue;
         if (enabled) {
           const { error: ue } = await sb.from('baby_food_orders')
             .update({ stage, volume, items, total_qty: qty, total_price: pricePer * qty })
@@ -203,3 +204,17 @@ export async function GET(req: NextRequest) {
 }
 
 function mask(phone: string) { return '****' + String(phone || '').slice(-4); }
+
+// 주문 내용을 "의미"만 남긴 문자열로 — 키 순서·필드 추가에 흔들리지 않게 비교용으로만 씀
+function sig(items: any): string {
+  return (Array.isArray(items) ? items : []).map((d: any) =>
+    `${d?.delivery_date}#` + (Array.isArray(d?.sets) ? d.sets : []).map((s: any) =>
+      [
+        s?.stage, s?.volume, Number(s?.qty) || 0, Number(s?.price_per) || 0,
+        (Array.isArray(s?.menus) ? s.menus : [])
+          .map((m: any) => `${m?.menu}:${Number(m?.qty) || 0}`)
+          .sort().join(','),
+      ].join('|')
+    ).join(';')
+  ).sort().join('/');
+}
