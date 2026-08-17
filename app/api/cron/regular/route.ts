@@ -42,7 +42,9 @@ export async function GET(req: NextRequest) {
 
   const plan: any[] = [];
   const skipped: { phone: string; reason: string }[] = [];
+  const keep = new Set<string>(); // 'phone|date' — 지금 스케줄이 실제로 원하는 주문
   let created = 0;
+  let updated = 0;
 
   for (const c of regulars || []) {
     const sched = c.regular_schedule as any; // { stage, volume, slots:[{day, qty, menus:[{menu,qty}]}] }
@@ -105,29 +107,48 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      // ③ 중복 방지 — 같은 전화·배송일·정기 주문이 이미 있으면 건너뜀
+      keep.add(`${c.phone}|${u.date}`);
+
+      const items = [{
+        delivery_date: u.date,
+        sets: [{
+          stage, volume, price_per: pricePer,
+          simple: menus.length === 0, menus,
+          qty, subtotal: pricePer * qty,
+        }],
+        date_qty: qty, date_price: pricePer * qty,
+      }];
+
+      // ③ 중복 방지 — 같은 전화·배송일·정기 주문이 이미 있으면 새로 만들지 않는다.
+      // 다만 손님이 정기배송 내용(단계·용량·메뉴)을 바꾸면 이미 만들어진 앞으로의 주문도
+      // 같이 바뀌어야 함 — 안 그러면 최대 7일치가 옛 구성으로 조리된다.
+      // 조리가 시작된 건(준비중 이후)은 절대 건드리지 않는다.
       const { data: exists } = await sb
         .from('baby_food_orders')
-        .select('id')
+        .select('id, status, items, total_qty, total_price')
         .eq('customer_phone', c.phone)
         .eq('delivery_date', u.date)
         .eq('order_type', '정기')
         .maybeSingle();
-      if (exists) continue;
+      if (exists) {
+        if (exists.status !== '접수') continue; // 이미 조리·배송 단계면 그대로 둠
+        const same = JSON.stringify(exists.items) === JSON.stringify(items);
+        if (same) continue;
+        if (enabled) {
+          const { error: ue } = await sb.from('baby_food_orders')
+            .update({ stage, volume, items, total_qty: qty, total_price: pricePer * qty })
+            .eq('id', exists.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 덮어쓰지 않음
+          if (ue) skipped.push({ phone: mask(c.phone), reason: `갱신 실패: ${ue.message}` });
+          else updated++;
+        } else {
+          plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '갱신' });
+        }
+        continue;
+      }
 
-      const rec = { phone: '****' + String(c.phone).slice(-4), date: u.date, qty, stage, volume, price: pricePer * qty };
-      plan.push(rec);
+      plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '신규' });
 
       if (enabled) {
-        const items = [{
-          delivery_date: u.date,
-          sets: [{
-            stage, volume, price_per: pricePer,
-            simple: menus.length === 0, menus,
-            qty, subtotal: pricePer * qty,
-          }],
-          date_qty: qty, date_price: pricePer * qty,
-        }];
         const { error: ie } = await sb.from('baby_food_orders').insert({
           baby_name: c.baby_name || '정기배송', months, customer_phone: c.phone,
           address: c.address, address_detail: c.address_detail || null,
@@ -143,6 +164,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ④ 해지·요일 삭제분 정리 — 손님이 정기배송을 해지하거나 특정 요일을 빼도 이미 만들어진
+  // 앞으로의 주문이 그대로 남아 있어서, 사장님이 계속 조리·배송하게 되는 구멍이 있었음.
+  // 아직 '접수'인 미래 정기 주문 중 지금 스케줄에 없는 건만 취소한다(조리 시작분은 건드리지 않음).
+  const cancelled: string[] = [];
+  const windowStart = upcoming[0]?.date;
+  const windowEnd = upcoming[upcoming.length - 1]?.date;
+  if (windowStart && windowEnd) {
+    const { data: future } = await sb
+      .from('baby_food_orders')
+      .select('id, customer_phone, delivery_date')
+      .eq('order_type', '정기').eq('status', '접수')
+      .gte('delivery_date', windowStart).lte('delivery_date', windowEnd);
+    for (const o of future || []) {
+      if (keep.has(`${o.customer_phone}|${o.delivery_date}`)) continue;
+      cancelled.push(`${mask(o.customer_phone)} ${o.delivery_date}`);
+      if (enabled) {
+        await sb.from('baby_food_orders').update({ status: '취소' })
+          .eq('id', o.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 취소하지 않음
+      }
+    }
+  }
+
   // 자동 주문이 조용히 안 만들어지는 게 가장 위험함 — 건너뛴 게 있으면 사장님께 알린다
   if (skipped.length > 0) {
     void notify('regular-skip', {
@@ -154,7 +197,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true, enabled, dryRun: !enabled,
     regularCustomers: regulars?.length || 0,
-    plannedOrders: plan.length, createdOrders: created, plan, skipped,
+    plannedOrders: plan.length, createdOrders: created, updatedOrders: updated,
+    cancelledOrders: cancelled.length, cancelled, plan, skipped,
   });
 }
 
