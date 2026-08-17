@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel, PACK_SURCHARGE,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
@@ -356,6 +357,8 @@ export default function OrderPage() {
   const [draftFound, setDraftFound] = useState<any[] | null>(null); // 담다 만 주문이 있으면 이어하기 제안
   // 배송권역: 직배송(강서·양천) / 당일배송(두발히어로) / 택배익일배송
   const [postalCode, setPostalCode] = useState('');
+  // 배송은 1회 3팩부터. 1~2팩은 픽업(방문수령)만 가능해서 손님이 직접 고를 수 있게 함.
+  const [isPickup, setIsPickup] = useState(false);
   const [zoneGroup, setZoneGroup] = useState<string | null>(null);
   const [deliveryKind, setDeliveryKind] = useState<string | null>(null); // '직배송'|'당일배송'|'택배익일배송'|null
   const [zoneChecking, setZoneChecking] = useState(false);
@@ -363,7 +366,9 @@ export default function OrderPage() {
   // 마지막으로 검색한 주소 정보 — 배송지역 조회 실패 시 다시 시도용
   const [lastZoneArgs, setLastZoneArgs] = useState<{ zonecode: string; sido: string; sigungu: string } | null>(null);
   const DIRECT_GU = ['강서구', '양천구']; // 서울 자체 직배송 지역 (두발히어로 무관)
-  const tier: PriceTier = tierOf(deliveryKind); // 지역 가격 tier (직배송=기본가 / 기타=+500)
+  // 지역 가격 tier (직배송=기본가 / 기타=+500). 픽업은 배송을 안 나가므로 항상 기본가 —
+  // 서버(api/orders)도 픽업이면 '직배송' tier로 계산하니 화면 금액과 어긋나지 않게 여기서도 맞춘다.
+  const tier: PriceTier = isPickup ? '직배송' : tierOf(deliveryKind);
   const addressReady = !!address && deliveryKind !== null; // 주소·지역 확정 여부 (가격 노출 조건)
 
   // 주소 선택 시 배송 종류 판별
@@ -877,30 +882,61 @@ export default function OrderPage() {
   function isWedDate(date: string): boolean {
     return date.length === 10 && new Date(date + 'T00:00:00Z').getUTCDay() === 3;
   }
+  // 한우 비율 — 한우 원가가 비싸서 한우만 담는 주문은 받지 않는다.
+  // 날짜(1회분) 단위로 본다 — 최소 팩수와 같은 단위라 손님에게 설명하기도 쉽다.
+  function hanwooOn(d: DateOrder) {
+    let hanwoo = 0, others = 0;
+    for (const s of completeSets(d)) {
+      if (isBanchanSet(s)) continue;
+      for (const m of MENU_TYPES) {
+        const q = s.menus[m] || 0;
+        if (m === '한우') hanwoo += q; else others += q;
+      }
+    }
+    return { hanwoo, others };
+  }
+  // 한우 규칙을 어긴 첫 날짜 (없으면 null)
+  function hanwooViolation(): { date: string; hanwoo: number; others: number; need: number } | null {
+    for (const d of dateOrders) {
+      if (completeSets(d).length === 0) continue;
+      const { hanwoo, others } = hanwooOn(d);
+      if (!hanwooAllowed(hanwoo, others)) {
+        return { date: d.delivery_date, hanwoo, others, need: othersNeededForHanwoo(hanwoo, others) };
+      }
+    }
+    return null;
+  }
+
+  // 배송 최소 팩수를 못 채운 곳이 있는지 — 픽업이면 이 규칙을 타지 않는다
+  function shortForDelivery(): { label: string; qty: number }[] {
+    if (combinedDelivery) {
+      return Object.entries(groupQtys())
+        .filter(([key, q]) => !isWedDate(key) && q < MIN_ORDER_QTY)
+        .map(([key, q]) => ({ label: key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key, qty: q }));
+    }
+    return dateOrders
+      .filter(d => completeSets(d).length > 0 && !isWedDate(d.delivery_date) && dateQty(d) < MIN_ORDER_QTY)
+      .map(d => ({ label: d.delivery_date || '선택한 날짜', qty: dateQty(d) }));
+  }
+
   function isStep3Valid(): boolean {
     if (dateOrders.some(d => !d.delivery_date)) return false;
     if (dateOrders.some(d => completeSets(d).length === 0)) return false;
-    if (combinedDelivery) {
-      // 합배송 모드: 그룹별 합산 >= 3 (수요일 그룹은 예외)
-      return Object.entries(groupQtys()).every(([key, q]) => isWedDate(key) || q >= MIN_ORDER_QTY);
-    } else {
-      // 기본 모드: 날짜별 >= 3 (수요일은 예외)
-      return dateOrders.every(d => isWedDate(d.delivery_date) || dateQty(d) >= MIN_ORDER_QTY);
-    }
+    if (hanwooViolation()) return false;
+    // 픽업은 1팩부터 가능 — 최소 팩수는 배송일 때만 따진다
+    if (isPickup) return true;
+    return shortForDelivery().length === 0;
   }
 
   function qtyWarning(): string | null {
-    if (combinedDelivery) {
-      const gq = groupQtys();
-      const short = Object.entries(gq).find(([key, q]) => !isWedDate(key) && q < MIN_ORDER_QTY);
-      if (!short) return null;
-      const label = short[0] === 'A' ? '월·화 합산' : short[0] === 'B' ? '목·금 합산' : short[0];
-      return `${label} ${short[1]}팩 — 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
-    } else {
-      const short = dateOrders.find(d => completeSets(d).length > 0 && !isWedDate(d.delivery_date) && dateQty(d) < MIN_ORDER_QTY);
-      if (!short) return null;
-      return `${short.delivery_date || '선택한 날짜'} ${dateQty(short)}팩 — 날짜별 최소 ${MIN_ORDER_QTY}팩 이상이어야 해요`;
+    const hv = hanwooViolation();
+    if (hv) {
+      return `${hv.date || '선택한 날짜'} 한우 ${hv.hanwoo}팩 / 나머지 ${hv.others}팩 — 닭이나 기타를 ${hv.need}팩 더 담아주세요`;
     }
+    if (isPickup) return null;
+    const short = shortForDelivery();
+    if (short.length === 0) return null;
+    return `${short[0].label} ${short[0].qty}팩 — 배송은 ${MIN_ORDER_QTY}팩부터예요 (픽업은 가능)`;
   }
 
   // ── 제출 ──────────────────────────────────────────────────────
@@ -951,6 +987,7 @@ export default function OrderPage() {
           // 지역 확인이 안 된 경우 '당일배송'으로 잡으면 실제로 당일 배송이 안 되는 지역인데도
           // 당일배송으로 접수돼버림 — 확인 실패 시엔 보수적으로 택배 익일배송으로 접수한다(가격 동일).
           delivery_method: deliveryKind || '택배익일배송',
+          receive_method: isPickup ? '픽업' : '배송',
           referrer_phone: referrerPhone.replace(/\D/g, ''),
           referrer_code: (() => { try { return localStorage.getItem(REF_CODE_KEY) || ''; } catch { return ''; } })(),
           acquisition_source: (() => { try { return localStorage.getItem(ACQ_SOURCE_KEY) || ''; } catch { return ''; } })(),
@@ -1799,7 +1836,7 @@ export default function OrderPage() {
               실제 배송일과 다른 안내가 나갔음 — 실제 조리일을 그대로 보여준다. */}
           <p className="text-sm text-stone-500 mb-5 leading-relaxed">
             {[...new Set(dateOrders.map(d => d.delivery_date).filter(Boolean))].sort().join(', ')}
-            <br />조리 후 당일 오후 12~18시에 배송됩니다
+            <br />{isPickup ? '픽업(방문수령) — 조리 완료 후 매장에서 받아가실 수 있어요' : '조리 후 당일 오후 12~18시에 배송됩니다'}
           </p>
           <div className="bg-amber-50 rounded-xl px-4 py-3 text-xs text-stone-700 leading-loose text-left mb-4 space-y-2">
             {dateOrders.map(d => (
@@ -1825,7 +1862,9 @@ export default function OrderPage() {
             </div>
             {/* 배송비가 따로 안 붙어서 "배송비는 얼마냐"고 자주 물어봄 — 단가에 포함돼 있다고 명시 */}
             <div className="border-t border-amber-100 mt-2 pt-2 text-[11px] text-stone-500 font-normal leading-relaxed">
-              {tier === '직배송'
+              {isPickup
+                ? '픽업이라 배송비가 없어요. 표시된 금액이 전부예요.'
+                : tier === '직배송'
                 ? '별도 배송비 없어요. 표시된 금액이 전부예요.'
                 : `별도 배송비는 없고, 배송비가 팩 단가에 포함돼 있어요 (직배송 지역보다 팩당 ${PACK_SURCHARGE.toLocaleString()}원).`}
             </div>
@@ -2427,13 +2466,25 @@ export default function OrderPage() {
                                 <div className="space-y-2">
                                   {MENU_TYPES.map(menu => {
                                     const wm = weeklyMenus.find(m=>m.menu_type===menu);
+                                    // 한우는 나머지 메뉴의 3배까지만 — 더 눌러도 안 올라가고, 왜 그런지 바로 보여준다
+                                    const hw = hanwooOn(d);
+                                    const hanwooCapped = menu === '한우' && !hanwooAllowed(hw.hanwoo + 1, hw.others);
                                     return (
                                       <div key={menu} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
                                         <div>
                                           <div className="text-sm font-bold text-stone-900">{menu}</div>
                                           {wm && <div className="text-[11px] text-stone-500">{wm.vegetables}</div>}
+                                          {hanwooCapped && (
+                                            <div className="text-[11px] text-rose-600 font-bold mt-0.5">
+                                              닭·기타를 더 담으면 한우도 늘릴 수 있어요
+                                            </div>
+                                          )}
                                         </div>
-                                        <QtyCtrl value={s.menus[menu]} onChange={v=>updSet(d.id, s.id, x=>setQty(x, menu, v))}/>
+                                        <QtyCtrl value={s.menus[menu]}
+                                          onChange={v => {
+                                            if (menu === '한우' && v > s.menus[menu] && hanwooCapped) return;
+                                            updSet(d.id, s.id, x => setQty(x, menu, v));
+                                          }}/>
                                       </div>
                                     );
                                   })}
@@ -2482,20 +2533,57 @@ export default function OrderPage() {
           {/* 전체 합계 + 경고 + 합배송 */}
           {dateOrders.some(d=>completeSets(d).length>0) && (
             <>
-              {/* 최소 수량은 다 고른 뒤에 알려주면 늦음 — 몇 팩 더 담아야 하는지 바로 알려준다 */}
-              {qtyWarning() && (() => {
-                const short = combinedDelivery
-                  ? Object.entries(groupQtys()).filter(([k, q]) => !isWedDate(k) && q < MIN_ORDER_QTY)
-                  : dateOrders.filter(d => completeSets(d).length > 0 && !isWedDate(d.delivery_date) && dateQty(d) < MIN_ORDER_QTY)
-                      .map(d => [d.delivery_date, dateQty(d)] as [string, number]);
-                const need = short.reduce((s, [, q]) => s + (MIN_ORDER_QTY - q), 0);
+              {/* 한우 비율 — 왜 막혔는지 모르면 손님이 그냥 나가버림. 몇 팩 더 담으면 되는지 알려준다 */}
+              {(() => {
+                const hv = hanwooViolation();
+                if (!hv) return null;
                 return (
-                  <div className="mt-3 text-xs bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5">
-                    <div className="font-bold text-amber-800">{need}팩만 더 담으면 주문할 수 있어요</div>
-                    <div className="text-amber-700 mt-0.5">{qtyWarning()}</div>
+                  <div className="mt-3 text-xs bg-rose-50 border border-rose-300 rounded-xl px-3 py-2.5">
+                    <div className="font-bold text-rose-800">
+                      닭 또는 기타를 {hv.need}팩 더 담아주세요
+                    </div>
+                    <div className="text-rose-700 mt-0.5 leading-relaxed">
+                      {hv.date && <span className="font-bold">{hv.date.slice(5)} </span>}
+                      한우 {hv.hanwoo}팩 · 나머지 {hv.others}팩 — 한우는 나머지 메뉴의 {HANWOO_MAX_RATIO}배까지만 담을 수 있어요.
+                    </div>
                   </div>
                 );
               })()}
+
+              {/* 최소 팩수를 못 채웠으면 막지 않고 픽업을 제안한다 — 1~2팩도 픽업이면 주문 가능 */}
+              {!hanwooViolation() && shortForDelivery().length > 0 && (() => {
+                const short = shortForDelivery();
+                const need = short.reduce((s, x) => s + (MIN_ORDER_QTY - x.qty), 0);
+                return (
+                  <div className="mt-3 text-xs bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5">
+                    <div className="font-bold text-amber-800">
+                      {short.map(x => `${x.label} ${x.qty}팩`).join(' / ')} — 배송은 {MIN_ORDER_QTY}팩부터예요
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <button onClick={() => setIsPickup(false)}
+                        className={`py-2 rounded-lg border text-xs font-bold ${!isPickup ? 'bg-white border-amber-400 text-amber-800' : 'bg-white/60 border-stone-200 text-stone-500'}`}>
+                        {need}팩 더 담고 배송
+                      </button>
+                      <button onClick={() => setIsPickup(true)}
+                        className={`py-2 rounded-lg border text-xs font-bold ${isPickup ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-stone-600'}`}>
+                        이대로 픽업하기
+                      </button>
+                    </div>
+                    {isPickup && (
+                      <div className="text-amber-800 mt-1.5 font-bold">픽업으로 주문돼요 — 배송은 나가지 않아요</div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* 3팩을 채웠는데 픽업이 켜져 있으면, 본인이 고른 건지 알 수 있게 남겨둔다 */}
+              {isPickup && shortForDelivery().length === 0 && (
+                <div className="mt-3 text-xs bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+                  <span className="font-bold text-amber-800">픽업(방문수령)으로 주문돼요</span>
+                  <button onClick={() => setIsPickup(false)}
+                    className="px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg font-bold text-amber-800">배송으로 바꾸기</button>
+                </div>
+              )}
               <div className="mt-2 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
                 <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
                 <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원</span>
@@ -2615,8 +2703,8 @@ export default function OrderPage() {
             )}
             {/* 배송비 줄이 없으면 "결제하고 나서 배송비가 또 붙나?" 하고 멈칫함 */}
             <div className="flex justify-between text-[11px] text-stone-400 mt-1.5 pt-1.5 border-t border-stone-700">
-              <span>배송비</span>
-              <span>{tier === '직배송' ? '무료' : '팩 단가에 포함'}</span>
+              <span>{isPickup ? '수령' : '배송비'}</span>
+              <span>{isPickup ? '픽업(방문수령) · 배송비 없음' : tier === '직배송' ? '무료' : '팩 단가에 포함'}</span>
             </div>
           </div>
           {/* 취소 가능 시점을 결제 전에 알려주기 — 나중에 전화로 물어보는 걸 줄임 */}

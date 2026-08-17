@@ -18,6 +18,8 @@ const DOW_KOR = ['일', '월', '화', '수', '목', '금', '토'];
 //    우편번호가 없던 예전 주문은 값이 비거나 '당일배송'으로 잡혀 있어서 주소도 같이 본다.
 const DIRECT_GU = /강서구|양천구/;
 function isDrivenByUs(o: Order): boolean {
+  // 픽업(방문수령)은 손님이 찾아오므로 배송 주소록에 있으면 안 됨 (조리표에는 그대로 나옴)
+  if ((o as any).receive_method === '픽업') return false;
   if (o.delivery_method === '직배송') return true;
   return DIRECT_GU.test(`${o.address || ''} ${o.address_detail || ''}`);
 }
@@ -66,8 +68,9 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   // 빠진 건은 숫자로라도 남겨둔다 — 조용히 사라지면 "그 주문 어디 갔지"가 되므로.
   // 두발히어로(당일)와 택배는 나가는 경로가 다르니 따로 센다.
   const others = all.filter(o => !isDrivenByUs(o));
-  const parcelCount = others.filter(o => o.delivery_method === '택배익일배송').length;
-  const dubalCount = others.length - parcelCount;
+  const pickupCount = others.filter(o => (o as any).receive_method === '픽업').length;
+  const parcelCount = others.filter(o => (o as any).receive_method !== '픽업' && o.delivery_method === '택배익일배송').length;
+  const dubalCount = others.length - parcelCount - pickupCount;
   const dispName = disambiguateNames(orders as any);
 
   // 사장님이 직접 지정·수정한 순번이 있으면 그게 우선 (엑셀 기본 매핑보다 위)
@@ -114,6 +117,7 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
         <div className="flex items-baseline gap-2 text-[12px]">
           <span className="text-base font-black">배송 {date} ({dow})</span>
           <span className="font-bold">강서·양천 {orders.length}건</span>
+          {pickupCount > 0 && <span className="text-stone-500">픽업 {pickupCount}건 제외</span>}
           {dubalCount > 0 && <span className="text-stone-500">두발 {dubalCount}건 제외</span>}
           {parcelCount > 0 && <span className="text-stone-500">택배 {parcelCount}건 제외</span>}
           {unmatched > 0 && <span className="text-red-600">구역 미지정 {unmatched}건</span>}
@@ -161,7 +165,7 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
       {orders.length === 0 && (
         <div className="py-10 text-center text-stone-400 text-sm">
           {others.length > 0
-            ? `강서·양천 직접 배송은 없어요 (두발 ${dubalCount}건 · 택배 ${parcelCount}건)`
+            ? `강서·양천 직접 배송은 없어요 (픽업 ${pickupCount}건 · 두발 ${dubalCount}건 · 택배 ${parcelCount}건)`
             : '배송할 주문이 없습니다'}
         </div>
       )}

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, type StageType, type PriceTier } from '@/lib/supabase';
+import {
+  supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
+  type StageType, type PriceTier,
+} from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { kstToday } from '@/lib/dates';
 import { notify, notifyError } from '@/lib/notify';
@@ -35,6 +39,8 @@ export async function POST(req: NextRequest) {
     const postal_code = String(b.postal_code || '').replace(/\D/g, '').slice(0, 5) || null;
     const zone_group = b.zone_group ? String(b.zone_group).slice(0, 30) : null;
     const delivery_method = ['직배송', '택배익일배송', '당일배송'].includes(b.delivery_method) ? b.delivery_method : '당일배송';
+    // 픽업(방문수령)은 1~2팩도 가능. 배송을 안 나가므로 주소록에서 빠지고, 배송비 인상(+500)도 없음.
+    const receive_method = b.receive_method === '픽업' ? '픽업' : '배송';
     const referrer_phone_input = String(b.referrer_phone || '').replace(/\D/g, '') || null;
     const referrer_code = String(b.referrer_code || '').trim().slice(0, 20) || null;
     const acquisition_source = String(b.acquisition_source || '').trim().slice(0, 40) || null;
@@ -67,7 +73,27 @@ export async function POST(req: NextRequest) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
 
-    // 복합 주문: 배송 그룹(월화/목금)별 합산 최소 3팩 검증
+    // 한우 비율 — 한우만 담은 주문은 원가 때문에 받지 않는다. 날짜(1회분)별로 본다.
+    // 클라이언트에서도 담기지 않게 막지만, API를 직접 부르면 통과되므로 서버가 최종 방어선.
+    if (isMulti) {
+      for (const d of items) {
+        let hanwoo = 0, others = 0;
+        for (const s of (d.sets || [])) {
+          if (s.stage === '반찬세트') continue; // 반찬은 이유식 메뉴 구성이 없음
+          for (const m of (s.menus || [])) {
+            const q = Number(m?.qty) || 0;
+            if (m?.menu === '한우') hanwoo += q; else others += q;
+          }
+        }
+        if (!hanwooAllowed(hanwoo, others)) {
+          const need = othersNeededForHanwoo(hanwoo, others);
+          return bad(`${d.delivery_date} 한우 ${hanwoo}팩 / 나머지 ${others}팩 — 한우는 나머지 메뉴의 ${HANWOO_MAX_RATIO}배까지만 가능해요. 닭이나 기타를 ${need}팩 더 담아주세요.`);
+        }
+      }
+    }
+
+    // 배송은 1회 3팩부터. 1~2팩은 픽업(방문수령)만 가능 —
+    // 예전엔 3팩 미만을 아예 거부해서, 픽업으로 받아가겠다는 손님도 주문을 넣을 수 없었음.
     if (Array.isArray(items) && items.length > 0 && items[0].delivery_date) {
       const groupQty: Record<string, number> = {};
       for (const d of items) {
@@ -81,9 +107,9 @@ export async function POST(req: NextRequest) {
           const dow = new Date(key + 'T00:00:00Z').getUTCDay();
           if (dow === 3) continue;
         }
-        if (qty < MIN_ORDER_QTY) {
+        if (qty < MIN_ORDER_QTY && receive_method !== '픽업') {
           const label = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
-          return bad(`${label} ${qty}팩 — 1회 배송 최소 ${MIN_ORDER_QTY}팩 이상이어야 합니다`);
+          return bad(`${label} ${qty}팩 — 배송은 1회 ${MIN_ORDER_QTY}팩부터예요. ${qty}팩은 픽업으로 받으실 수 있어요.`);
         }
       }
     }
@@ -102,6 +128,8 @@ export async function POST(req: NextRequest) {
     } else {
       serverTier = tierOf(delivery_method);
     }
+    // 픽업은 배송을 안 나가니 지역 배송비 인상분을 붙이지 않는다 — 기본가로 계산
+    if (receive_method === '픽업') serverTier = '직배송';
 
     // 복합 주문(mixed)은 아이템별 소계, 단일은 서버 재계산 — 둘 다 serverTier 적용
     let total_price: number;
@@ -201,7 +229,7 @@ export async function POST(req: NextRequest) {
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
-        postal_code, zone_group, delivery_method, referred_by_phone: referredByStored,
+        postal_code, zone_group, delivery_method, receive_method, referred_by_phone: referredByStored,
         points_earned: pointsEarned, acquisition_source
       })
       .select('id')
@@ -250,7 +278,8 @@ export async function POST(req: NextRequest) {
         조리일: dateList,
         수량: `${total_qty}팩`,
         금액: `${net_price.toLocaleString()}원`,
-        배송: delivery_method + (zone_group ? ` (${zone_group})` : ''),
+        // 픽업은 배송을 안 나가므로 알림에서 바로 구분돼야 함(주소록에도 안 뜸)
+        배송: receive_method === '픽업' ? '픽업(방문수령)' : delivery_method + (zone_group ? ` (${zone_group})` : ''),
         주소: address,
         연락처: customer_phone,
         알레르기: allergies.length ? allergies.join(', ') : undefined,

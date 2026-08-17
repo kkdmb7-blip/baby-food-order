@@ -21,6 +21,7 @@ const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
 type PersonRow = {
   orderId: string;
   name: string;
+  pickup: boolean; // 픽업(방문수령) — 조리는 하지만 배송차에 실으면 안 됨
   unspec: number; // 메뉴가 지정 안 된 팩수 (이름에 붙이면 이름칸이 터짐)
   volume: number;
   isBig: boolean;
@@ -72,6 +73,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       byStage.get(stage)!.push({
         orderId: o.id,
         name: dispName.get(o.id) || o.baby_name,
+        pickup: (o as any).receive_method === '픽업',
         unspec,
         volume: Number(s.volume) || 0,
         isBig: Number(s.volume) === BIG_VOLUME[stage],
@@ -185,6 +187,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                     <td className="border border-black px-2 py-[7px] font-bold w-[130px] whitespace-nowrap leading-tight">
                       {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
+                      {p.pickup && <span className="ml-1 text-[12px] font-black text-emerald-700">픽업</span>}
                       {/* 메뉴가 안 정해진 팩 — 이름 옆에 붙이면 이름칸이 터져서 아랫줄에 작게 */}
                       {p.unspec > 0 && (
                         <span className="block text-[12px] font-bold text-red-600">미지정 {p.unspec}</span>

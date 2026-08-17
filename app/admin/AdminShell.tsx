@@ -306,12 +306,19 @@ export default function AdminShell({
                   </button>
                 </div>
                 <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
+                  {/* 픽업은 배송을 안 나가므로 배송 방법보다 먼저, 눈에 띄게 */}
+                  {(o as any).receive_method === '픽업' ? (
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-600 text-white">
+                      🏠 픽업 (배송 안 나감)
+                    </span>
+                  ) : (
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
                     o.delivery_method === '택배익일배송' ? 'bg-blue-100 text-blue-700'
                     : o.delivery_method === '직배송' ? 'bg-amber-100 text-amber-700'
                     : 'bg-emerald-100 text-emerald-700'}`}>
                     {o.delivery_method === '택배익일배송' ? '📦 택배익일' : o.delivery_method === '직배송' ? '🚗 직배송' : '🚚 당일배송'}
                   </span>
+                  )}
                   {o.zone_group && <span className="text-[11px] font-bold text-stone-600 bg-stone-100 px-2 py-0.5 rounded">{o.zone_group}</span>}
                 </div>
                 {o.allergies && o.allergies.length > 0 && (
@@ -550,7 +557,8 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
   // 나가므로 들고 나갈 주소록에 있으면 방해가 된다. (배송 탭에서는 전부 볼 수 있음)
   // ⚠️ 여기 조건이 인쇄물(app/admin/print/labels)과 어긋나면 화면과 종이가 달라지므로 같이 고칠 것.
   const orders = allOrders.filter(o =>
-    o.delivery_method === '직배송' || /강서구|양천구/.test(`${o.address || ''} ${o.address_detail || ''}`)
+    (o as any).receive_method !== '픽업' && // 픽업은 손님이 찾아오므로 배송 주소록에서 제외
+    (o.delivery_method === '직배송' || /강서구|양천구/.test(`${o.address || ''} ${o.address_detail || ''}`))
   );
   const excluded = allOrders.length - orders.length; // 두발·택배 등 직접 안 도는 건
 

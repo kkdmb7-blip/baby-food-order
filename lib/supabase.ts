@@ -133,7 +133,29 @@ export function getPrice(stage: StageType, volume: number, tier: PriceTier = '�
   return base + (tier === '기타' ? PACK_SURCHARGE : 0);
 }
 
-export const MIN_ORDER_QTY = 3;
+// ── 수령 방법 ─────────────────────────────────────────────────
+// 배송은 1회 3팩부터(택배·직배송 모두 동일). 1~2팩도 주문은 받지만 픽업(방문수령)만 가능.
+export const MIN_ORDER_QTY = 3;        // 배송 최소 팩수
+export const MIN_PICKUP_QTY = 1;       // 픽업은 1팩부터
+export type ReceiveMethod = '배송' | '픽업';
+
+// ── 한우 비율 제한 ────────────────────────────────────────────
+// 한우 원가가 비싸서 한우만 담는 주문은 받지 않는다. 사장님이 준 판정 기준:
+//   한우3               → 불가      한우2+닭1           → 가능
+//   한우3+기타1         → 가능      한우4+닭1           → 불가
+//   한우4+닭1+기타1     → 가능
+// 위 5가지가 모두 "한우 ≤ 나머지 × 3"(= 한우가 전체의 3/4 초과 금지) 하나로 맞는다.
+// 배수를 바꿀 일이 생기면 이 상수만 고치면 됨.
+export const HANWOO_MAX_RATIO = 3;
+export function hanwooAllowed(hanwoo: number, others: number): boolean {
+  if (hanwoo <= 0) return true;
+  return hanwoo <= others * HANWOO_MAX_RATIO;
+}
+// 한우를 그대로 두고 통과하려면 나머지가 몇 팩 더 필요한지 (안내문에 쓰는 값)
+export function othersNeededForHanwoo(hanwoo: number, others: number): number {
+  if (hanwooAllowed(hanwoo, others)) return 0;
+  return Math.ceil(hanwoo / HANWOO_MAX_RATIO) - others;
+}
 
 // 반찬5개+국1개 세트 — tier별 별도 금액 (이유식 +500과 무관한 별도 상수)
 export const BANCHAN_PRICE_BY_TIER: Record<PriceTier, number> = { '직배송': 35000, '기타': 38000 };
