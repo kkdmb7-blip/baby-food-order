@@ -125,13 +125,14 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
   return (
     <div className="bg-white min-h-screen p-4 text-black print:p-0">
       <PrintAuto />
-      <style>{`@media print { @page { size: A4 landscape; margin: 6mm; } }`}</style>
+      {/* 인쇄물을 집게로 집어 조리대 앞에 걸어두므로 위쪽 20mm는 비워둔다 — 안 그러면 집게가 글자를 가림 */}
+      <style>{`@media print { @page { size: A4 landscape; margin: 20mm 8mm 8mm 8mm; } }`}</style>
 
       <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
-        <div className="flex items-baseline gap-2 flex-wrap text-[12px]">
-          <span className="text-base font-black">조리 {date} ({dow})</span>
+        <div className="flex items-baseline gap-2 flex-wrap text-[14px]">
+          <span className="text-xl font-black">조리 {date} ({dow})</span>
           <span className="font-bold">{orders.length}명 · {totalPacks}팩{banchanTotal > 0 && ` · 반찬 ${banchanTotal}`}</span>
-          <span className="text-[11px] text-stone-500">
+          <span className="text-[13px] text-stone-500">
             한우/닭/기타 · <span className="text-red-600 font-bold">빨강=큰용량</span>
           </span>
         </div>
@@ -140,9 +141,9 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
 
       {/* 오늘 메뉴 — 어떤 재료로 만드는지 조리표 안에서 바로 확인 */}
       {dayMenus.length > 0 && (
-        <div className="mb-1.5 flex gap-2 flex-wrap text-[11px]">
+        <div className="mb-2 flex gap-2 flex-wrap text-[13px]">
           {dayMenus.map((m, i) => (
-            <div key={i} className="border border-black px-1.5 py-0.5">
+            <div key={i} className="border border-black px-2 py-1">
               <span className="font-black">{m.type}</span>
               <span className="font-bold ml-1">{m.name}</span>
               {m.ingredients && <span className="text-stone-600 ml-1">{m.ingredients}</span>}
@@ -152,22 +153,22 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       )}
 
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 됨 */}
-      <div className="flex gap-2 items-start flex-wrap">
+      <div className="flex gap-3 items-start flex-wrap">
         {sections.map(sec => (
-          <table key={sec.stage} className="border-collapse text-[12px] leading-none break-inside-avoid">
+          <table key={sec.stage} className="border-collapse text-[17px] leading-tight break-inside-avoid">
             <thead>
               <tr>
-                <th colSpan={4} className="border border-black px-1 py-0.5 text-[12px] text-left">
+                <th colSpan={4} className="border border-black px-2 py-1 text-[17px] text-left">
                   {sec.stage}
-                  <span className="ml-1 font-normal text-[10px] text-stone-600">
+                  <span className="ml-1.5 font-normal text-[13px] text-stone-600">
                     {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.list.length}명
                   </span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-1 py-0.5 w-[70px]">이 름</th>
+                <th className="border border-black px-2 py-1 w-[104px] text-[15px]">이 름</th>
                 {MENU_TYPES.map(m => (
-                  <th key={m} className="border border-black px-0.5 py-0.5 w-[26px] text-[10px]">
+                  <th key={m} className="border border-black px-1 py-1 w-[42px] text-[14px]">
                     {menuLabel(m)}
                   </th>
                 ))}
@@ -179,12 +180,12 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 const volChanged = prev && prev.isBig !== p.isBig;
                 return (
                   <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
-                    <td className="border border-black px-1 py-[4px] font-bold whitespace-nowrap max-w-[70px] overflow-hidden">
+                    <td className="border border-black px-2 py-[7px] font-bold whitespace-nowrap max-w-[104px] overflow-hidden">
                       {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
                     </td>
                     {MENU_TYPES.map(m => (
-                      <td key={m} className="border border-black text-center py-[4px]">
+                      <td key={m} className="border border-black text-center py-[7px]">
                         {cell(p.menus[m], p.isBig)}
                       </td>
                     ))}
@@ -193,21 +194,21 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
               })}
               {/* 단계별 합계 — 이만큼 만들면 됨 */}
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-1 py-1 text-right font-black text-[10px]">
+                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
                   {SMALL_VOLUME[sec.stage]}g
                 </td>
                 {MENU_TYPES.map(m => (
-                  <td key={m} className="border-2 border-black text-center py-1 font-black">
+                  <td key={m} className="border-2 border-black text-center py-1.5 font-black">
                     {sec.tot[m].small || <span className="text-stone-300">·</span>}
                   </td>
                 ))}
               </tr>
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-1 py-1 text-right font-black text-[10px] text-red-600">
+                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px] text-red-600">
                   {BIG_VOLUME[sec.stage]}g
                 </td>
                 {MENU_TYPES.map(m => (
-                  <td key={m} className="border-2 border-black text-center py-1 font-black text-red-600">
+                  <td key={m} className="border-2 border-black text-center py-1.5 font-black text-red-600">
                     {sec.tot[m].big || <span className="text-stone-300">·</span>}
                   </td>
                 ))}
@@ -217,28 +218,28 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         ))}
 
         {banchan.length > 0 && (
-          <table className="border-collapse text-[12px] leading-none break-inside-avoid">
+          <table className="border-collapse text-[17px] leading-tight break-inside-avoid">
             <thead>
               <tr>
-                <th colSpan={2} className="border border-black px-1 py-0.5 text-[12px] text-left">
-                  반찬 세트<span className="ml-1 font-normal text-[10px] text-stone-600">{banchan.length}명</span>
+                <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-left">
+                  반찬 세트<span className="ml-1.5 font-normal text-[13px] text-stone-600">{banchan.length}명</span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-1 py-0.5 w-[70px]">이 름</th>
-                <th className="border border-black px-0.5 py-0.5 w-[26px] text-[10px]">세트</th>
+                <th className="border border-black px-2 py-1 w-[104px] text-[15px]">이 름</th>
+                <th className="border border-black px-1 py-1 w-[42px] text-[14px]">세트</th>
               </tr>
             </thead>
             <tbody>
               {banchan.map((b, i) => (
                 <tr key={i}>
-                  <td className="border border-black px-1 py-[4px] font-bold whitespace-nowrap">{b.name}</td>
-                  <td className="border border-black text-center py-[4px] font-black">{b.qty}</td>
+                  <td className="border border-black px-2 py-[7px] font-bold whitespace-nowrap">{b.name}</td>
+                  <td className="border border-black text-center py-[7px] font-black">{b.qty}</td>
                 </tr>
               ))}
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-1 py-1 text-right font-black text-[10px]">합계</td>
-                <td className="border-2 border-black text-center py-1 font-black">{banchanTotal}</td>
+                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">합계</td>
+                <td className="border-2 border-black text-center py-1.5 font-black">{banchanTotal}</td>
               </tr>
             </tbody>
           </table>
@@ -247,7 +248,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
 
       {/* 여러 단계를 같이 시킨 사람 — 블록이 나뉘어 있어서 포장할 때 합쳐야 함 */}
       {multiOrders.length > 0 && (
-        <div className="mt-2 border-2 border-blue-700 px-2 py-1 text-[11px]">
+        <div className="mt-3 border-2 border-blue-700 px-2.5 py-1.5 text-[14px]">
           <span className="font-black text-blue-700">+ 여러 단계 함께 주문 — 포장할 때 한 봉투로 합쳐주세요</span>
           <span className="ml-2">
             {multiOrders.map(([id, st], i) => (
@@ -261,9 +262,9 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
 
       {/* 알레르기 — 재료를 빼드리는 게 아니라(불가) 교차오염 주의용 */}
       {allergyRows.length > 0 && (
-        <div className="mt-2 border-2 border-black px-2 py-1 text-[11px]">
+        <div className="mt-2 border-2 border-black px-2.5 py-1.5 text-[14px]">
           <span className="font-black">알레르기 주의</span>
-          <span className="text-[10px] text-stone-600 ml-1">(재료 제거 불가 — 조리도구·교차오염 주의)</span>
+          <span className="text-[12px] text-stone-600 ml-1">(재료 제거 불가 — 조리도구·교차오염 주의)</span>
           <span className="ml-2">
             {allergyRows.map((o, i) => (
               <span key={i} className="mr-3">
@@ -275,7 +276,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       )}
 
       {memoRows.length > 0 && (
-        <div className="mt-1.5 border border-black px-2 py-1 text-[11px]">
+        <div className="mt-2 border border-black px-2.5 py-1.5 text-[14px]">
           <span className="font-black">메모</span>
           <span className="ml-1.5">
             {memoRows.map((o, i) => <span key={i} className="mr-3">{o.baby_name}: {o.memo}</span>)}

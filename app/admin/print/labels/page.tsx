@@ -12,13 +12,14 @@ export const dynamic = 'force-dynamic';
 
 const DOW_KOR = ['일', '월', '화', '수', '목', '금', '토'];
 
-// 사장님이 직접 도는 배송만 인쇄 — 택배(익일)는 포장해서 접수하는 거라 주소록에 필요 없음
+// 사장님이 직접 도는 배송만 인쇄 — 강서구·양천구만 직접 배송하고,
+// 그 밖의 지역은 당일배송(두발히어로)이나 택배로 나가므로 들고 나갈 주소록에 있으면 방해가 된다.
+// ⚠️ delivery_method('직배송')는 우편번호로 서버가 붙이는 값이라 보통 이것만 봐도 되지만,
+//    우편번호가 없던 예전 주문은 값이 비거나 '당일배송'으로 잡혀 있어서 주소도 같이 본다.
+const DIRECT_GU = /강서구|양천구/;
 function isDrivenByUs(o: Order): boolean {
-  const m = o.delivery_method;
-  if (m === '택배익일배송') return false;
-  if (m === '직배송' || m === '당일배송') return true;
-  // delivery_method가 없던 예전 주문은 주소로 추정
-  return /강서|양천/.test(`${o.address || ''} ${o.address_detail || ''}`);
+  if (o.delivery_method === '직배송') return true;
+  return DIRECT_GU.test(`${o.address || ''} ${o.address_detail || ''}`);
 }
 
 // 동네 묶음 — 동 단위로 세분화. 손님이 "강서구화곡동"처럼 붙여 쓰는 경우가 있어서
@@ -62,7 +63,11 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
     .neq('status', '취소').order('baby_name').limit(500);
   const all: Order[] = (data || []).filter(o => orderDates(o as any).includes(date));
   const orders = all.filter(isDrivenByUs);
-  const parcelCount = all.length - orders.length;
+  // 빠진 건은 숫자로라도 남겨둔다 — 조용히 사라지면 "그 주문 어디 갔지"가 되므로.
+  // 두발히어로(당일)와 택배는 나가는 경로가 다르니 따로 센다.
+  const others = all.filter(o => !isDrivenByUs(o));
+  const parcelCount = others.filter(o => o.delivery_method === '택배익일배송').length;
+  const dubalCount = others.length - parcelCount;
   const dispName = disambiguateNames(orders as any);
 
   // 사장님이 직접 지정·수정한 순번이 있으면 그게 우선 (엑셀 기본 매핑보다 위)
@@ -108,7 +113,8 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
       <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
         <div className="flex items-baseline gap-2 text-[12px]">
           <span className="text-base font-black">배송 {date} ({dow})</span>
-          <span className="font-bold">{orders.length}건</span>
+          <span className="font-bold">강서·양천 {orders.length}건</span>
+          {dubalCount > 0 && <span className="text-stone-500">두발 {dubalCount}건 제외</span>}
           {parcelCount > 0 && <span className="text-stone-500">택배 {parcelCount}건 제외</span>}
           {unmatched > 0 && <span className="text-red-600">구역 미지정 {unmatched}건</span>}
         </div>
@@ -154,7 +160,9 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
 
       {orders.length === 0 && (
         <div className="py-10 text-center text-stone-400 text-sm">
-          {parcelCount > 0 ? `택배 ${parcelCount}건만 있어요 (직접 배송 없음)` : '배송할 주문이 없습니다'}
+          {others.length > 0
+            ? `강서·양천 직접 배송은 없어요 (두발 ${dubalCount}건 · 택배 ${parcelCount}건)`
+            : '배송할 주문이 없습니다'}
         </div>
       )}
     </div>

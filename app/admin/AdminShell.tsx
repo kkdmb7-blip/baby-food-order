@@ -546,14 +546,13 @@ function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
 }
 
 function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: string }) {
-  // 인쇄물과 동일하게 택배(익일)는 제외 — 직접 배달하는 것만 주소록에 필요
-  const orders = allOrders.filter(o => {
-    const m = o.delivery_method;
-    if (m === '택배익일배송') return false;
-    if (m === '직배송' || m === '당일배송') return true;
-    return /강서|양천/.test(`${o.address || ''} ${o.address_detail || ''}`);
-  });
-  const parcelCount = allOrders.length - orders.length;
+  // 인쇄물과 동일한 기준 — 직접 도는 강서구·양천구만. 그 밖의 지역은 두발히어로·택배로
+  // 나가므로 들고 나갈 주소록에 있으면 방해가 된다. (배송 탭에서는 전부 볼 수 있음)
+  // ⚠️ 여기 조건이 인쇄물(app/admin/print/labels)과 어긋나면 화면과 종이가 달라지므로 같이 고칠 것.
+  const orders = allOrders.filter(o =>
+    o.delivery_method === '직배송' || /강서구|양천구/.test(`${o.address || ''} ${o.address_detail || ''}`)
+  );
+  const excluded = allOrders.length - orders.length; // 두발·택배 등 직접 안 도는 건
 
   // 배송 순번 — 엑셀 기본 매핑 + 사장님이 저장한 값(우선)
   const [overrides, setOverrides] = useState<Record<string, number>>({});
@@ -610,7 +609,7 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
           className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
           🖨 배송 주소록 프린트
         </button>
-        {parcelCount > 0 && <span className="text-xs text-stone-500">택배 {parcelCount}건은 제외됨</span>}
+        {excluded > 0 && <span className="text-xs text-stone-500">강서·양천 외 {excluded}건 제외 (배송 탭에서 확인)</span>}
         <span className="text-xs text-stone-400">순번 칸에 숫자를 넣으면 저장돼요 (비우면 기본값)</span>
       </div>
       {msg && <div className="mb-3 text-sm text-center text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2">{msg}</div>}
