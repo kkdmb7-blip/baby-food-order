@@ -846,6 +846,7 @@ export default function OrderPage() {
 
   // ── DateOrder 변경 헬퍼 ────────────────────────────────────────
   function updDate(id: string, fn: (d: DateOrder) => DateOrder) {
+    setRuleError(null); // 내용을 고치는 순간 이전 경고는 치운다
     setDateOrders(prev => prev.map(d => d.id === id ? fn(d) : d));
   }
   function updSet(dateId: string, setId: string, fn: (s: OrderSet) => OrderSet) {
@@ -895,9 +896,10 @@ export default function OrderPage() {
     }
     return { hanwoo, others };
   }
-  // 한우 규칙을 어긴 첫 날짜 (없으면 null)
-  function hanwooViolation(): { date: string; hanwoo: number; others: number; need: number } | null {
-    for (const d of dateOrders) {
+  // 한우 규칙을 어긴 첫 날짜 (없으면 null).
+  // 메뉴보기 화면에서 만든 주문은 아직 state에 없으므로 목록을 직접 넘길 수 있게 인자를 받는다.
+  function hanwooViolation(list: DateOrder[] = dateOrders): { date: string; hanwoo: number; others: number; need: number } | null {
+    for (const d of list) {
       if (completeSets(d).length === 0) continue;
       const { hanwoo, others } = hanwooOn(d);
       if (!hanwooAllowed(hanwoo, others)) {
@@ -905,6 +907,33 @@ export default function OrderPage() {
       }
     }
     return null;
+  }
+
+  // 규칙 위반 메시지 — 담는 중엔 띄우지 않고, 그날 주문을 정리하는 버튼을 누를 때만 보여준다.
+  // (한우를 먼저 누르는 게 자연스러운데 담자마자 경고가 뜨면 잘못 담은 것처럼 보임)
+  const [ruleError, setRuleError] = useState<string | null>(null);
+
+  // 정리 버튼(주문 확인 · 다른 날짜 추가)에서 부르는 검사. 통과하면 true, 아니면 메시지를 띄우고 false.
+  function checkRules(): boolean {
+    const hv = hanwooViolation();
+    if (hv) {
+      const day = hv.date ? hv.date.slice(5) + ' ' : '';
+      setRuleError(
+        `${day}한우 ${hv.hanwoo}팩 · 나머지 ${hv.others}팩 — 한우는 나머지 메뉴의 ${HANWOO_MAX_RATIO}배까지만 담을 수 있어요. 닭이나 기타를 ${hv.need}팩 더 담아주세요.`
+      );
+      return false;
+    }
+    if (!isPickup) {
+      const short = shortForDelivery();
+      if (short.length > 0) {
+        setRuleError(
+          `${short.map(x => `${x.label} ${x.qty}팩`).join(' / ')} — 배송은 ${MIN_ORDER_QTY}팩부터예요. 더 담거나 아래에서 픽업을 선택해주세요.`
+        );
+        return false;
+      }
+    }
+    setRuleError(null);
+    return true;
   }
 
   // 배송 최소 팩수를 못 채운 곳이 있는지 — 픽업이면 이 규칙을 타지 않는다
@@ -919,24 +948,13 @@ export default function OrderPage() {
       .map(d => ({ label: d.delivery_date || '선택한 날짜', qty: dateQty(d) }));
   }
 
-  function isStep3Valid(): boolean {
+  // 버튼을 눌러볼 수 있는 상태인지 — 날짜·팩수를 아직 안 고른 경우만 막는다.
+  // 한우 비율·최소 팩수 위반은 여기서 막지 않고 checkRules()가 눌렀을 때 이유를 알려준다
+  // (버튼이 그냥 잠겨 있으면 왜 안 되는지 알 방법이 없음).
+  function isStep3Ready(): boolean {
     if (dateOrders.some(d => !d.delivery_date)) return false;
     if (dateOrders.some(d => completeSets(d).length === 0)) return false;
-    if (hanwooViolation()) return false;
-    // 픽업은 1팩부터 가능 — 최소 팩수는 배송일 때만 따진다
-    if (isPickup) return true;
-    return shortForDelivery().length === 0;
-  }
-
-  function qtyWarning(): string | null {
-    const hv = hanwooViolation();
-    if (hv) {
-      return `${hv.date || '선택한 날짜'} 한우 ${hv.hanwoo}팩 / 나머지 ${hv.others}팩 — 닭이나 기타를 ${hv.need}팩 더 담아주세요`;
-    }
-    if (isPickup) return null;
-    const short = shortForDelivery();
-    if (short.length === 0) return null;
-    return `${short[0].label} ${short[0].qty}팩 — 배송은 ${MIN_ORDER_QTY}팩부터예요 (픽업은 가능)`;
+    return true;
   }
 
   // ── 제출 ──────────────────────────────────────────────────────
@@ -1428,9 +1446,18 @@ export default function OrderPage() {
         }));
       const allOrders = [...yushikOrders, ...banchanOrders];
       if (allOrders.length === 0) return;
+      // 여기서 안 잡으면 주문 확인 화면으로 바로 넘어가버려서, 마지막 제출에서야 거부당한다
+      const hv = hanwooViolation(allOrders);
+      if (hv) {
+        alert(`${hv.date ? hv.date.slice(5) + ' ' : ''}한우 ${hv.hanwoo}팩 · 나머지 ${hv.others}팩\n\n한우는 나머지 메뉴의 ${HANWOO_MAX_RATIO}배까지만 담을 수 있어요.\n닭이나 기타를 ${hv.need}팩 더 담아주세요.`);
+        return;
+      }
       setDateOrders(allOrders);
       goMode('order');
-      goStep(savedInfo ? 4 : 1);
+      // 배송 최소 팩수를 못 채웠으면 확인 화면으로 건너뛰지 말고 담기 화면에서 픽업을 고르게 한다
+      const short = allOrders.some(d =>
+        !isWedDate(d.delivery_date) && d.sets.filter(isFilledSet).reduce((a, s) => a + setQtyTotal(s), 0) < MIN_ORDER_QTY);
+      goStep(!savedInfo ? 1 : short ? 3 : 4);
     };
 
     return (
@@ -2433,11 +2460,8 @@ export default function OrderPage() {
                                 {STAGES.map(st => (
                                   <button key={st}
                                     onClick={()=>updSet(d.id, s.id, x=>({...x, stage:st, volume:null, menus: emptyMenus(), _simpleQty: undefined}))}
-                                    className={`relative py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
+                                    className={`py-2 rounded-lg text-xs font-bold border transition ${s.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
                                     {st}
-                                    {recStage===st && s.stage!==st && (
-                                      <span className="absolute -top-1.5 -right-1 text-[9px] bg-rose-500 text-white font-bold px-1 py-0.5 rounded-full leading-none">추천</span>
-                                    )}
                                   </button>
                                 ))}
                               </div>
@@ -2464,27 +2488,18 @@ export default function OrderPage() {
                               <div>
                                 <div className="text-[11px] text-stone-500 mb-1.5">메뉴별 수량</div>
                                 <div className="space-y-2">
+                                  {/* ⚠️ 한우 비율은 여기서 막지 않는다 — 한우를 먼저 누르는 사람이 대부분인데
+                                      나머지가 0이면 첫 1개부터 안 눌려서 "고장난 앱"이 됨.
+                                      담는 건 자유롭게 두고, 날짜를 정리하는 버튼(주문 확인·날짜 추가)에서 확인한다. */}
                                   {MENU_TYPES.map(menu => {
                                     const wm = weeklyMenus.find(m=>m.menu_type===menu);
-                                    // 한우는 나머지 메뉴의 3배까지만 — 더 눌러도 안 올라가고, 왜 그런지 바로 보여준다
-                                    const hw = hanwooOn(d);
-                                    const hanwooCapped = menu === '한우' && !hanwooAllowed(hw.hanwoo + 1, hw.others);
                                     return (
                                       <div key={menu} className="flex items-center justify-between bg-white rounded-lg px-3 py-2">
                                         <div>
                                           <div className="text-sm font-bold text-stone-900">{menu}</div>
                                           {wm && <div className="text-[11px] text-stone-500">{wm.vegetables}</div>}
-                                          {hanwooCapped && (
-                                            <div className="text-[11px] text-rose-600 font-bold mt-0.5">
-                                              닭·기타를 더 담으면 한우도 늘릴 수 있어요
-                                            </div>
-                                          )}
                                         </div>
-                                        <QtyCtrl value={s.menus[menu]}
-                                          onChange={v => {
-                                            if (menu === '한우' && v > s.menus[menu] && hanwooCapped) return;
-                                            updSet(d.id, s.id, x => setQty(x, menu, v));
-                                          }}/>
+                                        <QtyCtrl value={s.menus[menu]} onChange={v=>updSet(d.id, s.id, x=>setQty(x, menu, v))}/>
                                       </div>
                                     );
                                   })}
@@ -2520,8 +2535,10 @@ export default function OrderPage() {
             })}
           </div>
 
-          {/* + 날짜 추가 — 추가 시 새 날짜 자동 오픈 */}
+          {/* + 날짜 추가 — 지금 담은 날짜가 규칙에 맞는지 여기서 확인한다.
+              (다음 날짜로 넘어가버리면 앞 날짜가 잘못된 걸 마지막에야 알게 됨) */}
           <button onClick={() => {
+            if (!checkRules()) return;
             const nd = newDate();
             setDateOrders(prev => [...prev, nd]);
             setOpenDateId(nd.id);
@@ -2533,25 +2550,16 @@ export default function OrderPage() {
           {/* 전체 합계 + 경고 + 합배송 */}
           {dateOrders.some(d=>completeSets(d).length>0) && (
             <>
-              {/* 한우 비율 — 왜 막혔는지 모르면 손님이 그냥 나가버림. 몇 팩 더 담으면 되는지 알려준다 */}
-              {(() => {
-                const hv = hanwooViolation();
-                if (!hv) return null;
-                return (
-                  <div className="mt-3 text-xs bg-rose-50 border border-rose-300 rounded-xl px-3 py-2.5">
-                    <div className="font-bold text-rose-800">
-                      닭 또는 기타를 {hv.need}팩 더 담아주세요
-                    </div>
-                    <div className="text-rose-700 mt-0.5 leading-relaxed">
-                      {hv.date && <span className="font-bold">{hv.date.slice(5)} </span>}
-                      한우 {hv.hanwoo}팩 · 나머지 {hv.others}팩 — 한우는 나머지 메뉴의 {HANWOO_MAX_RATIO}배까지만 담을 수 있어요.
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* 한우 비율 경고는 담는 중에 띄우지 않는다 — 한우부터 누르는 게 정상이라
+                  담자마자 빨간 경고가 뜨면 잘못한 것처럼 보임. 정리 버튼을 누를 때만 알려준다. */}
+              {ruleError && (
+                <div className="mt-3 text-xs bg-rose-50 border border-rose-300 rounded-xl px-3 py-2.5 text-rose-800 font-bold leading-relaxed">
+                  {ruleError}
+                </div>
+              )}
 
               {/* 최소 팩수를 못 채웠으면 막지 않고 픽업을 제안한다 — 1~2팩도 픽업이면 주문 가능 */}
-              {!hanwooViolation() && shortForDelivery().length > 0 && (() => {
+              {shortForDelivery().length > 0 && (() => {
                 const short = shortForDelivery();
                 const need = short.reduce((s, x) => s + (MIN_ORDER_QTY - x.qty), 0);
                 return (
@@ -2610,7 +2618,9 @@ export default function OrderPage() {
 
           <Row2>
             <BackBtn onClick={()=>goStep(2)}/>
-            <PrimaryBtn onClick={()=>goStep(4)} disabled={!isStep3Valid()}>주문 확인</PrimaryBtn>
+            {/* 규칙 위반이어도 버튼을 잠그지 않는다 — 눌러야 왜 안 되는지 알 수 있으므로.
+                날짜·팩수를 아직 안 고른 경우만 비활성화(그건 눌러도 할 말이 없음). */}
+            <PrimaryBtn onClick={()=>{ if (checkRules()) goStep(4); }} disabled={!isStep3Ready()}>주문 확인</PrimaryBtn>
           </Row2>
           </>)}
         </div>
