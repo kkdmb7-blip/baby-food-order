@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, getPrice, MIN_ORDER_QTY, type StageType, type PriceTier } from '@/lib/supabase';
 import { notify } from '@/lib/notify';
 
+// 크론이 스스로 취소한 정기 주문 표시 — 사장님이 직접 취소한 건과 구분해서 되살릴 때 씀
+const AUTO_CANCEL = '자동취소(정기 스케줄 변경)';
+
 // GET /api/cron/regular — 정기배송 자동 주문 생성 (Vercel Cron 전용)
 // 안전장치: ① CRON_SECRET 인증 ② REGULAR_AUTO_ENABLED=true 일 때만 실제 생성 ③ 중복 방지
 export async function GET(req: NextRequest) {
@@ -45,6 +48,7 @@ export async function GET(req: NextRequest) {
   const keep = new Set<string>(); // 'phone|date' — 지금 스케줄이 실제로 원하는 주문
   let created = 0;
   let updated = 0;
+  let revived = 0;
 
   for (const c of regulars || []) {
     const sched = c.regular_schedule as any; // { stage, volume, slots:[{day, qty, menus:[{menu,qty}]}] }
@@ -125,13 +129,29 @@ export async function GET(req: NextRequest) {
       // 조리가 시작된 건(준비중 이후)은 절대 건드리지 않는다.
       const { data: exists } = await sb
         .from('baby_food_orders')
-        .select('id, status, items, total_qty, total_price')
+        .select('id, status, items, total_qty, total_price, memo')
         .eq('customer_phone', c.phone)
         .eq('delivery_date', u.date)
         .eq('order_type', '정기')
         .maybeSingle();
       if (exists) {
-        if (exists.status !== '접수') continue; // 이미 조리·배송 단계면 그대로 둠
+        // 요일을 뺐다가 다시 넣으면, 크론이 자동취소해 둔 그 날 주문이 재생성을 영구히 막고 있었음
+        // (취소 상태라 '접수'가 아니어서 건너뛰고, 이미 존재하니 새로 만들지도 않음).
+        // 크론이 스스로 취소한 것(AUTO_CANCEL 표시)만 되살린다 — 사장님이 직접 취소한 건은 그대로 둠.
+        if (exists.status === '취소' && String(exists.memo || '').includes(AUTO_CANCEL)) {
+          if (enabled) {
+            const memo = String(exists.memo || '').split(' / ').filter(x => x && x !== AUTO_CANCEL).join(' / ') || null;
+            const { error: re } = await sb.from('baby_food_orders')
+              .update({ status: '접수', memo, stage, volume, items, total_qty: qty, total_price: pricePer * qty })
+              .eq('id', exists.id).eq('status', '취소');
+            if (re) skipped.push({ phone: mask(c.phone), reason: `재개 실패: ${re.message}` });
+            else revived++;
+          } else {
+            plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '재개' });
+          }
+          continue;
+        }
+        if (exists.status !== '접수') continue; // 이미 조리·배송 단계거나 사장님이 취소한 건은 그대로 둠
         // ⚠️ JSON.stringify로 비교하면 안 됨 — jsonb는 저장할 때 키 순서를 재정렬하므로
         // 내용이 같아도 문자열이 달라져서 매일 밤 전부 불필요하게 갱신됐음(갱신 4건이 계속 찍힘).
         if (sig(exists.items) === sig(items)) continue;
@@ -174,14 +194,16 @@ export async function GET(req: NextRequest) {
   if (windowStart && windowEnd) {
     const { data: future } = await sb
       .from('baby_food_orders')
-      .select('id, customer_phone, delivery_date')
+      .select('id, customer_phone, delivery_date, memo')
       .eq('order_type', '정기').eq('status', '접수')
       .gte('delivery_date', windowStart).lte('delivery_date', windowEnd);
     for (const o of future || []) {
       if (keep.has(`${o.customer_phone}|${o.delivery_date}`)) continue;
       cancelled.push(`${mask(o.customer_phone)} ${o.delivery_date}`);
       if (enabled) {
-        await sb.from('baby_food_orders').update({ status: '취소' })
+        // 누가 취소했는지 남겨둔다 — 스케줄에 그 요일이 다시 들어오면 이 표시가 있는 건만 되살림
+        const memo = [String(o.memo || ''), AUTO_CANCEL].filter(Boolean).join(' / ').slice(0, 200);
+        await sb.from('baby_food_orders').update({ status: '취소', memo })
           .eq('id', o.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 취소하지 않음
       }
     }
@@ -198,7 +220,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true, enabled, dryRun: !enabled,
     regularCustomers: regulars?.length || 0,
-    plannedOrders: plan.length, createdOrders: created, updatedOrders: updated,
+    plannedOrders: plan.length, createdOrders: created, updatedOrders: updated, revivedOrders: revived,
     cancelledOrders: cancelled.length, cancelled, plan, skipped,
   });
 }
