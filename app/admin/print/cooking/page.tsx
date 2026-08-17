@@ -155,7 +155,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 됨 */}
       <div className="flex gap-3 items-start flex-wrap">
         {sections.map(sec => (
-          <table key={sec.stage} className="border-collapse text-[17px] leading-tight break-inside-avoid">
+          <table key={sec.stage} className="border-collapse text-[18px] leading-tight break-inside-avoid">
             <thead>
               <tr>
                 <th colSpan={4} className="border border-black px-2 py-1 text-[17px] text-left">
@@ -166,7 +166,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[104px] text-[15px]">이 름</th>
+                <th className="border border-black px-2 py-1 w-[124px] text-[15px]">이 름</th>
                 {MENU_TYPES.map(m => (
                   <th key={m} className="border border-black px-1 py-1 w-[42px] text-[14px]">
                     {menuLabel(m)}
@@ -180,7 +180,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 const volChanged = prev && prev.isBig !== p.isBig;
                 return (
                   <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
-                    <td className="border border-black px-2 py-[7px] font-bold whitespace-nowrap max-w-[104px] overflow-hidden">
+                    <td className="border border-black px-2 py-[7px] font-bold w-[124px] break-all leading-tight">
                       {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
                     </td>
@@ -218,7 +218,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         ))}
 
         {banchan.length > 0 && (
-          <table className="border-collapse text-[17px] leading-tight break-inside-avoid">
+          <table className="border-collapse text-[18px] leading-tight break-inside-avoid">
             <thead>
               <tr>
                 <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-left">
@@ -226,14 +226,14 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[104px] text-[15px]">이 름</th>
+                <th className="border border-black px-2 py-1 w-[124px] text-[15px]">이 름</th>
                 <th className="border border-black px-1 py-1 w-[42px] text-[14px]">세트</th>
               </tr>
             </thead>
             <tbody>
               {banchan.map((b, i) => (
                 <tr key={i}>
-                  <td className="border border-black px-2 py-[7px] font-bold whitespace-nowrap">{b.name}</td>
+                  <td className="border border-black px-2 py-[9px] font-bold whitespace-nowrap">{b.name}</td>
                   <td className="border border-black text-center py-[7px] font-black">{b.qty}</td>
                 </tr>
               ))}
