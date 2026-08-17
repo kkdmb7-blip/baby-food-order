@@ -2723,7 +2723,13 @@ function RegularSetup({ phone, babyName, initial, onSaved }: {
       });
       const d = await r.json();
       if (!r.ok || !d.ok) throw new Error(d.error || '저장 실패');
-      setMsg(active ? '정기배송이 신청됐어요!' : '정기배송이 해지됐어요');
+      // 예전엔 "신청됐어요"만 띄우고 실제 주문은 자정에야 바뀌어서, 바로 확인해보면
+      // 팩수가 그대로라 저장이 안 된 것처럼 보였음 — 몇 건이 반영됐는지 같이 알려준다.
+      const s = d.sync;
+      const moved = s ? s.created + s.updated + s.revived + s.cancelled : 0;
+      setMsg(!active ? '정기배송이 해지됐어요'
+        : moved > 0 ? `정기배송이 저장됐어요! 예정된 주문 ${moved}건에 바로 반영했어요.`
+        : '정기배송이 저장됐어요! (예정된 주문은 매일 자정에 만들어져요)');
       onSaved();
     } catch (e: any) { setMsg(e.message); }
     finally { setSaving(false); }

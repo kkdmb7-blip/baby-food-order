@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService, getPrice, MIN_ORDER_QTY, type StageType, type PriceTier } from '@/lib/supabase';
-import { notify } from '@/lib/notify';
-
-// 크론이 스스로 취소한 정기 주문 표시 — 사장님이 직접 취소한 건과 구분해서 되살릴 때 씀
-const AUTO_CANCEL = '자동취소(정기 스케줄 변경)';
+import { supabaseService } from '@/lib/supabase';
+import { syncRegularOrders } from '@/lib/regularSync';
 
 // GET /api/cron/regular — 정기배송 자동 주문 생성 (Vercel Cron 전용)
 // 안전장치: ① CRON_SECRET 인증 ② REGULAR_AUTO_ENABLED=true 일 때만 실제 생성 ③ 중복 방지
+// 실제 동기화 로직은 lib/regularSync.ts — 신청 저장(/api/my/regular)에서도 같은 함수를 쓴다.
 export async function GET(req: NextRequest) {
   // ① 인증 — Vercel Cron은 Authorization: Bearer <CRON_SECRET> 헤더를 붙임
   // ⚠️ 예전엔 CRON_SECRET이 설정 안 돼있으면(secret이 falsy) 검사 자체를 건너뛰어서 인증 없이도
@@ -26,217 +24,17 @@ export async function GET(req: NextRequest) {
   // ② 마스터 스위치 — 기본 꺼짐. 사장님이 Vercel 환경변수로 켜야 실제 주문 생성
   const enabled = process.env.REGULAR_AUTO_ENABLED === 'true';
 
-  const sb = supabaseService();
-  const { data: regulars, error } = await sb
-    .from('baby_food_customers')
-    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code, address, address_detail, door_password')
-    .eq('is_regular', true);
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-
-  // 앞으로 7일간의 조리일(월1·화2·목4·금5) 계산 (KST)
-  const DOW_KOR: Record<number, string> = { 1: '월', 2: '화', 4: '목', 5: '금' };
-  const nowKST = Date.now() + 9 * 3600 * 1000;
-  const upcoming: { date: string; day: string }[] = [];
-  for (let i = 1; i <= 7; i++) {
-    const d = new Date(nowKST + i * 86400000);
-    const dow = d.getUTCDay();
-    if (DOW_KOR[dow]) upcoming.push({ date: d.toISOString().slice(0, 10), day: DOW_KOR[dow] });
+  try {
+    const r = await syncRegularOrders(supabaseService(), enabled);
+    return NextResponse.json({
+      ok: true, enabled, dryRun: !enabled,
+      regularCustomers: r.regularCustomers,
+      plannedOrders: r.plan.length,
+      createdOrders: r.created, updatedOrders: r.updated, revivedOrders: r.revived,
+      cancelledOrders: r.cancelled.length, cancelled: r.cancelled,
+      plan: r.plan, skipped: r.skipped,
+    });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }
-
-  const plan: any[] = [];
-  const skipped: { phone: string; reason: string }[] = [];
-  const keep = new Set<string>(); // 'phone|date' — 지금 스케줄이 실제로 원하는 주문
-  let created = 0;
-  let updated = 0;
-  let revived = 0;
-
-  for (const c of regulars || []) {
-    const sched = c.regular_schedule as any; // { stage, volume, slots:[{day, qty, menus:[{menu,qty}]}] }
-    if (!sched?.stage || !sched?.volume || !Array.isArray(sched?.slots)) {
-      skipped.push({ phone: mask(c.phone), reason: '스케줄 정보 없음' });
-      continue;
-    }
-    // 주소가 없으면 배송을 나갈 수 없는 주문이 생긴다 — 만들지 않고 사장님께 알린다.
-    // (예전엔 address를 '(정기배송 등록 주소)'라는 문자열로 넣어서 주소록에 그대로 찍혔음)
-    if (!c.address) {
-      skipped.push({ phone: mask(c.phone), reason: '배송지 미등록' });
-      continue;
-    }
-    const stage = sched.stage as StageType;
-    const volume = Number(sched.volume);
-
-    // baby_food_orders.months는 CHECK (months > 0) — 예전엔 0을 넣어서 저장이 매번 실패했고
-    // 그 오류를 아무도 못 봤음(created만 세고 실패는 버렸음). 고객의 최근 주문 개월수를 그대로 쓴다.
-    const { data: lastOrder } = await sb
-      .from('baby_food_orders').select('months')
-      .eq('customer_phone', c.phone).gt('months', 0)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const months = Number(lastOrder?.months) > 0 ? Number(lastOrder!.months) : null;
-    if (!months) {
-      skipped.push({ phone: mask(c.phone), reason: '개월수 확인 불가(주문 이력 없음)' });
-      continue;
-    }
-
-    // 고객 배송지(postal_code)로 tier·배송종류 판별
-    let tier: PriceTier = '기타';
-    let deliveryMethod = '당일배송';
-    let zoneGroup: string | null = null;
-    if (c.postal_code) {
-      const { data: zrow } = await sb
-        .from('dubal_zones').select('sido, gu, zone_group').eq('postal_code', c.postal_code).maybeSingle();
-      if (zrow && String(zrow.sido || '').includes('서울') && ['강서구', '양천구'].some(g => String(zrow.gu || '').includes(g))) {
-        tier = '직배송'; deliveryMethod = '직배송';
-      } else if (zrow) {
-        tier = '기타'; deliveryMethod = '당일배송'; zoneGroup = zrow.zone_group || null;
-      } else {
-        tier = '기타'; deliveryMethod = '택배익일배송';
-      }
-    }
-    const pricePer = getPrice(stage, volume, tier);
-    if (!pricePer) continue;
-
-    for (const u of upcoming) {
-      const slot = sched.slots.find((s: any) => s.day === u.day && Number(s.qty) > 0);
-      if (!slot) continue;
-      // 조리표는 메뉴별 팩수로 찍히므로 menus를 그대로 실어야 함 — 없으면 "메뉴 미지정"이 된다.
-      // 수량 기준은 menus 합으로 통일(청구는 하고 조리표엔 안 뜨는 팩이 생기지 않게).
-      const menus = Array.isArray(slot.menus)
-        ? slot.menus.filter((m: any) => Number(m?.qty) > 0).map((m: any) => ({ menu: String(m.menu), qty: Number(m.qty) }))
-        : [];
-      const qty = menus.length > 0
-        ? menus.reduce((a: number, m: any) => a + m.qty, 0)
-        : Number(slot.qty);
-      if (qty < MIN_ORDER_QTY) { // 서버 주문 검증과 같은 규칙 — 통과 못 할 주문은 만들지 않음
-        skipped.push({ phone: mask(c.phone), reason: `${u.day} ${qty}팩 — 최소 ${MIN_ORDER_QTY}팩 미달` });
-        continue;
-      }
-
-      keep.add(`${c.phone}|${u.date}`);
-
-      const items = [{
-        delivery_date: u.date,
-        sets: [{
-          stage, volume, price_per: pricePer,
-          simple: menus.length === 0, menus,
-          qty, subtotal: pricePer * qty,
-        }],
-        date_qty: qty, date_price: pricePer * qty,
-      }];
-
-      // ③ 중복 방지 — 같은 전화·배송일·정기 주문이 이미 있으면 새로 만들지 않는다.
-      // 다만 손님이 정기배송 내용(단계·용량·메뉴)을 바꾸면 이미 만들어진 앞으로의 주문도
-      // 같이 바뀌어야 함 — 안 그러면 최대 7일치가 옛 구성으로 조리된다.
-      // 조리가 시작된 건(준비중 이후)은 절대 건드리지 않는다.
-      const { data: exists } = await sb
-        .from('baby_food_orders')
-        .select('id, status, items, total_qty, total_price, memo')
-        .eq('customer_phone', c.phone)
-        .eq('delivery_date', u.date)
-        .eq('order_type', '정기')
-        .maybeSingle();
-      if (exists) {
-        // 요일을 뺐다가 다시 넣으면, 크론이 자동취소해 둔 그 날 주문이 재생성을 영구히 막고 있었음
-        // (취소 상태라 '접수'가 아니어서 건너뛰고, 이미 존재하니 새로 만들지도 않음).
-        // 크론이 스스로 취소한 것(AUTO_CANCEL 표시)만 되살린다 — 사장님이 직접 취소한 건은 그대로 둠.
-        if (exists.status === '취소' && String(exists.memo || '').includes(AUTO_CANCEL)) {
-          if (enabled) {
-            const memo = String(exists.memo || '').split(' / ').filter(x => x && x !== AUTO_CANCEL).join(' / ') || null;
-            const { error: re } = await sb.from('baby_food_orders')
-              .update({ status: '접수', memo, stage, volume, items, total_qty: qty, total_price: pricePer * qty })
-              .eq('id', exists.id).eq('status', '취소');
-            if (re) skipped.push({ phone: mask(c.phone), reason: `재개 실패: ${re.message}` });
-            else revived++;
-          } else {
-            plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '재개' });
-          }
-          continue;
-        }
-        if (exists.status !== '접수') continue; // 이미 조리·배송 단계거나 사장님이 취소한 건은 그대로 둠
-        // ⚠️ JSON.stringify로 비교하면 안 됨 — jsonb는 저장할 때 키 순서를 재정렬하므로
-        // 내용이 같아도 문자열이 달라져서 매일 밤 전부 불필요하게 갱신됐음(갱신 4건이 계속 찍힘).
-        if (sig(exists.items) === sig(items)) continue;
-        if (enabled) {
-          const { error: ue } = await sb.from('baby_food_orders')
-            .update({ stage, volume, items, total_qty: qty, total_price: pricePer * qty })
-            .eq('id', exists.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 덮어쓰지 않음
-          if (ue) skipped.push({ phone: mask(c.phone), reason: `갱신 실패: ${ue.message}` });
-          else updated++;
-        } else {
-          plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '갱신' });
-        }
-        continue;
-      }
-
-      plan.push({ phone: mask(c.phone), date: u.date, qty, stage, volume, price: pricePer * qty, action: '신규' });
-
-      if (enabled) {
-        const { error: ie } = await sb.from('baby_food_orders').insert({
-          baby_name: c.baby_name || '정기배송', months, customer_phone: c.phone,
-          address: c.address, address_detail: c.address_detail || null,
-          door_password: c.door_password || null,
-          stage, volume, items,
-          total_qty: qty, total_price: pricePer * qty, delivery_date: u.date,
-          order_type: '정기', status: '접수', customer_id: c.id,
-          postal_code: c.postal_code || null, zone_group: zoneGroup, delivery_method: deliveryMethod,
-        });
-        if (ie) skipped.push({ phone: mask(c.phone), reason: `저장 실패: ${ie.message}` });
-        else created++;
-      }
-    }
-  }
-
-  // ④ 해지·요일 삭제분 정리 — 손님이 정기배송을 해지하거나 특정 요일을 빼도 이미 만들어진
-  // 앞으로의 주문이 그대로 남아 있어서, 사장님이 계속 조리·배송하게 되는 구멍이 있었음.
-  // 아직 '접수'인 미래 정기 주문 중 지금 스케줄에 없는 건만 취소한다(조리 시작분은 건드리지 않음).
-  const cancelled: string[] = [];
-  const windowStart = upcoming[0]?.date;
-  const windowEnd = upcoming[upcoming.length - 1]?.date;
-  if (windowStart && windowEnd) {
-    const { data: future } = await sb
-      .from('baby_food_orders')
-      .select('id, customer_phone, delivery_date, memo')
-      .eq('order_type', '정기').eq('status', '접수')
-      .gte('delivery_date', windowStart).lte('delivery_date', windowEnd);
-    for (const o of future || []) {
-      if (keep.has(`${o.customer_phone}|${o.delivery_date}`)) continue;
-      cancelled.push(`${mask(o.customer_phone)} ${o.delivery_date}`);
-      if (enabled) {
-        // 누가 취소했는지 남겨둔다 — 스케줄에 그 요일이 다시 들어오면 이 표시가 있는 건만 되살림
-        const memo = [String(o.memo || ''), AUTO_CANCEL].filter(Boolean).join(' / ').slice(0, 200);
-        await sb.from('baby_food_orders').update({ status: '취소', memo })
-          .eq('id', o.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 취소하지 않음
-      }
-    }
-  }
-
-  // 자동 주문이 조용히 안 만들어지는 게 가장 위험함 — 건너뛴 게 있으면 사장님께 알린다
-  if (skipped.length > 0) {
-    void notify('regular-skip', {
-      건너뜀: `${skipped.length}건`,
-      사유: skipped.map(s => `${s.phone} ${s.reason}`).join(' / ').slice(0, 300),
-    }, '정기배송 자동주문 누락');
-  }
-
-  return NextResponse.json({
-    ok: true, enabled, dryRun: !enabled,
-    regularCustomers: regulars?.length || 0,
-    plannedOrders: plan.length, createdOrders: created, updatedOrders: updated, revivedOrders: revived,
-    cancelledOrders: cancelled.length, cancelled, plan, skipped,
-  });
-}
-
-function mask(phone: string) { return '****' + String(phone || '').slice(-4); }
-
-// 주문 내용을 "의미"만 남긴 문자열로 — 키 순서·필드 추가에 흔들리지 않게 비교용으로만 씀
-function sig(items: any): string {
-  return (Array.isArray(items) ? items : []).map((d: any) =>
-    `${d?.delivery_date}#` + (Array.isArray(d?.sets) ? d.sets : []).map((s: any) =>
-      [
-        s?.stage, s?.volume, Number(s?.qty) || 0, Number(s?.price_per) || 0,
-        (Array.isArray(s?.menus) ? s.menus : [])
-          .map((m: any) => `${m?.menu}:${Number(m?.qty) || 0}`)
-          .sort().join(','),
-      ].join('|')
-    ).join(';')
-  ).sort().join('/');
 }

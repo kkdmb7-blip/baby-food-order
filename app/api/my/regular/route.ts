@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, STAGES, MENU_TYPES, getPrice, type StageType } from '@/lib/supabase';
+import { syncRegularOrders } from '@/lib/regularSync';
+import { notifyError } from '@/lib/notify';
 
 const norm = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
 
@@ -74,7 +76,21 @@ export async function POST(req: NextRequest) {
         .insert({ baby_name: String(b.baby_name || '정기배송').slice(0, 20), phone, ...patch });
       if (error) return NextResponse.json({ ok: false, error: '저장 실패' }, { status: 500 });
     }
-    return NextResponse.json({ ok: true, active });
+    // 저장만 하고 끝내면 자정 크론이 돌 때까지 이미 만들어진 주문이 옛 팩수로 남는다 —
+    // 손님 입장에선 "저장했는데 적용이 안 됨"이 된다. 이 손님 것만 바로 동기화한다.
+    // (실패해도 저장 자체는 성공이므로 200을 유지하고, 결과만 알려준다 — 자정 크론이 다시 맞춘다)
+    let sync: { created: number; updated: number; revived: number; cancelled: number } | null = null;
+    let syncError: string | null = null;
+    if (process.env.REGULAR_AUTO_ENABLED === 'true') {
+      try {
+        const r = await syncRegularOrders(sb, true, phone);
+        sync = { created: r.created, updated: r.updated, revived: r.revived, cancelled: r.cancelled.length };
+      } catch (e: any) {
+        syncError = e?.message || '동기화 실패';
+        void notifyError('regular-sync', e, { 연락처: phone, 단계: '정기배송 저장 후 동기화' });
+      }
+    }
+    return NextResponse.json({ ok: true, active, sync, syncError });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: '잘못된 요청' }, { status: 400 });
   }
