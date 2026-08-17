@@ -21,6 +21,7 @@ const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
 type PersonRow = {
   orderId: string;
   name: string;
+  unspec: number; // 메뉴가 지정 안 된 팩수 (이름에 붙이면 이름칸이 터짐)
   volume: number;
   isBig: boolean;
   menus: Record<string, number>;
@@ -70,7 +71,8 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       if (!byStage.has(stage)) byStage.set(stage, []);
       byStage.get(stage)!.push({
         orderId: o.id,
-        name: (dispName.get(o.id) || o.baby_name) + (unspec > 0 ? ` (미지정${unspec})` : ''),
+        name: dispName.get(o.id) || o.baby_name,
+        unspec,
         volume: Number(s.volume) || 0,
         isBig: Number(s.volume) === BIG_VOLUME[stage],
         menus,
@@ -166,9 +168,9 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[124px] text-[15px]">이 름</th>
+                <th className="border border-black px-2 py-1 w-[130px] text-[15px]">이 름</th>
                 {MENU_TYPES.map(m => (
-                  <th key={m} className="border border-black px-1 py-1 w-[42px] text-[14px]">
+                  <th key={m} className="border border-black px-1 py-1 w-[38px] text-[14px]">
                     {menuLabel(m)}
                   </th>
                 ))}
@@ -180,9 +182,13 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 const volChanged = prev && prev.isBig !== p.isBig;
                 return (
                   <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
-                    <td className="border border-black px-2 py-[7px] font-bold w-[124px] break-all leading-tight">
+                    <td className="border border-black px-2 py-[7px] font-bold w-[130px] whitespace-nowrap leading-tight">
                       {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
+                      {/* 메뉴가 안 정해진 팩 — 이름 옆에 붙이면 이름칸이 터져서 아랫줄에 작게 */}
+                      {p.unspec > 0 && (
+                        <span className="block text-[12px] font-bold text-red-600">미지정 {p.unspec}</span>
+                      )}
                     </td>
                     {MENU_TYPES.map(m => (
                       <td key={m} className="border border-black text-center py-[7px]">
@@ -226,8 +232,8 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[124px] text-[15px]">이 름</th>
-                <th className="border border-black px-1 py-1 w-[42px] text-[14px]">세트</th>
+                <th className="border border-black px-2 py-1 w-[130px] text-[15px]">이 름</th>
+                <th className="border border-black px-1 py-1 w-[38px] text-[14px]">세트</th>
               </tr>
             </thead>
             <tbody>
