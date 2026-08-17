@@ -48,6 +48,9 @@ export type Order = {
   postal_code?: string | null;
   zone_group?: string | null;
   delivery_method?: string | null;
+  paid?: boolean;                  // 입금 확인 여부 (엑셀+파이썬으로 수동 대조하던 것을 앱에서)
+  paid_at?: string | null;
+  customer_request?: string | null; // 손님이 남긴 배송 요청 ("저녁배송" 등)
 };
 
 export type Customer = {
@@ -82,6 +85,16 @@ export type WeeklyMenu = {
 
 export const STAGES: StageType[] = ['중기1단계', '중기2단계', '후기', '완료기'];
 export const MENU_TYPES: MenuType[] = ['한우', '닭', '기타단백질'];
+
+// ⚠️ 저장 키는 '기타단백질'이지만 실제 구성은 단백질이 아님 —
+// 17주치를 보면 생선(가자미·대구살·연어), 곡물(오트밀·퀴노아·찰기장), 콩(연두부·병아리콩),
+// 씨앗(햄프시드·흑임자), 야채(당근·쥬키니호박), 달걀노른자, 아기치즈, 블루베리까지 섞여 있음.
+// "기타단백질"도 "야채"도 정확하지 않아서 화면 표시만 '기타'로 통일한다.
+// (기존 주문 데이터의 키를 바꾸면 과거 기록이 깨지므로 키는 그대로 둠)
+export const MENU_LABEL: Record<MenuType, string> = {
+  '한우': '한우', '닭': '닭', '기타단백질': '기타',
+};
+export const menuLabel = (m: string): string => (MENU_LABEL as any)[m] ?? m;
 
 // 단계 → 용량 옵션 + 가격
 export const STAGE_OPTIONS: Record<StageType, { volume: number; price: number }[]> = {

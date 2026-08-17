@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/supabase';
-import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS } from '@/lib/supabase';
+import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, menuLabel } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
@@ -57,6 +57,17 @@ export default function AdminShell({
     router.push('/admin/login');
   }
 
+  async function togglePaid(o: Order) {
+    const next = !o.paid;
+    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: next } : x));
+    const d = await fetch(`/api/orders/${o.id}/paid`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paid: next }),
+    }).then(r => r.json()).catch(() => ({ ok: false }));
+    // 실패하면 되돌림 — 입금 상태가 화면과 DB에서 달라지면 대조가 무의미해짐
+    if (!d.ok) setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: !next } : x));
+  }
+
   // 복합 주문(delivery_sets 구조) 또는 구형(단순 배열) 모두 지원
   function isMultiOrder(order: Order) {
     const items = order.items as any[];
@@ -91,7 +102,7 @@ export default function AdminShell({
     return (
       <div className="text-sm text-stone-700">
         {order.stage} · {order.volume}g ·{' '}
-        {MENU_TYPES.filter(m => getQty(order, m) > 0).map(m => `${m} ${getQty(order, m)}팩`).join(' · ')}
+        {MENU_TYPES.filter(m => getQty(order, m) > 0).map(m => `${menuLabel(m)} ${getQty(order, m)}팩`).join(' · ')}
       </div>
     );
   }
@@ -139,8 +150,20 @@ export default function AdminShell({
         {/* ── 탭 1: 오늘 주문 ─────────────────────────────── */}
         {tab === '주문' && (
           <div className="space-y-3">
-            <div className="text-sm font-bold text-stone-700">
-              {selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span>
+            <div className="text-sm font-bold text-stone-700 flex items-center gap-2 flex-wrap">
+              <span>{selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span></span>
+              {(() => {
+                const unpaid = orders.filter(o => !o.paid && o.order_type !== '선결제');
+                const amount = unpaid.reduce((s, o) => s + (o.total_price || 0), 0);
+                if (unpaid.length === 0) return orders.length > 0
+                  ? <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">입금 전부 확인됨</span>
+                  : null;
+                return (
+                  <span className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
+                    미입금 {unpaid.length}건 · {amount.toLocaleString()}원
+                  </span>
+                );
+              })()}
             </div>
             {orders.length === 0 && (
               <Empty text={`${selectedDate}에 조리할 주문이 없어요`} />
@@ -181,7 +204,19 @@ export default function AdminShell({
                 <div className="mb-1">
                   {renderOrderDetail(o)}
                   <span className="text-xs font-bold text-amber-700">총 {o.total_qty}팩 / {o.total_price.toLocaleString()}원</span>
+                  {/* 입금 확인 — 엑셀·파이썬으로 대조하던 걸 여기서 바로 체크 */}
+                  <button onClick={() => togglePaid(o)}
+                    className={`ml-2 text-[11px] px-2 py-0.5 rounded-full border font-bold ${
+                      o.paid ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                             : 'bg-rose-100 text-rose-700 border-rose-200'}`}>
+                    {o.paid ? '입금확인' : '미입금'}
+                  </button>
                 </div>
+                {o.customer_request && (
+                  <div className="mb-1 text-xs bg-sky-50 border border-sky-200 rounded-lg px-2 py-1 text-sky-800">
+                    📌 손님 요청: {o.customer_request}
+                  </div>
+                )}
                 <div className="text-xs text-stone-500">
                   📍 {o.address}{o.address_detail ? ' ' + o.address_detail : ''}
                   {o.door_password && <span className="ml-2">🔑 {o.door_password}</span>}
@@ -269,7 +304,7 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
                   <tr key={`${row.order.id}-${ri}`} className="border-b border-stone-100">
                     <td className="py-1.5 font-bold w-24">{row.order.baby_name}</td>
                     <td className="py-1.5">
-                      {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${m.replace('기타단백질','기타')} ${row.menus[m]}팩`).join(' · ')}
+                      {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${menuLabel(m)} ${row.menus[m]}팩`).join(' · ')}
                     </td>
                     <td className="py-1.5 text-right text-stone-500 text-xs w-12">{row.qty}팩</td>
                   </tr>
@@ -463,7 +498,7 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
                 {slicesOn(o as any, today).map(s => `${s.stage ?? '-'}${s.volume ? ` ${s.volume}g` : ''}`).join(' / ') || `${o.stage} · ${o.volume}g`}
                 {' · '}
                 {MENU_TYPES.map(m => ({ m, q: slicesOn(o as any, today).reduce((s, x) => s + (x.menus[m] || 0), 0) }))
-                  .filter(x => x.q > 0).map(x => `${x.m} ${x.q}`).join(' / ')}
+                  .filter(x => x.q > 0).map(x => `${menuLabel(x.m)} ${x.q}`).join(' / ')}
                 {' · 총 '}{qtyOn(o as any, today)}팩
               </div>
             </div>
@@ -674,7 +709,7 @@ function ExcelDownload({ today }: { today: string }) {
         className="block w-full py-3 bg-amber-500 text-white text-center font-bold rounded-xl text-sm">
         📊 엑셀 다운로드
       </a>
-      <p className="text-xs text-stone-400 mt-3 text-center">컬럼: 조리일·아기이름·개월수·단계·용량·한우·닭·기타단백질·총팩수·총금액·주소·연락처·상태</p>
+      <p className="text-xs text-stone-400 mt-3 text-center">컬럼: 조리일·아기이름·개월수·단계·용량·한우·닭·기타·총팩수·총금액·주소·연락처·상태</p>
     </div>
   );
 }

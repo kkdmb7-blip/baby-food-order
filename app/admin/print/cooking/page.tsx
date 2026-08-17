@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
-import { supabaseService, STAGES, STAGE_OPTIONS, MENU_TYPES, type Order } from '@/lib/supabase';
+import { supabaseService, STAGES, STAGE_OPTIONS, MENU_TYPES, menuLabel, type Order } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
-import { orderDates, slicesOn, shiftDate } from '@/lib/orderItems';
+import { orderDates, slicesOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -39,9 +39,22 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
     .neq('status', '취소').order('created_at').limit(500);
   const orders: Order[] = (data || []).filter(o => orderDates(o as any).includes(date));
 
+  // 그날 세 가지 메뉴가 뭔지 조리표에서 바로 보이게 — 예전엔 주간 메뉴표를 따로 봐야 했음
+  const TYPE_KOR: Record<string, string> = { hanwoo: '한우', chicken: '닭', p3: '기타', other: '기타' };
+  let dayMenus: { type: string; name: string; ingredients: string }[] = [];
+  try {
+    const monday = shiftDate(date, -((new Date(date + 'T00:00:00Z').getUTCDay() + 6) % 7));
+    const { data: hist } = await sb.from('kkakung_history').select('yusik').eq('id', monday).maybeSingle();
+    const day = ((hist as any)?.yusik?.schedule || []).find((d: any) => d.date === date);
+    dayMenus = (day?.menus || []).map((m: any) => ({
+      type: TYPE_KOR[m.type] || m.type, name: m.name || '', ingredients: m.ingredients || '',
+    }));
+  } catch { /* 메뉴를 못 불러와도 조리표 자체는 나와야 함 */ }
+
   // ⚠️ 조리는 "중기 다 챙기고 → 후기 다 챙기고" 순서로 진행하므로, 사람을 한 줄에 놓고
   // 단계를 가로로 늘어놓으면 빈 칸 사이를 계속 왔다갔다 해야 함.
   // 그래서 단계별로 사람을 따로 모아 블록을 만든다(기존 엑셀도 블록마다 한 단계씩 쓰고 있었음).
+  const dispName = disambiguateNames(orders as any);
   const byStage = new Map<string, PersonRow[]>();
   const banchan: { name: string; qty: number }[] = [];
   for (const o of orders) {
@@ -57,7 +70,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       if (!byStage.has(stage)) byStage.set(stage, []);
       byStage.get(stage)!.push({
         orderId: o.id,
-        name: o.baby_name + (unspec > 0 ? ` (미지정${unspec})` : ''),
+        name: (dispName.get(o.id) || o.baby_name) + (unspec > 0 ? ` (미지정${unspec})` : ''),
         volume: Number(s.volume) || 0,
         isBig: Number(s.volume) === BIG_VOLUME[stage],
         menus,
@@ -83,7 +96,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
   for (const list of byStage.values()) {
     for (const p of list) p.multi = multiIds.has(p.orderId);
   }
-  const nameOf = (id: string) => orders.find(o => o.id === id)?.baby_name || '';
+  const nameOf = (id: string) => dispName.get(id) || orders.find(o => o.id === id)?.baby_name || '';
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있음
   for (const list of byStage.values()) {
     list.sort((a, b) => a.volume - b.volume || a.name.localeCompare(b.name));
@@ -125,6 +138,19 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         <PrintBar date={date} kind="cooking" />
       </div>
 
+      {/* 오늘 메뉴 — 어떤 재료로 만드는지 조리표 안에서 바로 확인 */}
+      {dayMenus.length > 0 && (
+        <div className="mb-1.5 flex gap-2 flex-wrap text-[11px]">
+          {dayMenus.map((m, i) => (
+            <div key={i} className="border border-black px-1.5 py-0.5">
+              <span className="font-black">{m.type}</span>
+              <span className="font-bold ml-1">{m.name}</span>
+              {m.ingredients && <span className="text-stone-600 ml-1">{m.ingredients}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 됨 */}
       <div className="flex gap-2 items-start flex-wrap">
         {sections.map(sec => (
@@ -142,7 +168,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 <th className="border border-black px-1 py-0.5 w-[70px]">이 름</th>
                 {MENU_TYPES.map(m => (
                   <th key={m} className="border border-black px-0.5 py-0.5 w-[26px] text-[10px]">
-                    {m.replace('기타단백질', '기타')}
+                    {menuLabel(m)}
                   </th>
                 ))}
               </tr>

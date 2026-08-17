@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
-import { orderDates, qtyOn, shiftDate } from '@/lib/orderItems';
+import { orderDates, qtyOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
@@ -63,6 +63,7 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   const all: Order[] = (data || []).filter(o => orderDates(o as any).includes(date));
   const orders = all.filter(isDrivenByUs);
   const parcelCount = all.length - orders.length;
+  const dispName = disambiguateNames(orders as any);
 
   // 사장님이 직접 지정·수정한 순번이 있으면 그게 우선 (엑셀 기본 매핑보다 위)
   const { data: overrideRows } = await sb.from('baby_food_route_codes').select('addr_key, code');
@@ -134,11 +135,12 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
                 return (
                   <tr key={o.id} className="border-b border-stone-300">
                     <td className="py-[3px] pr-1 w-4 align-top text-stone-400 text-[10px]">{no}</td>
-                    <td className="py-[3px] pr-1.5 w-[58px] align-top font-bold whitespace-nowrap">{o.baby_name}</td>
+                    <td className="py-[3px] pr-1.5 w-[58px] align-top font-bold whitespace-nowrap">{dispName.get(o.id) || o.baby_name}</td>
                     <td className="py-[3px] pr-1.5 align-top">
                       {o.address}
                       {o.address_detail && <span className="font-bold"> {o.address_detail}</span>}
                       {doorPw(o) && <span className="text-[11px] text-stone-600"> 🔑{doorPw(o)}</span>}
+                      {o.customer_request && <span className="font-black"> ※{o.customer_request}</span>}
                     </td>
                     <td className="py-[3px] pr-1 align-top text-right whitespace-nowrap">{formatPhone(o.customer_phone)}</td>
                     <td className="py-[3px] align-top text-right whitespace-nowrap font-bold w-8">{qtyOn(o as any, date)}팩</td>

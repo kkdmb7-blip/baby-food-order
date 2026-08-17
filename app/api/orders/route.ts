@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
     const address = String(b.address || '').trim().slice(0, 200);
     const address_detail = String(b.address_detail || '').trim().slice(0, 100) || null;
     const door_password = String(b.door_password || '').trim().slice(0, 30) || null;
+    const customer_request = String(b.customer_request || '').trim().slice(0, 60) || null;
     const stage = String(b.stage || '') as StageType;
     const volume = Number(b.volume);
     const items = Array.isArray(b.items) ? b.items : [];
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
       .from('baby_food_orders')
       .insert({
         baby_name, months, customer_phone, address, address_detail, door_password,
-        stage, volume, items, total_qty, total_price: net_price, delivery_date,
+        stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
         postal_code, zone_group, delivery_method, referred_by_phone: referredByStored,
         points_earned: pointsEarned, acquisition_source
@@ -234,6 +235,7 @@ export async function POST(req: NextRequest) {
         주소: address,
         연락처: customer_phone,
         알레르기: allergies.length ? allergies.join(', ') : undefined,
+        요청: customer_request || undefined,
       }, '새 주문');
     }
 

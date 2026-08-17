@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
+  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel,
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
@@ -282,6 +282,7 @@ export default function OrderPage() {
   const [address, setAddress] = useState('');
   const [addressDetail, setAddressDetail] = useState('');
   const [doorPw, setDoorPw] = useState('');
+  const [customerRequest, setCustomerRequest] = useState('');
   // 배송권역: 직배송(강서·양천) / 당일배송(두발히어로) / 택배익일배송
   const [postalCode, setPostalCode] = useState('');
   const [zoneGroup, setZoneGroup] = useState<string | null>(null);
@@ -720,6 +721,7 @@ export default function OrderPage() {
           baby_name: babyName.trim(), months: parseInt(months),
           customer_phone: phone.replace(/[^\d]/g, ''),
           address: address.trim(), address_detail: addressDetail.trim(), door_password: doorPw.trim(),
+          customer_request: customerRequest.trim(),
           stage: dateOrders.length === 1 && dateOrders[0].sets.length === 1 ? dateOrders[0].sets[0].stage : 'mixed',
           volume: dateOrders.length === 1 && dateOrders[0].sets.length === 1 ? dateOrders[0].sets[0].volume : null,
           items: itemsPayload,
@@ -1272,7 +1274,7 @@ export default function OrderPage() {
                             <div className="flex items-center gap-1.5">
                               <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
                                 m.type==='한우'?'bg-amber-100 text-amber-800':m.type==='닭'?'bg-emerald-100 text-emerald-800':'bg-violet-100 text-violet-800'}`}>
-                                {m.type}
+                                {menuLabel(m.type)}
                               </span>
                               <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
                               {reactions[m.name] === 'like' && <span className="flex-shrink-0 text-[10px]">👍</span>}
@@ -1526,7 +1528,7 @@ export default function OrderPage() {
                   <div key={s.id} className="pl-3">
                     {isBanchanSet(s)
                       ? `반찬 세트 ${setQtyTotal(s)}세트`
-                      : `${s.stage} ${s.volume}g — ${s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}`).join(' / ')}`}
+                      : `${s.stage} ${s.volume}g — ${s._simpleQty ? `${s._simpleQty}팩` : MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${menuLabel(m)} ${s.menus[m]}`).join(' / ')}`}
                   </div>
                 ))}
               </div>
@@ -1691,6 +1693,11 @@ export default function OrderPage() {
           )}
           <Field label="상세주소"><input value={addressDetail} onChange={e=>setAddressDetail(e.target.value)} placeholder="동·호수 등" className={iCls}/></Field>
           <Field label="현관 비밀번호 (선택)"><input value={doorPw} onChange={e=>setDoorPw(e.target.value)} placeholder="예: #1234*" className={iCls}/></Field>
+          {/* 예전엔 손님이 "저녁배송" 같은 요청을 남길 곳이 없어서 주소칸에 적어 넣곤 했음 */}
+          <Field label="배송 요청사항 (선택)">
+            <input value={customerRequest} onChange={e=>setCustomerRequest(e.target.value)}
+              maxLength={60} placeholder="예: 저녁에 배송해주세요 / 문 앞에 두고 벨 눌러주세요" className={iCls}/>
+          </Field>
           <Row2>
             <BackBtn onClick={()=>goStep(1)}/>
             <PrimaryBtn onClick={()=>goStep(3)} disabled={!phone.replace(/\D/g,'').match(/^\d{10,11}$/)||!address.trim()}>다음</PrimaryBtn>
@@ -2167,7 +2174,7 @@ export default function OrderPage() {
                 <div key={s.id} className="pl-3 mb-1 text-stone-700">
                   {isBanchanSet(s)
                     ? <span className="font-medium text-emerald-700">반찬 세트 {setQtyTotal(s)}세트 · {setPrice(s, tier).toLocaleString()}원</span>
-                    : <><span className="font-medium">{s.stage} {s.volume}g</span>{' — '}{s._simpleQty?`${s._simpleQty}팩`:MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${m} ${s.menus[m]}팩`).join(' · ')}</>
+                    : <><span className="font-medium">{s.stage} {s.volume}g</span>{' — '}{s._simpleQty?`${s._simpleQty}팩`:MENU_TYPES.filter(m=>s.menus[m]>0).map(m=>`${menuLabel(m)} ${s.menus[m]}팩`).join(' · ')}</>
                   }
                 </div>
               ))}

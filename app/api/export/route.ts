@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
       용량: o.volume,
       한우: menuTotal(o as any, '한우'),
       닭: menuTotal(o as any, '닭'),
-      기타단백질: menuTotal(o as any, '기타단백질'),
+      기타: menuTotal(o as any, '기타단백질'),
       총팩수: o.total_qty,
       총금액: o.total_price,
       주소: o.address,

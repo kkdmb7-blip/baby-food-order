@@ -100,6 +100,25 @@ export function menuTotal(o: OrderLike, menu: MenuType | string): number {
   return sum;
 }
 
+/**
+ * 같은 날 같은 이름이 둘 이상이면 연락처 뒷 4자리를 붙여 구분한다.
+ * 엑셀에서는 "김수아2", "박시현2"처럼 손으로 숫자를 붙여 구분해오셨는데, 앱은 이름만
+ * 저장해서 조리표·주소록에 같은 이름이 두 줄 뜨면 누가 누군지 알 수 없었음.
+ */
+export function disambiguateNames<T extends { baby_name: string; customer_phone: string }>(
+  orders: T[]
+): Map<string, string> {
+  const count = new Map<string, number>();
+  for (const o of orders) count.set(o.baby_name, (count.get(o.baby_name) || 0) + 1);
+  const out = new Map<string, string>();
+  for (const o of orders) {
+    const dup = (count.get(o.baby_name) || 0) > 1;
+    const tail = String(o.customer_phone || '').slice(-4);
+    out.set((o as any).id, dup && tail ? `${o.baby_name}(${tail})` : o.baby_name);
+  }
+  return out;
+}
+
 /** 날짜 문자열(YYYY-MM-DD)에 일수를 더한 값 — 조리표 조회 범위 계산용 */
 export function shiftDate(date: string, days: number): string {
   const t = new Date(date + 'T00:00:00Z').getTime() + days * 86400000;
