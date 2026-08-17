@@ -45,6 +45,25 @@ export async function POST(req: NextRequest) {
     if (!/^\d{10,11}$/.test(customer_phone)) return bad('연락처를 확인해주세요');
     if (!address) return bad('주소가 필요합니다');
     if (total_qty < 1) return bad('수량 오류');
+
+    // 세트의 qty와 메뉴별 팩수 합이 어긋나면 "값은 받았는데 조리표엔 그 팩이 없는" 주문이 된다.
+    // 실제로 클라이언트가 합계는 모든 키를 더하고 메뉴 목록은 알려진 메뉴만 담는 바람에
+    // 3팩 값을 받고 조리표엔 2팩만 찍힌 주문이 들어왔었음(8/16). 서버에서도 막는다.
+    if (isMulti) {
+      for (const d of items) {
+        for (const s of (d.sets || [])) {
+          if (s.simple || s.stage === '반찬세트') continue; // 간단주문·반찬은 메뉴 구성이 없음
+          const menuSum = (s.menus || []).reduce((a: number, m: any) => a + (Number(m.qty) || 0), 0);
+          if (menuSum !== (Number(s.qty) || 0)) {
+            void notifyError('order-qty-mismatch', new Error('세트 수량 불일치'), {
+              아기: baby_name, 조리일: d.delivery_date,
+              단계: `${s.stage} ${s.volume}`, 세트수량: s.qty, 메뉴합: menuSum,
+            });
+            return bad('주문 수량이 메뉴 구성과 맞지 않아요. 앱을 새로고침한 뒤 다시 담아주세요.');
+          }
+        }
+      }
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
 

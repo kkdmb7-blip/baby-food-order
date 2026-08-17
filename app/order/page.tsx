@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel,
+  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel, PACK_SURCHARGE,
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
@@ -64,6 +64,24 @@ export type SavedAddress = {
 };
 const ADDR_BOOK_KEY = 'bfo_address_book';
 
+// 담던 주문 임시저장 — 날짜·메뉴를 다 골라놓고 전화가 와서 앱을 벗어나면 처음부터 다시
+// 해야 했음. 큰 앱의 장바구니처럼 하루 동안 남겨둔다.
+const DRAFT_KEY = 'bfo_order_draft';
+const DRAFT_TTL = 24 * 3600 * 1000;
+function saveDraft(dateOrders: unknown) {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: Date.now(), dateOrders })); } catch {}
+}
+function loadDraft(): any[] | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d?.at || Date.now() - d.at > DRAFT_TTL) { localStorage.removeItem(DRAFT_KEY); return null; }
+    return Array.isArray(d.dateOrders) ? d.dateOrders : null;
+  } catch { return null; }
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch {} }
+
 function loadAddrBook(): SavedAddress[] {
   try {
     const raw = localStorage.getItem(ADDR_BOOK_KEY);
@@ -99,6 +117,9 @@ function doSave(info: SavedInfo) {
 }
 
 const STORE_NAME = (process.env.NEXT_PUBLIC_STORE_NAME || '까꿍디미방').trim();
+// 가게 대표번호 — 값이 없으면 문의 버튼을 아예 안 띄운다(가짜 번호가 노출되면 안 되므로).
+// Vercel 환경변수 NEXT_PUBLIC_STORE_CONTACT 에 넣으면 완료 화면에 전화 버튼이 생김.
+const STORE_CONTACT = (process.env.NEXT_PUBLIC_STORE_CONTACT || '').trim();
 
 // 추천인 전화번호를 텍스트에 그대로 노출하지 않고, 링크(?ref=코드)로 자동 적용되게 함
 async function shareApp(phone?: string) {
@@ -169,7 +190,12 @@ function setQty(s: OrderSet, menu: MenuType, val: number): OrderSet {
   return { ...s, _simpleQty: undefined, menus: { ...s.menus, [menu]: Math.max(0, Math.min(10, val)) } };
 }
 function setQtyTotal(s: OrderSet): number {
-  return s._simpleQty ?? Object.values(s.menus).reduce((a, b) => a + b, 0);
+  // ⚠️ Object.values(s.menus)로 전부 합치면 안 됨.
+  // 제출 payload는 MENU_TYPES에 있는 키만 담는데(submit의 menus), 합계만 모든 키를 더하면
+  // 주방이 안 쓰는 타입 키(예: 'other')가 섞였을 때 "돈은 3팩인데 조리표엔 2팩"이 된다.
+  // 실제로 8/16 주문 2건이 그렇게 들어왔음(한우1+닭1인데 3팩·3팩값). 합계와 payload의
+  // 기준을 MENU_TYPES 하나로 통일해서, 기록되지 않는 팩에는 절대 값을 매기지 않는다.
+  return s._simpleQty ?? MENU_TYPES.reduce((a, m) => a + (s.menus[m] || 0), 0);
 }
 // ⚠️ 반찬 세트는 용량 개념이 없어서 volume=0으로 담기는데, 0은 falsy라 `s.volume` 체크에
 // 전부 걸러져서 가격 합계·제출 데이터에서 통째로 빠져버렸음(반찬만 주문하면 합계 0원 →
@@ -327,6 +353,7 @@ export default function OrderPage() {
   // 주소가 하나뿐이면 매번 덮어쓰게 되고, 그러면 다음 주문이 엉뚱한 곳으로 감.
   const [addrBook, setAddrBook] = useState<SavedAddress[]>([]);
   const [selectedAddrId, setSelectedAddrId] = useState<string | null>(null);
+  const [draftFound, setDraftFound] = useState<any[] | null>(null); // 담다 만 주문이 있으면 이어하기 제안
   // 배송권역: 직배송(강서·양천) / 당일배송(두발히어로) / 택배익일배송
   const [postalCode, setPostalCode] = useState('');
   const [zoneGroup, setZoneGroup] = useState<string | null>(null);
@@ -457,6 +484,7 @@ export default function OrderPage() {
   const [simpleItems, setSimpleItems] = useState<SimpleItem[]>([]);
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
   const [dayMenus, setDayMenus] = useState<DayMenu[]>([]); // 메뉴보기용 일별 메뉴
+  const [menuLoading, setMenuLoading] = useState(true); // 불러오는 동안 빈 화면이라 고장난 줄 알았음
   const [weekOffset, setWeekOffset] = useState(0);
   const [banchanQtys, setBanchanQtys] = useState<Record<string, number>>({}); // 반찬 세트 수량
 
@@ -534,6 +562,10 @@ export default function OrderPage() {
       setDeliveryKind(def.deliveryKind ?? null);
     }
 
+    // 담다 만 주문이 있으면 이어할지 물어본다 (자동 복원하면 지난 선택이 섞일 수 있어 확인받음)
+    const draft = loadDraft();
+    if (draft && draft.length > 0 && draft.some((d: any) => d.delivery_date)) setDraftFound(draft);
+
     setDiary(loadDiary());
     setLastOrder(loadLastOrder());
     setReactions(loadReactions());
@@ -586,6 +618,7 @@ export default function OrderPage() {
 
   // 주차별 메뉴 fetch — weekOffset 변경 시 재실행
   useEffect(() => {
+    setMenuLoading(true); // 주차를 바꾸면 이전 주 메뉴가 잠깐 남아 보여서 다시 로딩 표시
     fetch(`/api/menus/current?week=${currentWeekStart}`)
       .then(r => r.json())
       .then(d => { if (d.menus) setWeeklyMenus(d.menus); }).catch(() => {});
@@ -595,6 +628,7 @@ export default function OrderPage() {
     fetch(`${SB_URL}/rest/v1/kkakung_history?id=eq.${currentWeekStart}&select=id,yusik`, {
       headers: { apikey: KEY, Authorization: `Bearer ${KEY}` }
     }).then(r => r.json()).then(rows => {
+      setMenuLoading(false);
       if (!rows?.[0]?.yusik?.schedule) { setDayMenus([]); return; }
       const schedule: any[] = rows[0].yusik.schedule;
       // ⚠️ 주방에서 넣는 세 번째 메뉴 타입은 실제로 'other'인데 'p3'만 매핑돼 있어서,
@@ -642,10 +676,17 @@ export default function OrderPage() {
         return { date: opt.value, label: opt.label, dow: opt.dow, menus };
       });
       setDayMenus(days);
-    }).catch(() => setDayMenus([]));
+    }).catch(() => { setMenuLoading(false); setDayMenus([]); });
   }, [currentWeekStart]);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step, mode]);
+
+  // 담는 내용이 바뀔 때마다 임시저장 (주문이 끝나면 지움)
+  useEffect(() => {
+    if (completedId) return;
+    const hasSomething = dateOrders.some(d => d.delivery_date && completeSets(d).length > 0);
+    if (hasSomething) saveDraft(dateOrders);
+  }, [dateOrders, completedId]);
 
   // 배송정보 단계에서 연락처를 다 넣으면, 예전 주문 이력으로 주소를 찾아본다.
   // (이름까지 맞아야 서버가 돌려주므로 남의 주소는 조회되지 않음)
@@ -741,6 +782,53 @@ export default function OrderPage() {
       })),
     }];
     setDateOrders(restored);
+    setSimpleMode(false);
+    if (savedInfo) {
+      setBabyName(savedInfo.babyName); setMonths(savedInfo.months);
+      setPhone(savedInfo.phone); setAddress(savedInfo.address);
+      setAddressDetail(savedInfo.addressDetail); setDoorPw(savedInfo.doorPw);
+    }
+    goMode('order');
+    goStep(savedInfo ? 3 : 1);
+  }
+
+  // 내역에 있는 "이 주문"을 그대로 다시 담기 — 홈의 '지난번과 똑같이'는 마지막 주문만 되지만,
+  // 실제로는 "2주 전 그 구성"으로 돌아가고 싶다는 경우가 많음.
+  // 서버 items는 두 가지 모양(옛 평면 / 날짜별 중첩)이 섞여 있어서 둘 다 받아준다.
+  function reorderFromHistory(o: any) {
+    const sets: OrderSet[] = [];
+    const items = Array.isArray(o?.items) ? o.items : [];
+    let skippedBanchan = false;
+    for (const it of items) {
+      if (Array.isArray(it?.sets)) {
+        // 중첩형: 날짜별 → 세트
+        for (const s of it.sets) {
+          // 반찬세트는 STAGES에 없어서 주문 화면에서 단계 버튼이 하나도 안 잡힌다(수요일 전용).
+          // 그대로 되살리면 "단계 미선택"처럼 보이는 고장난 카드가 되므로 메뉴보기로 보낸다.
+          if (s?.stage === '반찬세트') { skippedBanchan = true; continue; }
+          const menus = emptyMenus();
+          for (const m of (s.menus || [])) if (m?.menu in menus) menus[m.menu as MenuType] = Number(m.qty) || 0;
+          const filled = Object.values(menus).reduce((a, b) => a + b, 0);
+          sets.push({
+            id: uid(), stage: s.stage ?? null, volume: s.volume ?? null, menus,
+            ...(filled === 0 && s.qty ? { _simpleQty: Number(s.qty) || 0 } : {}),
+          });
+        }
+      }
+    }
+    if (sets.length === 0) {
+      if (skippedBanchan) {
+        alert('반찬 세트는 수요일 메뉴에서 골라주세요.');
+        goMode('menu');
+      } else {
+        // 평면형(옛 주문)은 단계·용량 정보가 없어 복원 불가 — 새로 고르게 안내
+        alert('예전 방식으로 저장된 주문이라 그대로 담을 수 없어요. 새로 골라주세요.');
+        goMode('order'); goStep(savedInfo ? 3 : 1);
+      }
+      return;
+    }
+    if (skippedBanchan) alert('이유식만 담았어요. 반찬 세트는 수요일 메뉴에서 따로 골라주세요.');
+    setDateOrders([{ id: uid(), delivery_date: '', sets }]); // 날짜는 다시 골라야 함
     setSimpleMode(false);
     if (savedInfo) {
       setBabyName(savedInfo.babyName); setMonths(savedInfo.months);
@@ -893,6 +981,7 @@ export default function OrderPage() {
       setUsedPoints(d.points_used || 0);
       setWelcomeBonus(d.welcome_bonus || 0);
       setReferralBonusEarned(d.referral_bonus || 0);
+      clearDraft(); // 주문이 접수됐으니 담아둔 임시 내용은 지움
       setCompletedId(d.id);
       setStep(5);
     } catch (e: any) { setServerError(e.message); }
@@ -1041,6 +1130,31 @@ export default function OrderPage() {
           <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
           <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
         </div>
+
+        {/* 담다 만 주문 이어하기 — 전화 받다가 앱을 벗어나도 고른 게 남아 있게 */}
+        {draftFound && (
+          <div className="mb-3 bg-white border-2 border-amber-300 rounded-xl px-4 py-3">
+            <div className="text-sm font-bold text-stone-800 mb-0.5">담아두신 주문이 있어요</div>
+            <div className="text-xs text-stone-500 mb-2">
+              {[...new Set(draftFound.map((d: any) => d.delivery_date).filter(Boolean))].join(', ')}
+              {' · '}
+              {draftFound.reduce((s: number, d: any) =>
+                s + (d.sets || []).reduce((a: number, x: any) => a + (x._simpleQty ?? Object.values(x.menus || {}).reduce((p: number, q: any) => p + (q || 0), 0)), 0), 0)}팩
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => {
+                  // 어제 담아둔 걸 오늘 이어하면 그 날짜는 이미 마감이라 마지막 제출에서야 거부당함 —
+                  // 지난 날짜는 비워서 다시 고르게 한다.
+                  const t = kstToday();
+                  setDateOrders((draftFound as any[]).map(d => d.delivery_date > t ? d : { ...d, delivery_date: '' }));
+                  setDraftFound(null); goMode('order'); goStep(savedInfo ? 3 : 1);
+                }}
+                className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-xs font-bold">이어서 주문하기</button>
+              <button onClick={() => { clearDraft(); setDraftFound(null); }}
+                className="px-3 py-2 bg-white border border-stone-200 text-stone-500 rounded-lg text-xs font-bold">지우기</button>
+            </div>
+          </div>
+        )}
 
         {/* 배송상태 알림 배너 */}
         {statusAlerts.length > 0 && (
@@ -1225,7 +1339,7 @@ export default function OrderPage() {
           💡 주문 이력이 있는 연락처만 작성할 수 있어요. 첫 후기 작성 시 1,000P를 드려요!
         </div>
         <Field label="아기 이름"><input value={reviewBabyName} onChange={e=>setReviewBabyName(e.target.value)} maxLength={20} placeholder="아기 이름" className={iCls}/></Field>
-        <Field label="연락처"><input value={reviewPhone} onChange={e=>setReviewPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="주문한 연락처" className={iCls}/></Field>
+        <Field label="연락처"><input value={reviewPhone} onChange={e=>setReviewPhone(formatPhone(e.target.value))} inputMode="numeric" maxLength={13} placeholder="주문한 연락처" className={iCls}/></Field>
         <Field label="별점">
           <div className="flex gap-1">
             {[1,2,3,4,5].map(n => (
@@ -1258,7 +1372,7 @@ export default function OrderPage() {
       setMenuSels(prev => ({ ...prev, [date]: fn(prev[date] ?? { stage: null, volume: null, qtys: emptyMenus() }) }));
 
     const totalMenuQty = Object.values(menuSels).reduce((s, sel) =>
-      s + Object.values(sel.qtys).reduce((a, b) => a + b, 0), 0)
+      s + MENU_TYPES.reduce((a, m) => a + (sel.qtys[m] || 0), 0), 0)
       + Object.values(banchanQtys).reduce((a, b) => a + b, 0);
     // 정책: 메뉴보기(주소 전)에서는 가격 미표시
 
@@ -1305,7 +1419,18 @@ export default function OrderPage() {
           💡 배송지 입력 후 가격이 표시돼요 (지역에 따라 금액이 달라져요)
         </div>
 
-        {dayMenus.length === 0 ? (
+        {menuLoading ? (
+          // 불러오는 동안 아무것도 없으면 "메뉴가 없다"고 오해함 — 자리를 잡아둔다
+          <div className="space-y-2">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="bg-white border border-stone-100 rounded-xl px-4 py-5 animate-pulse">
+                <div className="h-3.5 w-24 bg-stone-200 rounded mb-2.5" />
+                <div className="h-3 w-full bg-stone-100 rounded mb-1.5" />
+                <div className="h-3 w-2/3 bg-stone-100 rounded" />
+              </div>
+            ))}
+          </div>
+        ) : dayMenus.length === 0 ? (
           <div className="text-center py-10 text-stone-400 text-sm">이번 주 메뉴가 아직 등록되지 않았어요</div>
         ) : (
           <div className="space-y-2">
@@ -1314,7 +1439,7 @@ export default function OrderPage() {
               const isOpen = expandedDate === day.date;
               const sel = menuSelOf(day.date);
               const bQty = banchanQtys[day.date] ?? 0;
-              const dayQty = isBanchan ? bQty : Object.values(sel.qtys).reduce((a,b)=>a+b,0);
+              const dayQty = isBanchan ? bQty : MENU_TYPES.reduce((a,m)=>a+(sel.qtys[m]||0),0);
               const selVolOpts = sel.stage ? STAGE_OPTIONS[sel.stage] : [];
               return (
                 <div key={day.date} className={`bg-white rounded-xl border overflow-hidden ${isBanchan ? 'border-emerald-200' : 'border-amber-100'}`}>
@@ -1425,6 +1550,11 @@ export default function OrderPage() {
                           </div>
                           {blocked ? (
                             <span className="text-[11px] font-bold text-rose-600 whitespace-nowrap px-2">주문 불가</span>
+                          ) : !(MENU_TYPES as readonly string[]).includes(m.type) ? (
+                            // 주방이 새 메뉴 타입을 쓰기 시작하면 여기서 막는다 — 담을 수는 있는데
+                            // 주문서엔 안 남는(=돈만 받고 조리는 못 하는) 상태가 되는 게 최악이라,
+                            // 아예 담기지 않게 하고 전화 주문으로 돌린다.
+                            <span className="text-[11px] font-bold text-stone-400 whitespace-nowrap px-2">전화 문의</span>
                           ) : (
                             <QtyCtrl
                               value={sel.qtys[m.type as MenuType] ?? 0}
@@ -1504,7 +1634,7 @@ export default function OrderPage() {
             placeholder="아기 이름"
             className="w-full px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
           <div className="flex gap-2">
-            <input value={myPhone} onChange={e => setMyPhone(e.target.value)} inputMode="numeric" maxLength={13}
+            <input value={myPhone} onChange={e => setMyPhone(formatPhone(e.target.value))} inputMode="numeric" maxLength={13}
               placeholder="주문한 연락처 (010-0000-0000)"
               className="flex-1 px-3.5 py-3 bg-white border border-stone-200 rounded-xl outline-none focus:border-amber-500 text-[16px]" />
             <button onClick={() => fetchMyOrders(myPhone)} disabled={myLoading}
@@ -1576,11 +1706,28 @@ export default function OrderPage() {
                       <div className="text-[10px] text-rose-600 mt-1">🚫 {o.allergies.join(', ')}</div>
                     )}
                     <div className="text-[10px] text-stone-300 mt-1">주문 {new Date(o.created_at).toLocaleDateString('ko-KR')} · {o.id.slice(0, 8)}</div>
+                    <div className="flex gap-2 mt-2">
+                      {o.status !== '취소' && (
+                        <button onClick={() => reorderFromHistory(o)}
+                          className="flex-1 py-2 text-[11px] font-bold text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+                          이 구성 그대로 다시 주문
+                        </button>
+                      )}
+                      {o.status === '접수' && (
+                        <button onClick={() => cancelMyOrder(o.id)}
+                          className="flex-1 py-2 text-[11px] font-bold text-rose-500 border border-rose-200 rounded-lg">
+                          이 주문 취소
+                        </button>
+                      )}
+                    </div>
+                    {/* 언제까지 취소되는지 몰라 전화로 물어보는 일이 많음 */}
                     {o.status === '접수' && (
-                      <button onClick={() => cancelMyOrder(o.id)}
-                        className="w-full mt-2 py-2 text-[11px] font-bold text-rose-500 border border-rose-200 rounded-lg">
-                        이 주문 취소
-                      </button>
+                      <p className="text-[10px] text-stone-400 mt-1.5 leading-relaxed">
+                        조리 준비가 시작되기 전(상태 ‘접수’)까지만 직접 취소할 수 있어요. 이후에는 연락 주세요.
+                      </p>
+                    )}
+                    {o.status === '준비중' && (
+                      <p className="text-[10px] text-stone-400 mt-1.5">이미 조리 준비가 시작돼 앱에서는 취소가 안 돼요. 급하면 연락 주세요.</p>
                     )}
                   </div>
                 ))}
@@ -1676,6 +1823,12 @@ export default function OrderPage() {
               )}
               합계 {totalQty}팩 · {(totalPrice - usedPoints).toLocaleString()}원
             </div>
+            {/* 배송비가 따로 안 붙어서 "배송비는 얼마냐"고 자주 물어봄 — 단가에 포함돼 있다고 명시 */}
+            <div className="border-t border-amber-100 mt-2 pt-2 text-[11px] text-stone-500 font-normal leading-relaxed">
+              {tier === '직배송'
+                ? '별도 배송비 없어요. 표시된 금액이 전부예요.'
+                : `별도 배송비는 없고, 배송비가 팩 단가에 포함돼 있어요 (직배송 지역보다 팩당 ${PACK_SURCHARGE.toLocaleString()}원).`}
+            </div>
           </div>
           {(earnedPoints > 0 || usedPoints > 0) && (
             <div className="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5 text-sm font-bold text-violet-700 mb-3">
@@ -1691,6 +1844,27 @@ export default function OrderPage() {
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 mb-3">🎉 첫 주문 웰컴포인트 {welcomeBonus.toLocaleString()}P 포함!</div>
           )}
           <p className="text-[11px] text-stone-400 mb-4">주문번호 {completedId.slice(0,8)}</p>
+
+          {/* 접수 후 "잘 들어갔나 / 바꾸고 싶은데 어디로 말하지"에 답이 없어서 그냥 전화가 옴 */}
+          <div className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-left mb-4">
+            <div className="text-xs font-bold text-stone-700 mb-1">주문을 바꾸거나 물어보고 싶다면</div>
+            <p className="text-[11px] text-stone-500 leading-relaxed mb-2">
+              조리 준비 전까지는 <span className="font-bold">내 주문내역</span>에서 직접 취소할 수 있어요.
+              그 밖의 변경·문의는 아래로 연락 주세요.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setMyPhone(phone); setMyName(babyName); goMode('mypage'); fetchMyOrders(phone, babyName); }}
+                className="flex-1 py-2 bg-white border border-stone-200 rounded-lg text-[11px] font-bold text-stone-700">
+                내 주문내역 보기
+              </button>
+              {STORE_CONTACT && (
+                <a href={`tel:${STORE_CONTACT.replace(/\D/g, '')}`}
+                  className="flex-1 py-2 bg-white border border-stone-200 rounded-lg text-[11px] font-bold text-stone-700 text-center">
+                  📞 {STORE_CONTACT}
+                </a>
+              )}
+            </div>
+          </div>
 
           {/* 친구초대 + 후기유도 (전환율 장치) */}
           <div className="space-y-2 pt-4 border-t border-stone-100">
@@ -1778,14 +1952,14 @@ export default function OrderPage() {
       {/* ── Step 2 배송 정보 ─────────────────────── */}
       {step === 2 && (
         <Section title="배송 정보를 입력해주세요">
-          <Field label="연락처"><input value={phone} onChange={e=>setPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/></Field>
+          <Field label="연락처"><input value={phone} onChange={e=>setPhone(formatPhone(e.target.value))} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/></Field>
           {refCodeCaptured ? (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2.5 text-xs text-emerald-700 font-bold mb-3">
               ✅ 추천 링크로 들어오셨어요 — 첫 주문 시 두 분 다 3,000P가 자동 적립돼요
             </div>
           ) : (
             <Field label="추천인 연락처 (선택)">
-              <input value={referrerPhone} onChange={e=>setReferrerPhone(e.target.value)} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/>
+              <input value={referrerPhone} onChange={e=>setReferrerPhone(formatPhone(e.target.value))} inputMode="numeric" maxLength={13} placeholder="010-0000-0000" className={iCls}/>
               <p className="text-[11px] text-stone-400 mt-1">친구·지인 추천으로 오셨다면 입력해주세요. 첫 주문에 한해 두 분 다 3,000P를 드려요!</p>
             </Field>
           )}
@@ -2308,11 +2482,20 @@ export default function OrderPage() {
           {/* 전체 합계 + 경고 + 합배송 */}
           {dateOrders.some(d=>completeSets(d).length>0) && (
             <>
-              {qtyWarning() && (
-                <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                  ⚠ {qtyWarning()}
-                </div>
-              )}
+              {/* 최소 수량은 다 고른 뒤에 알려주면 늦음 — 몇 팩 더 담아야 하는지 바로 알려준다 */}
+              {qtyWarning() && (() => {
+                const short = combinedDelivery
+                  ? Object.entries(groupQtys()).filter(([k, q]) => !isWedDate(k) && q < MIN_ORDER_QTY)
+                  : dateOrders.filter(d => completeSets(d).length > 0 && !isWedDate(d.delivery_date) && dateQty(d) < MIN_ORDER_QTY)
+                      .map(d => [d.delivery_date, dateQty(d)] as [string, number]);
+                const need = short.reduce((s, [, q]) => s + (MIN_ORDER_QTY - q), 0);
+                return (
+                  <div className="mt-3 text-xs bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5">
+                    <div className="font-bold text-amber-800">{need}팩만 더 담으면 주문할 수 있어요</div>
+                    <div className="text-amber-700 mt-0.5">{qtyWarning()}</div>
+                  </div>
+                );
+              })()}
               <div className="mt-2 bg-stone-800 text-white rounded-xl px-4 py-3 flex justify-between text-sm font-bold">
                 <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
                 <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원</span>
@@ -2430,7 +2613,16 @@ export default function OrderPage() {
                 <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
               </div>
             )}
+            {/* 배송비 줄이 없으면 "결제하고 나서 배송비가 또 붙나?" 하고 멈칫함 */}
+            <div className="flex justify-between text-[11px] text-stone-400 mt-1.5 pt-1.5 border-t border-stone-700">
+              <span>배송비</span>
+              <span>{tier === '직배송' ? '무료' : '팩 단가에 포함'}</span>
+            </div>
           </div>
+          {/* 취소 가능 시점을 결제 전에 알려주기 — 나중에 전화로 물어보는 걸 줄임 */}
+          <p className="text-[11px] text-stone-400 mb-4 leading-relaxed text-center">
+            주문 후에도 조리 준비가 시작되기 전까지는 <span className="font-bold text-stone-500">내 주문내역</span>에서 직접 취소할 수 있어요.
+          </p>
 
           {serverError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{serverError}</div>}
 
