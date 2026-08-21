@@ -106,17 +106,30 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
     list.sort((a, b) => a.volume - b.volume || a.name.localeCompare(b.name));
   }
 
-  const sections = STAGES.filter(s => (byStage.get(s) || []).length > 0).map(stage => {
+  // ⚠️ 한 단계에 사람이 몰리면(후기 24명 같은 날) 세로로 한 줄씩 늘어져서 A4 한 장을 넘어가고,
+  // 블록이 통째로 다음 장으로 밀린다. 일정 인원마다 같은 단계를 여러 칸으로 나눠 옆으로 흐르게 한다.
+  // 합계는 마지막 칸에만 붙여서 "그 단계 전체 합"이 한 번만 보이게 함.
+  const CHUNK = 12;
+  const sections = STAGES.filter(s => (byStage.get(s) || []).length > 0).flatMap(stage => {
     const list = byStage.get(stage)!;
     const tot: Record<string, { small: number; big: number }> = {};
     for (const m of MENU_TYPES) tot[m] = { small: 0, big: 0 };
     for (const p of list) for (const m of MENU_TYPES) {
       if (p.isBig) tot[m].big += p.menus[m]; else tot[m].small += p.menus[m];
     }
-    return { stage, list, tot };
+    const parts: { key: string; stage: string; list: PersonRow[]; tot: typeof tot; total: number; part: number; parts: number }[] = [];
+    const n = Math.ceil(list.length / CHUNK);
+    for (let i = 0; i < n; i++) {
+      parts.push({
+        key: `${stage}#${i}`, stage, list: list.slice(i * CHUNK, (i + 1) * CHUNK),
+        tot, total: list.length, part: i + 1, parts: n,
+      });
+    }
+    return parts;
   });
 
-  const totalPacks = sections.reduce((sum, sec) =>
+  // 같은 단계가 여러 칸으로 나뉘어도 합계는 한 번만 세야 함(칸마다 tot이 같은 객체)
+  const totalPacks = sections.filter(s => s.part === 1).reduce((sum, sec) =>
     sum + MENU_TYPES.reduce((a, m) => a + sec.tot[m].small + sec.tot[m].big, 0), 0);
   const banchanTotal = banchan.reduce((s, b) => s + b.qty, 0);
   const allergyRows = orders.filter(o => (o.allergies || []).length > 0);
@@ -159,13 +172,13 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 됨 */}
       <div className="flex gap-3 items-start flex-wrap">
         {sections.map(sec => (
-          <table key={sec.stage} className="border-collapse text-[18px] leading-tight break-inside-avoid">
+          <table key={sec.key} className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 244 }}>
             <thead>
               <tr>
                 <th colSpan={4} className="border border-black px-2 py-1 text-[17px] text-left">
-                  {sec.stage}
+                  {sec.stage}{sec.parts > 1 && <span className="text-[13px] font-normal"> ({sec.part}/{sec.parts})</span>}
                   <span className="ml-1.5 font-normal text-[13px] text-stone-600">
-                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.list.length}명
+                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.total}명
                   </span>
                 </th>
               </tr>
@@ -184,7 +197,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                 const volChanged = prev && prev.isBig !== p.isBig;
                 return (
                   <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
-                    <td className="border border-black px-2 py-[7px] font-bold w-[130px] whitespace-nowrap leading-tight">
+                    <td className="border border-black px-2 py-[7px] font-bold leading-tight break-words">
                       {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                       {p.name}{p.allergy && <span className="text-red-600">*</span>}
                       {p.pickup && <span className="ml-1 text-[12px] font-black text-emerald-700">픽업</span>}
@@ -201,7 +214,10 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                   </tr>
                 );
               })}
-              {/* 단계별 합계 — 이만큼 만들면 됨 */}
+              {/* 단계별 합계 — 이만큼 만들면 됨.
+                  같은 단계가 여러 칸으로 나뉜 경우 마지막 칸에만 붙인다(합은 단계 전체 기준이라
+                  칸마다 찍으면 그 칸 합으로 오해해서 그만큼만 만들 위험이 있음). */}
+              {sec.part === sec.parts && (<>
               <tr className="bg-stone-100">
                 <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
                   {SMALL_VOLUME[sec.stage]}g
@@ -222,12 +238,13 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
                   </td>
                 ))}
               </tr>
+              </>)}
             </tbody>
           </table>
         ))}
 
         {banchan.length > 0 && (
-          <table className="border-collapse text-[18px] leading-tight break-inside-avoid">
+          <table className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 244 }}>
             <thead>
               <tr>
                 <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-left">
@@ -242,7 +259,7 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
             <tbody>
               {banchan.map((b, i) => (
                 <tr key={i}>
-                  <td className="border border-black px-2 py-[9px] font-bold whitespace-nowrap">{b.name}</td>
+                  <td className="border border-black px-2 py-[9px] font-bold break-words">{b.name}</td>
                   <td className="border border-black text-center py-[7px] font-black">{b.qty}</td>
                 </tr>
               ))}
