@@ -52,6 +52,17 @@ export async function POST(req: NextRequest) {
     if (!address) return bad('주소가 필요합니다');
     if (total_qty < 1) return bad('수량 오류');
 
+    // ⚠️ items가 비어 있으면 isMulti가 false가 되어 옛 단일주문 경로로 빠지고,
+    // total_qty·stage·volume만으로 금액이 계산돼 "3팩 15,000원 접수 / 조리표엔 아무것도 없음"인
+    // 주문이 만들어졌음(돈은 받고 조리는 못 함). 주문 내용이 없는 주문은 받지 않는다.
+    if (items.length === 0) return bad('주문 내용이 비어 있어요. 앱을 새로고침한 뒤 다시 담아주세요.');
+    if (isMulti && items.some((d: any) => !Array.isArray(d.sets) || d.sets.length === 0)) {
+      return bad('주문 내용이 비어 있는 날짜가 있어요. 앱을 새로고침한 뒤 다시 담아주세요.');
+    }
+
+    // order_type은 DB CHECK로만 걸러져서 "DB 저장 실패"라는 엉뚱한 메시지가 나갔음
+    if (!['일반', '정기', '선결제'].includes(order_type)) return bad('주문 유형이 올바르지 않아요');
+
     // 세트의 qty와 메뉴별 팩수 합이 어긋나면 "값은 받았는데 조리표엔 그 팩이 없는" 주문이 된다.
     // 실제로 클라이언트가 합계는 모든 키를 더하고 메뉴 목록은 알려진 메뉴만 담는 바람에
     // 3팩 값을 받고 조리표엔 2팩만 찍힌 주문이 들어왔었음(8/16). 서버에서도 막는다.
