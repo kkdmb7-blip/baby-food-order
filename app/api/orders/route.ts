@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
-  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, COOKING_DAYS, BANCHAN_DOW,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
   type StageType, type PriceTier,
 } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { kstToday } from '@/lib/dates';
 import { notify, notifyError } from '@/lib/notify';
+import { menuKindsFor } from '@/lib/menuDays';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -84,37 +85,46 @@ export async function POST(req: NextRequest) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
 
-    // 조리하는 요일에만 주문을 받는다 — 이유식은 월·화·목·금, 반찬 세트는 수요일.
-    // 그 밖의 날은 애초에 메뉴가 없어서 만들 수가 없다.
-    // 앱에서는 그런 날짜가 보이지도 않지만 API를 직접 부르면 들어왔음(수요일·토요일 이유식이 접수됨).
-    const DOW_KOR_SHORT = ['일', '월', '화', '수', '목', '금', '토'];
-    const dowOf = (d: string) => new Date(d + 'T00:00:00Z').getUTCDay();
-    const dayCheck = (date: string, hasYusik: boolean, hasBanchan: boolean) => {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '배송일 형식 오류';
-      const dow = dowOf(date);
-      const label = `${date}(${DOW_KOR_SHORT[dow]})`;
-      if (hasYusik && !(COOKING_DAYS as readonly number[]).includes(dow)) {
-        return `${label}은 이유식을 만들지 않는 날이에요. 월·화·목·금 중에서 골라주세요.`;
+    const sb = supabaseService();
+    let dayKinds = new Map<string, { yusik: boolean; banchan: boolean; fromMenu: boolean }>();
+
+    // 그날 실제로 만드는 것만 주문받는다 — 요일로 고정하지 않고 올려둔 메뉴표를 본다.
+    // (공휴일이 끼면 반찬을 화·목에 하기도 하고, 쉬는 날은 조리를 아예 안 함.
+    //  사장님이 메뉴 올릴 때 이미 조정하므로 주문도 그걸 따라가야 맞다.)
+    // 예전엔 요일도 안 봐서 수요일·토요일 이유식 주문이 API로 그대로 들어왔음.
+    {
+      const DOW_KOR_SHORT = ['일', '월', '화', '수', '목', '금', '토'];
+      const targets = isMulti
+        ? items.map((d: any) => String(d.delivery_date || ''))
+        : [delivery_date];
+      for (const t of targets) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return bad('배송일 형식 오류');
       }
-      if (hasBanchan && dow !== BANCHAN_DOW) {
-        return `${label}은 반찬 세트를 만들지 않는 날이에요. 수요일에만 주문할 수 있어요.`;
-      }
-      return null;
-    };
-    if (isMulti) {
-      for (const d of items) {
-        const sets = d.sets || [];
-        const err = dayCheck(
-          String(d.delivery_date || ''),
-          sets.some((s: any) => s.stage !== '반찬세트'),
-          sets.some((s: any) => s.stage === '반찬세트'),
-        );
+      dayKinds = await menuKindsFor(sb, targets);
+      const kinds = dayKinds;
+      const check = (date: string, needYusik: boolean, needBanchan: boolean) => {
+        const k = kinds.get(date);
+        if (!k) return null;
+        const label = `${date}(${DOW_KOR_SHORT[new Date(date + 'T00:00:00Z').getUTCDay()]})`;
+        if (!k.yusik && !k.banchan) return `${label}은 조리하지 않는 날이에요. 다른 날짜를 골라주세요.`;
+        if (needYusik && !k.yusik) return `${label}은 이유식을 만들지 않는 날이에요 (반찬만 있어요).`;
+        if (needBanchan && !k.banchan) return `${label}은 반찬 세트를 만들지 않는 날이에요.`;
+        return null;
+      };
+      if (isMulti) {
+        for (const d of items) {
+          const sets = d.sets || [];
+          const err = check(
+            String(d.delivery_date),
+            sets.some((s: any) => s.stage !== '반찬세트'),
+            sets.some((s: any) => s.stage === '반찬세트'),
+          );
+          if (err) return bad(err);
+        }
+      } else {
+        const err = check(delivery_date, true, false); // 옛 단일주문 형식은 이유식만
         if (err) return bad(err);
       }
-    } else {
-      // 옛 단일주문 형식 — 이유식만 가능한 구조라 조리 요일만 확인
-      const err = dayCheck(delivery_date, true, false);
-      if (err) return bad(err);
     }
 
     // 한우 비율 — 한우만 담은 주문은 원가 때문에 받지 않는다. 날짜(1회분)별로 본다.
@@ -139,26 +149,28 @@ export async function POST(req: NextRequest) {
     // 배송은 1회 3팩부터. 1~2팩은 픽업(방문수령)만 가능 —
     // 예전엔 3팩 미만을 아예 거부해서, 픽업으로 받아가겠다는 손님도 주문을 넣을 수 없었음.
     if (Array.isArray(items) && items.length > 0 && items[0].delivery_date) {
+      // ⚠️ 반찬만 있는 날은 최소 팩수를 따지지 않는다(세트 1개도 주문 가능).
+      // 예전엔 "수요일"로 못박아서, 공휴일 때문에 반찬을 화·목으로 옮기면 그날 반찬 1세트가
+      // "3팩 미만"으로 거부됐음 — 요일이 아니라 그날 실제 메뉴를 기준으로 판단한다.
+      const banchanOnly = (date: string) => {
+        const k = dayKinds.get(date);
+        if (k) return k.banchan && !k.yusik;
+        return new Date(date + 'T00:00:00Z').getUTCDay() === 3;
+      };
       const groupQty: Record<string, number> = {};
       for (const d of items) {
+        if (banchanOnly(d.delivery_date)) continue; // 반찬 날은 그룹 합산에서 빼둔다
         const dow = new Date(d.delivery_date + 'T00:00:00Z').getUTCDay();
         const key = (dow === 1 || dow === 2) ? 'A' : (dow === 4 || dow === 5) ? 'B' : d.delivery_date;
         groupQty[key] = (groupQty[key] || 0) + (d.date_qty || 0);
       }
       for (const [key, qty] of Object.entries(groupQty)) {
-        // 수요일(반찬)은 최소 수량 체크 제외
-        if (key.length === 10) {
-          const dow = new Date(key + 'T00:00:00Z').getUTCDay();
-          if (dow === 3) continue;
-        }
         if (qty < MIN_ORDER_QTY && receive_method !== '픽업') {
           const label = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
           return bad(`${label} ${qty}팩 — 배송은 1회 ${MIN_ORDER_QTY}팩부터예요. ${qty}팩은 픽업으로 받으실 수 있어요.`);
         }
       }
     }
-
-    const sb = supabaseService();
 
     // 서버 tier 재판별 (클라이언트 값 불신) — postal_code로 dubal_zones 조회
     // 강서·양천(서울)=직배송(기본가), 그 외(두발 당일·택배)=기타(+500). postal_code 없으면 delivery_method로 폴백.
