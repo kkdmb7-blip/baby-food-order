@@ -166,6 +166,8 @@ export function getBanchanPrice(tier: PriceTier = '직배송'): number {
 // 조리 요일 (일요일=0 ... 토요일=6)
 // 월=1, 화=2, 목=4, 금=5 (수=3 제외)
 export const COOKING_DAYS = [1, 2, 4, 5] as const;
+// 반찬 세트는 수요일에만 만든다 (lib/dates.ts allWeekDays의 isBanchan과 같은 기준)
+export const BANCHAN_DOW = 3;
 export const COOKING_DAY_KOR: Record<number, string> = { 1: '월', 2: '화', 4: '목', 5: '금' };
 
 // 선결제 단위

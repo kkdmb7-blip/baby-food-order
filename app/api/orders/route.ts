@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
-  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, COOKING_DAYS, BANCHAN_DOW,
   type StageType, type PriceTier,
 } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
@@ -83,6 +83,39 @@ export async function POST(req: NextRequest) {
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
     if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
+
+    // 조리하는 요일에만 주문을 받는다 — 이유식은 월·화·목·금, 반찬 세트는 수요일.
+    // 그 밖의 날은 애초에 메뉴가 없어서 만들 수가 없다.
+    // 앱에서는 그런 날짜가 보이지도 않지만 API를 직접 부르면 들어왔음(수요일·토요일 이유식이 접수됨).
+    const DOW_KOR_SHORT = ['일', '월', '화', '수', '목', '금', '토'];
+    const dowOf = (d: string) => new Date(d + 'T00:00:00Z').getUTCDay();
+    const dayCheck = (date: string, hasYusik: boolean, hasBanchan: boolean) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '배송일 형식 오류';
+      const dow = dowOf(date);
+      const label = `${date}(${DOW_KOR_SHORT[dow]})`;
+      if (hasYusik && !(COOKING_DAYS as readonly number[]).includes(dow)) {
+        return `${label}은 이유식을 만들지 않는 날이에요. 월·화·목·금 중에서 골라주세요.`;
+      }
+      if (hasBanchan && dow !== BANCHAN_DOW) {
+        return `${label}은 반찬 세트를 만들지 않는 날이에요. 수요일에만 주문할 수 있어요.`;
+      }
+      return null;
+    };
+    if (isMulti) {
+      for (const d of items) {
+        const sets = d.sets || [];
+        const err = dayCheck(
+          String(d.delivery_date || ''),
+          sets.some((s: any) => s.stage !== '반찬세트'),
+          sets.some((s: any) => s.stage === '반찬세트'),
+        );
+        if (err) return bad(err);
+      }
+    } else {
+      // 옛 단일주문 형식 — 이유식만 가능한 구조라 조리 요일만 확인
+      const err = dayCheck(delivery_date, true, false);
+      if (err) return bad(err);
+    }
 
     // 한우 비율 — 한우만 담은 주문은 원가 때문에 받지 않는다. 날짜(1회분)별로 본다.
     // 클라이언트에서도 담기지 않게 막지만, API를 직접 부르면 통과되므로 서버가 최종 방어선.
