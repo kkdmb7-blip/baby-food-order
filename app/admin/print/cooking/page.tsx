@@ -173,6 +173,10 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       <div className="flex gap-3 items-start flex-wrap">
         {sections.map(sec => (
           <table key={sec.key} className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 244 }}>
+            <colgroup>
+              <col style={{ width: 130 }} />
+              {MENU_TYPES.map(m => <col key={m} style={{ width: 38 }} />)}
+            </colgroup>
             <thead>
               <tr>
                 <th colSpan={4} className="border border-black px-2 py-1 text-[17px] text-left">
@@ -244,7 +248,11 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         ))}
 
         {banchan.length > 0 && (
-          <table className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 244 }}>
+          <table className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 168 }}>
+            <colgroup>
+              <col style={{ width: 130 }} />
+              <col style={{ width: 38 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-left">
