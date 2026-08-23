@@ -484,7 +484,15 @@ export default function OrderPage() {
   const [copyMode, setCopyMode] = useState(false); // 같은내용 날짜추가 모드
 
   // 간단주문 상태
-  type SimpleItem = { delivery_date: string; stage: StageType | null; volume: number | null; qty: number };
+  // ⚠️ 예전엔 날짜당 단계·용량 하나에 팩수 하나만 담을 수 있어서, 같은 날 중기1 240 + 중기1 310처럼
+  // 여러 조합을 시키는 손님은 간단주문으로 주문을 못 했음(메뉴보기와 같은 문제).
+  // 조합(단계|용량)별로 팩수를 따로 보관하고, stage·volume은 "지금 고르는 중인 조합"을 가리키는 커서로만 쓴다.
+  type SimpleItem = {
+    delivery_date: string;
+    stage: StageType | null;
+    volume: number | null;
+    byCombo: Record<string, number>; // '중기1단계|240' → 팩수
+  };
   const [simpleMode, setSimpleMode] = useState(false);
   const [simpleItems, setSimpleItems] = useState<SimpleItem[]>([]);
   const [weeklyMenus, setWeeklyMenus] = useState<WeeklyMenu[]>([]);
@@ -940,8 +948,16 @@ export default function OrderPage() {
     if (!isPickup) {
       const short = shortForDelivery();
       if (short.length > 0) {
+        // 일배송이라 날짜별로 미달이지만 월화·목금으로 묶으면 통과하는 경우가 흔하다 —
+        // 그냥 "3팩부터"라고만 하면 합배송을 켜면 된다는 걸 모르고 주문을 포기함.
+        const combinable = !combinedDelivery
+          && dateOrders.filter(d => d.delivery_date).length >= 2
+          && Object.entries(groupQtys()).every(([key, q]) => isWedDate(key) || q >= MIN_ORDER_QTY);
         setRuleError(
-          `${short.map(x => `${x.label} ${x.qty}팩`).join(' / ')} — 배송은 ${MIN_ORDER_QTY}팩부터예요. 더 담거나 아래에서 픽업을 선택해주세요.`
+          `${short.map(x => `${x.label} ${x.qty}팩`).join(' / ')} — 배송은 ${MIN_ORDER_QTY}팩부터예요. `
+          + (combinable
+            ? '아래 "합배송 신청"으로 묶으면 지금 그대로 주문할 수 있어요.'
+            : '더 담거나 아래에서 픽업을 선택해주세요.')
         );
         return false;
       }
@@ -2318,24 +2334,34 @@ export default function OrderPage() {
           {simpleMode && (() => {
             // dateOpts: useMemo로 weekOffset 변경 시 자동 갱신 (IIFE 내 직접 계산 금지)
             const opts = dateOpts;
+            const defSimple = (date: string): SimpleItem => ({
+              delivery_date: date,
+              stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, byCombo: {},
+            });
             function updSimple(date: string, fn: (it: SimpleItem) => SimpleItem) {
               setSimpleItems(prev => {
                 const exist = prev.find(i => i.delivery_date === date);
                 if (exist) return prev.map(i => i.delivery_date === date ? fn(i) : i);
-                const def: SimpleItem = { delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 };
-                return [...prev, fn(def)];
+                return [...prev, fn(defSimple(date))];
               });
             }
             function getSimple(date: string): SimpleItem {
-              return simpleItems.find(i => i.delivery_date === date) ?? { delivery_date: date, stage: savedInfo?.lastStage ?? null, volume: savedInfo?.lastVolume ?? null, qty: 0 };
+              return simpleItems.find(i => i.delivery_date === date) ?? defSimple(date);
             }
-            const totalSimpleQty = simpleItems.reduce((s, i) => s + i.qty, 0);
-            const totalSimplePrice = simpleItems.reduce((s, i) => {
-              if (!i.stage || !i.volume) return s;
-              return s + getPrice(i.stage, i.volume, tier) * i.qty;
-            }, 0);
-            // 간단주문 유효성: 선택된 날짜별 3팩+, stage/volume 있음
-            const simpleValid = simpleItems.some(i => i.qty >= MIN_ORDER_QTY && i.stage && i.volume);
+            // 그 날짜에 담긴 조합들 (팩수 0은 제외)
+            const combosOfSimple = (it: SimpleItem) =>
+              Object.entries(it.byCombo || {})
+                .filter(([, q]) => q > 0)
+                .map(([key, qty]) => ({ key, ...parseCombo(key), qty }))
+                .sort((a, b) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage) || a.volume - b.volume);
+            const simpleQtyOf = (it: SimpleItem) => combosOfSimple(it).reduce((a, c) => a + c.qty, 0);
+            const simplePriceOf = (it: SimpleItem) =>
+              combosOfSimple(it).reduce((a, c) => a + getPrice(c.stage, c.volume, tier) * c.qty, 0);
+
+            const totalSimpleQty = simpleItems.reduce((s, i) => s + simpleQtyOf(i), 0);
+            const totalSimplePrice = simpleItems.reduce((s, i) => s + simplePriceOf(i), 0);
+            // 간단주문 유효성: 한 날짜라도 최소 팩수를 채웠으면 진행 (픽업이면 1팩부터)
+            const simpleValid = simpleItems.some(i => simpleQtyOf(i) >= (isPickup ? 1 : MIN_ORDER_QTY));
 
             return (
               <div>
@@ -2352,38 +2378,87 @@ export default function OrderPage() {
                 <div className="space-y-2">
                   {opts.map(opt => {
                     const it = getSimple(opt.value);
-                    const isActive = it.qty > 0;
+                    const combos = combosOfSimple(it);
+                    const dayQty = simpleQtyOf(it);
+                    const isActive = dayQty > 0;
                     const isPast = opt.past;
+                    const curKey = it.stage && it.volume ? comboKey(it.stage, it.volume) : null;
+                    const curQty = curKey ? (it.byCombo[curKey] ?? 0) : 0;
                     return (
                       <div key={opt.value} className={`bg-white rounded-xl border overflow-hidden ${isPast?'opacity-40':isActive?'border-amber-400':'border-amber-100'}`}>
-                        {/* 요일 헤더 */}
+                        {/* 요일 헤더 — 담은 조합을 한눈에 */}
                         <div className="flex items-center justify-between px-4 py-3">
-                          <div>
+                          <div className="min-w-0">
                             <span className={`font-bold text-sm ${isActive?'text-amber-700':'text-stone-700'}`}>{opt.label}</span>
-                            {isActive && <span className="ml-2 text-xs text-amber-600 font-bold">{it.stage} {it.volume}g</span>}
+                            {isActive && (
+                              <span className="ml-2 text-xs text-amber-600 font-bold">
+                                {combos.map(c => `${c.stage.replace('중기1단계','중1').replace('중기2단계','중2').replace('완료기','완료')} ${c.volume}g`).join(' + ')}
+                              </span>
+                            )}
                           </div>
-                          <QtyCtrl value={it.qty} onChange={v => { if(!isPast) updSimple(opt.value, i => ({ ...i, qty: v })); }} />
+                          {isActive && <span className="text-xs font-bold text-white bg-amber-500 px-2 py-0.5 rounded-full whitespace-nowrap">{dayQty}팩</span>}
                         </div>
-                        {/* 팩 > 0이면 단계·용량 선택 */}
-                        {it.qty > 0 && (
+
+                        {!isPast && (
                           <div className="px-4 pb-3 border-t border-amber-50 pt-2 space-y-2">
+                            {/* 담은 조합 목록 — 단계·용량을 바꿔도 사라지지 않는다 */}
+                            {combos.length > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1">
+                                {combos.map(c => {
+                                  const editing = it.stage === c.stage && it.volume === c.volume;
+                                  return (
+                                    <div key={c.key} className={`flex items-center gap-2 rounded px-2 py-1 border ${editing?'bg-white border-amber-400':'bg-white/70 border-transparent'}`}>
+                                      <button onClick={() => updSimple(opt.value, i => ({ ...i, stage: c.stage, volume: c.volume }))}
+                                        className="flex-1 text-left text-[11px] font-bold text-stone-800">
+                                        {c.stage} {c.volume}g · {c.qty}팩
+                                      </button>
+                                      <button onClick={() => updSimple(opt.value, i => {
+                                          const next = { ...i.byCombo }; delete next[c.key];
+                                          return { ...i, byCombo: next };
+                                        })}
+                                        aria-label="이 조합 지우기"
+                                        className="w-6 h-6 flex items-center justify-center text-stone-400 border border-stone-200 rounded bg-white">×</button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {/* 단계 — 바꿔도 담아둔 건 유지됨 */}
                             <div className="grid grid-cols-4 gap-1">
-                              {STAGES.map(st => (
-                                <button key={st} onClick={() => updSimple(opt.value, i => ({ ...i, stage: st, volume: null }))}
-                                  className={`py-1.5 rounded-lg text-[11px] font-bold border ${it.stage===st?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                  {st.replace('단계','').replace('중기1','중1').replace('중기2','중2').replace('완료기','완료').replace('후기','후기')}
-                                </button>
-                              ))}
+                              {STAGES.map(st => {
+                                const has = combos.some(c => c.stage === st);
+                                return (
+                                  <button key={st} onClick={() => updSimple(opt.value, i => ({ ...i, stage: st, volume: null }))}
+                                    className={`py-1.5 rounded-lg text-[11px] font-bold border ${it.stage===st?'bg-amber-500 border-amber-500 text-white':has?'bg-amber-50 border-amber-300 text-amber-800':'bg-white border-amber-100 text-stone-700'}`}>
+                                    {st.replace('단계','').replace('중기1','중1').replace('중기2','중2').replace('완료기','완료').replace('후기','후기')}
+                                  </button>
+                                );
+                              })}
                             </div>
+                            {/* 용량 */}
                             {it.stage && (
                               <div className="grid grid-cols-2 gap-1">
-                                {STAGE_OPTIONS[it.stage].map(opt2 => (
-                                  <button key={opt2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: opt2.volume }))}
-                                    className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-amber-500 border-amber-500 text-white':'bg-white border-amber-100 text-stone-700'}`}>
-                                    {opt2.volume}g · {getPrice(it.stage!, opt2.volume, tier).toLocaleString()}원
-                                  </button>
-                                ))}
+                                {STAGE_OPTIONS[it.stage].map(opt2 => {
+                                  const q = it.byCombo[comboKey(it.stage!, opt2.volume)] ?? 0;
+                                  return (
+                                    <button key={opt2.volume} onClick={() => updSimple(opt.value, i => ({ ...i, volume: opt2.volume }))}
+                                      className={`py-1.5 rounded-lg text-xs border ${it.volume===opt2.volume?'bg-amber-500 border-amber-500 text-white':q>0?'bg-amber-50 border-amber-300 text-amber-800':'bg-white border-amber-100 text-stone-700'}`}>
+                                      {opt2.volume}g · {getPrice(it.stage!, opt2.volume, tier).toLocaleString()}원{q>0 && ` · ${q}팩`}
+                                    </button>
+                                  );
+                                })}
                               </div>
+                            )}
+                            {/* 팩수 — 지금 고른 조합에만 담긴다 */}
+                            {it.stage && it.volume ? (
+                              <div className="flex items-center justify-between bg-stone-50 rounded-lg px-3 py-2">
+                                <span className="text-xs font-bold text-stone-700">{it.stage} {it.volume}g 팩수</span>
+                                <QtyCtrl value={curQty} onChange={v => updSimple(opt.value, i => ({
+                                  ...i, byCombo: { ...i.byCombo, [comboKey(i.stage!, i.volume!)]: Math.max(0, Math.min(10, v)) },
+                                }))} />
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-stone-400">단계와 용량을 고르면 팩수를 담을 수 있어요</div>
                             )}
                           </div>
                         )}
@@ -2403,22 +2478,20 @@ export default function OrderPage() {
                   <BackBtn onClick={() => setStep(2)}/>
                   <PrimaryBtn
                     onClick={() => {
-                      // 간단주문 → dateOrders 변환 (메뉴 없이 qty만)
+                      // 간단주문 → dateOrders 변환. 한 날짜에 담긴 조합마다 세트를 만든다
+                      // (메뉴는 안 고르므로 _simpleQty에 팩수만 싣는다)
                       const orders: DateOrder[] = simpleItems
-                        .filter(i => i.qty > 0 && i.stage && i.volume)
-                        .map(i => ({
-                          id: uid(), delivery_date: i.delivery_date,
-                          sets: [{ id: uid(), stage: i.stage!, volume: i.volume!, menus: emptyMenus() }],
-                          _simpleQty: i.qty // 팩수 힌트 (submit에서 items에 반영)
-                        } as any)
-                      );
+                        .map(i => ({ item: i, combos: combosOfSimple(i) }))
+                        .filter(({ combos }) => combos.length > 0)
+                        .map(({ item, combos }) => ({
+                          id: uid(), delivery_date: item.delivery_date,
+                          sets: combos.map(c => ({
+                            id: uid(), stage: c.stage, volume: c.volume,
+                            menus: emptyMenus(), _simpleQty: c.qty,
+                          })),
+                        }));
                       if (orders.length === 0) return;
-                      // 간단주문: _simpleQty 플래그로 저장, 메뉴 빈 채로
-                      setDateOrders(orders.map(o => {
-                        const it = simpleItems.find(i => i.delivery_date === o.delivery_date);
-                        if (!it) return o;
-                        return { ...o, sets: o.sets.map(s => ({ ...s, menus: emptyMenus(), _simpleQty: it.qty })) };
-                      }));
+                      setDateOrders(orders);
                       goStep(4);
                     }}
                     disabled={!simpleValid}
@@ -2677,7 +2750,9 @@ export default function OrderPage() {
                 return (
                   <div className="mt-2">
                     <button
-                      onClick={() => canCombine && setCombinedDelivery(v => !v)}
+                      // 토글을 바꾸면 판단 기준(날짜별 ↔ 그룹 합산)이 달라지므로 이전 경고는 치운다.
+                      // 안 그러면 합배송을 켜서 조건을 채웠는데도 빨간 경고가 그대로 남아 있어 막힌 줄 안다.
+                      onClick={() => { if (!canCombine) return; setRuleError(null); setCombinedDelivery(v => !v); }}
                       className={`w-full py-2 text-xs rounded-lg border transition ${combinedDelivery ? 'bg-amber-100 border-amber-300 text-amber-800 font-bold' : canCombine ? 'bg-white border-stone-200 text-stone-500 hover:border-amber-300' : 'bg-white border-stone-100 text-stone-300 cursor-not-allowed'}`}
                     >
                       {combinedDelivery ? '✓ 합배송 적용 중 (월+화 / 목+금 묶음)' : '합배송 신청 (월+화 또는 목+금 묶어서 1회 배송)'}
