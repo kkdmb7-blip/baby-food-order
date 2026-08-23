@@ -1861,20 +1861,27 @@ export default function OrderPage() {
                       <div className="text-[10px] text-rose-600 mt-1">🚫 {o.allergies.join(', ')}</div>
                     )}
                     <div className="text-[10px] text-stone-300 mt-1">주문 {new Date(o.created_at).toLocaleDateString('ko-KR')} · {o.id.slice(0, 8)}</div>
-                    <div className="flex gap-2 mt-2">
-                      {o.status !== '취소' && (
-                        <button onClick={() => reorderFromHistory(o)}
-                          className="flex-1 py-2 text-[11px] font-bold text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
-                          이 구성 그대로 다시 주문
-                        </button>
-                      )}
-                      {o.status === '접수' && (
-                        <button onClick={() => cancelMyOrder(o.id)}
-                          className="flex-1 py-2 text-[11px] font-bold text-rose-500 border border-rose-200 rounded-lg">
-                          이 주문 취소
-                        </button>
-                      )}
-                    </div>
+                    {/* 정기배송은 "이번 회차만" 손볼 수 있어야 함 — 한 주 쉬거나 수량만 줄이려고
+                        정기배송 자체를 해지해버리는 일이 생김 */}
+                    {o.order_type === '정기' && o.status === '접수' ? (
+                      <RegularOccurrence order={o} phone={myPhone} babyName={myName}
+                        onDone={() => fetchMyOrders(myPhone, myName)} />
+                    ) : (
+                      <div className="flex gap-2 mt-2">
+                        {o.status !== '취소' && (
+                          <button onClick={() => reorderFromHistory(o)}
+                            className="flex-1 py-2 text-[11px] font-bold text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+                            이 구성 그대로 다시 주문
+                          </button>
+                        )}
+                        {o.status === '접수' && (
+                          <button onClick={() => cancelMyOrder(o.id)}
+                            className="flex-1 py-2 text-[11px] font-bold text-rose-500 border border-rose-200 rounded-lg">
+                            이 주문 취소
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {/* 언제까지 취소되는지 몰라 전화로 물어보는 일이 많음 */}
                     {o.status === '접수' && (
                       <p className="text-[10px] text-stone-400 mt-1.5 leading-relaxed">
@@ -3492,3 +3499,78 @@ function AllergyBadge({ ingredients, allergies }: { ingredients: string; allergi
 
 const iCls = 'w-full px-3.5 py-3 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
 const iSmCls = 'w-full px-3 py-2.5 bg-white border border-amber-100 rounded-xl outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 transition text-[16px]';
+
+// ── 정기배송 "이번 회차만" 조정 ───────────────────────────────────
+// 한 주만 쉬거나 수량만 줄이려고 정기배송 자체를 해지해버리는 일이 있었음.
+// 여기서 손댄 회차는 서버가 regular_locked를 켜서 자정 크론이 원래대로 되돌리지 않는다.
+function RegularOccurrence({ order, phone, babyName, onDone }: {
+  order: any; phone: string; babyName: string; onDone: () => void;
+}) {
+  const cur: Record<MenuType, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
+  for (const d of (order.items || [])) {
+    for (const s of (d.sets || [])) {
+      for (const m of (s.menus || [])) if (m?.menu in cur) cur[m.menu as MenuType] += Number(m.qty) || 0;
+    }
+  }
+  const [open, setOpen] = useState(false);
+  const [qtys, setQtys] = useState<Record<MenuType, number>>(cur);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const total = MENU_TYPES.reduce((a, m) => a + (qtys[m] || 0), 0);
+
+  async function send(action: 'skip' | 'update') {
+    if (action === 'skip' && !confirm(`${order.delivery_date} 회차를 건너뛸까요?\n정기배송은 그대로 유지돼요.`)) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/my/regular-occurrence', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id: order.id, phone: phone.replace(/\D/g, ''), baby_name: babyName,
+          action, menus: qtys,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) { setMsg(d.error || '변경 실패'); return; }
+      setOpen(false);
+      onDone();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mt-2">
+      <div className="flex gap-2">
+        <button onClick={() => setOpen(v => !v)} disabled={busy}
+          className="flex-1 py-2 text-[11px] font-bold text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+          이번 회차만 수량 변경
+        </button>
+        <button onClick={() => send('skip')} disabled={busy}
+          className="flex-1 py-2 text-[11px] font-bold text-stone-600 border border-stone-200 rounded-lg">
+          {busy ? '처리 중…' : '이번 회차 건너뛰기'}
+        </button>
+      </div>
+      <p className="text-[10px] text-stone-400 mt-1.5 leading-relaxed">
+        이번 회차만 바뀌고 정기배송은 그대로예요. 아예 그만두시려면 위 정기배송에서 해지해주세요.
+      </p>
+      {open && (
+        <div className="mt-2 bg-white border border-amber-200 rounded-xl p-3 space-y-2">
+          <div className="text-[11px] font-bold text-stone-700">
+            {order.stage} {order.volume}g · {order.delivery_date}
+          </div>
+          {MENU_TYPES.map(m => (
+            <div key={m} className="flex items-center justify-between">
+              <span className="text-xs text-stone-600">{menuLabel(m)}</span>
+              <QtyCtrl value={qtys[m]} onChange={v => setQtys(p => ({ ...p, [m]: Math.max(0, Math.min(10, v)) }))} />
+            </div>
+          ))}
+          <div className="text-[11px] font-bold text-amber-700 text-right">합계 {total}팩</div>
+          <button onClick={() => send('update')} disabled={busy || total === 0}
+            className="w-full py-2 bg-amber-500 text-white text-xs font-bold rounded-lg disabled:bg-stone-200">
+            {busy ? '저장 중…' : '이번 회차만 저장'}
+          </button>
+        </div>
+      )}
+      {msg && <div className="mt-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 leading-relaxed">{msg}</div>}
+    </div>
+  );
+}

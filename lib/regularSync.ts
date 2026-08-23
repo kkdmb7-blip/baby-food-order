@@ -146,13 +146,16 @@ export async function syncRegularOrders(
       // 조리가 시작된 건(준비중 이후)은 절대 건드리지 않는다.
       const { data: exists } = await sb
         .from('baby_food_orders')
-        .select('id, status, items, memo')
+        .select('id, status, items, memo, regular_locked')
         .eq('customer_phone', c.phone)
         .eq('delivery_date', u.date)
         .eq('order_type', '정기')
         .maybeSingle();
 
       if (exists) {
+        // 손님이 그 회차를 직접 손댄 경우(1회 건너뛰기·1회 수량변경)는 크론이 건드리지 않는다.
+        // 표시가 없으면 스케줄과 다르다는 이유로 자정에 원래대로 되돌려버림.
+        if (exists.regular_locked) continue;
         // 요일을 뺐다가 다시 넣으면, 자동취소해 둔 그 날 주문이 재생성을 영구히 막고 있었음.
         // 자동취소 표시가 있는 것만 되살린다 — 사장님이 직접 취소한 건은 그대로 둠.
         if (exists.status === '취소' && String(exists.memo || '').includes(AUTO_CANCEL)) {
@@ -210,7 +213,7 @@ export async function syncRegularOrders(
   if (windowStart && windowEnd) {
     let fq = sb.from('baby_food_orders')
       .select('id, customer_phone, delivery_date, memo')
-      .eq('order_type', '정기').eq('status', '접수')
+      .eq('order_type', '정기').eq('status', '접수').eq('regular_locked', false)
       .gte('delivery_date', windowStart).lte('delivery_date', windowEnd);
     if (onlyPhone) fq = fq.eq('customer_phone', onlyPhone);
     const { data: future } = await fq;
