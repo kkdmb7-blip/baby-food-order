@@ -7,6 +7,7 @@ import {
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
 import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
+import { menuForStage, bannedInMidStage } from '@/lib/midStage';
 import {
   recommendStage, stageGuide, stageTransitionNote,
   loadDiary, setFoodStatus, foodKeysByStatus, testingDays, type Diary, type FoodStatus,
@@ -1674,7 +1675,10 @@ export default function OrderPage() {
                       {/* ⚠️ 알레르기 재료는 조리 과정에서 빼드릴 수 없음 — 예전엔 경고만 띄우고
                           주문은 되게 해서 "빼주겠지"라는 오해를 줄 수 있었음. 해당 메뉴는 아예 못 고르게 막는다. */}
                       {!isBanchan && sel.volume && day.menus.map((m, i) => {
-                        const hits = matchAllergens(m.ingredients, allergies);
+                        // 중기는 새우를 빼고 조리한다. 원본 재료로 판단하면
+                        // 실제로는 안 들어가는 재료 때문에 주문이 막힌다.
+                        const sm = menuForStage(m, sel.stage);
+                        const hits = matchAllergens(sm.ingredients, allergies);
                         const blocked = hits.length > 0;
                         return (
                         <div key={i} className={`flex items-center gap-2 ${blocked ? 'opacity-70' : ''}`}>
@@ -1684,10 +1688,13 @@ export default function OrderPage() {
                                 m.type==='한우'?'bg-amber-100 text-amber-800':m.type==='닭'?'bg-emerald-100 text-emerald-800':'bg-violet-100 text-violet-800'}`}>
                                 {menuLabel(m.type)}
                               </span>
-                              <span className="text-sm font-medium text-stone-900 truncate">{m.name}</span>
+                              <span className="text-sm font-medium text-stone-900 truncate">{sm.name}</span>
                               {reactions[m.name] === 'like' && <span className="flex-shrink-0 text-[10px]">👍</span>}
                             </div>
-                            <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{m.ingredients}</div>
+                            <div className="text-[11px] text-stone-500 mt-0.5 pl-0.5 truncate">{sm.ingredients}</div>
+                            {sm.dropped.length > 0 && (
+                              <div className="text-[10px] text-amber-700 mt-0.5 pl-0.5">중기는 {sm.dropped.join('·')}를 빼고 만들어요</div>
+                            )}
                             {blocked ? (
                               <div className="mt-1 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 leading-relaxed">
                                 🚫 {hits.map(h => h.label).join(', ')} 들어있어 주문할 수 없어요
@@ -3209,6 +3216,10 @@ function MonthCalendar({
                           <span className="font-bold">{TYPE_KOR[m.type] || m.type}</span> · {m.name}
                           {reactions[m.name] === 'like' && ' 👍'}
                           <div className="text-[10px] text-stone-400">{m.ingredients}</div>
+                          {/* 여기는 단계를 고르기 전 화면이라 재료를 지우지 않고, 중기에 빠진다는 것만 알린다 */}
+                          {bannedInMidStage(m.ingredients).length > 0 && (
+                            <div className="text-[10px] text-amber-700">중기는 {bannedInMidStage(m.ingredients).join('·')}를 빼고 만들어요</div>
+                          )}
                           <AllergyBadge ingredients={m.ingredients || ''} allergies={allergies} />
                         </div>
                       ))}
