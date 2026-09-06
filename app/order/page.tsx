@@ -262,6 +262,9 @@ export default function OrderPage() {
 
   // ── A. 메뉴 반응 / B. 이상반응 기록 ─────────────────────────────
   const [reactions, setReactions] = useState<MenuReactions>({});
+  // 알레르기 재료가 든 메뉴를 "알고 주문한다"고 확인한 목록.
+  // 막지는 않되, 모르고 담는 일은 없어야 해서 한 번만 확인을 받는다.
+  const [allergyOk, setAllergyOk] = useState<Record<string, boolean>>({});
   function rateMenu(name: string, r: MenuReaction) {
     setReactions(setReaction(name, reactions[name] === r ? null : r));
   }
@@ -1672,16 +1675,20 @@ export default function OrderPage() {
                       )}
 
                       {/* 이유식 메뉴별 수량 */}
-                      {/* ⚠️ 알레르기 재료는 조리 과정에서 빼드릴 수 없음 — 예전엔 경고만 띄우고
-                          주문은 되게 해서 "빼주겠지"라는 오해를 줄 수 있었음. 해당 메뉴는 아예 못 고르게 막는다. */}
+                      {/* ⚠️ 알레르기 재료는 조리 과정에서 빼드릴 수 없다.
+                          한때 아예 못 고르게 막았는데, 그러면 먹일 수 있는 손님까지 못 시킨다.
+                          지금은 막지 않고 경고하되, "빼주겠지"라는 오해가 남지 않게
+                          알고 주문한다는 확인을 한 번 받은 뒤에 담을 수 있게 한다. */}
                       {!isBanchan && sel.volume && day.menus.map((m, i) => {
                         // 중기는 새우를 빼고 조리한다. 원본 재료로 판단하면
                         // 실제로는 안 들어가는 재료 때문에 주문이 막힌다.
                         const sm = menuForStage(m, sel.stage);
                         const hits = matchAllergens(sm.ingredients, allergies);
-                        const blocked = hits.length > 0;
+                        const risky = hits.length > 0;
+                        const okKey = day.date + '|' + m.name;
+                        const acked = !!allergyOk[okKey];
                         return (
-                        <div key={i} className={`flex items-center gap-2 ${blocked ? 'opacity-70' : ''}`}>
+                        <div key={i} className={`flex items-center gap-2 ${risky && !acked ? 'opacity-80' : ''}`}>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
@@ -1695,17 +1702,23 @@ export default function OrderPage() {
                             {sm.dropped.length > 0 && (
                               <div className="text-[10px] text-amber-700 mt-0.5 pl-0.5">중기는 {sm.dropped.join('·')}를 빼고 만들어요</div>
                             )}
-                            {blocked ? (
-                              <div className="mt-1 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1 leading-relaxed">
-                                🚫 {hits.map(h => h.label).join(', ')} 들어있어 주문할 수 없어요
-                                <div className="font-normal text-rose-600 mt-0.5">재료를 빼고 조리해드릴 수는 없어서 막아뒀어요. 알레르기 등록을 바꾸시려면 홈에서 수정해주세요.</div>
+                            {risky ? (
+                              <div className="mt-1 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5 leading-relaxed">
+                                ⚠️ {hits.map(h => h.label).join(', ')} 들어있어요
+                                <div className="font-normal text-rose-600 mt-0.5">이 재료만 빼고 조리해드릴 수는 없어요. 그대로 드셔도 괜찮은지 확인해주세요.</div>
+                                <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer">
+                                  <input type="checkbox" checked={acked}
+                                    onChange={e => setAllergyOk(p => ({ ...p, [okKey]: e.target.checked }))}
+                                    className="w-4 h-4 accent-rose-600" />
+                                  <span className="font-bold text-rose-700">알고 주문할게요</span>
+                                </label>
                               </div>
                             ) : (
                               <ReactionCtrl name={m.name} current={reactions[m.name]} onRate={rateMenu} />
                             )}
                           </div>
-                          {blocked ? (
-                            <span className="text-[11px] font-bold text-rose-600 whitespace-nowrap px-2">주문 불가</span>
+                          {risky && !acked ? (
+                            <span className="text-[11px] font-bold text-rose-500 whitespace-nowrap px-2 text-center leading-tight">확인 후<br />담기</span>
                           ) : !(MENU_TYPES as readonly string[]).includes(m.type) ? (
                             // 주방이 새 메뉴 타입을 쓰기 시작하면 여기서 막는다 — 담을 수는 있는데
                             // 주문서엔 안 남는(=돈만 받고 조리는 못 하는) 상태가 되는 게 최악이라,
