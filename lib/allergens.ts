@@ -51,6 +51,21 @@ export const ALLERGENS: Allergen[] = [
 // 흔히 먼저 등록하는 항목 (등록 UI 상단 노출용)
 export const COMMON_KEYS = ['egg', 'milk', 'beef', 'chicken', 'soy', 'wheat', 'fish', 'shrimp', 'peach', 'tomato'];
 
+// ── 경고를 띄울 대상 ───────────────────────────────────────────
+// 등록한 알레르기가 걸릴 때마다 경고를 띄우면 너무 번거롭다.
+// 쇠고기·닭고기는 거의 모든 메뉴에 들어가서 매번 뜨고, 당근·시금치처럼
+// 알레르기라기보다 조심하는 재료도 섞여 있었다.
+//
+// 그래서 심한 반응이 잦은 것만 경고한다 — 우유·달걀·갑각류·견과·생선·메밀,
+// 그리고 식약처 표시대상 중 비중이 큰 대두·밀.
+// 나머지(쇠고기·닭고기·돼지고기·토마토·복숭아·당근·시금치·아황산류)는
+// 재료에 그대로 적혀 있으니 따로 경고하지 않는다.
+export const SERIOUS_KEYS = [
+  'milk', 'egg', 'shrimp', 'crab', 'shellfish', 'squid',
+  'fish', 'mackerel', 'peanut', 'walnut', 'pinenut', 'buckwheat',
+  'soy', 'wheat',
+];
+
 const BY_KEY: Record<string, Allergen> = Object.fromEntries(ALLERGENS.map(a => [a.key, a]));
 
 export function allergenByKey(key: string): Allergen | undefined {
@@ -72,6 +87,12 @@ export function matchAllergens(ingredients: string, selectedKeys: string[]): All
     }
   }
   return hits;
+}
+
+// 경고 대상만 추린다. 등록은 그대로 두고 알림만 줄이는 것이라,
+// 손님이 고른 알레르기 목록 자체는 건드리지 않는다.
+export function matchSeriousAllergens(ingredients: string, selectedKeys: string[]): Allergen[] {
+  return matchAllergens(ingredients, selectedKeys).filter(a => SERIOUS_KEYS.includes(a.key));
 }
 
 // 여러 재료 문자열(메뉴 여러 개)을 한 번에 검사해 걸린 알레르겐 키 집합 반환

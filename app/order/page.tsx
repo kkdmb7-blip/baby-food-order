@@ -6,7 +6,7 @@ import {
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
-import { ALLERGENS, COMMON_KEYS, allergenByKey, matchAllergens } from '@/lib/allergens';
+import { ALLERGENS, COMMON_KEYS, allergenByKey, matchSeriousAllergens } from '@/lib/allergens';
 import { menuForStage, bannedInMidStage } from '@/lib/midStage';
 import {
   recommendStage, stageGuide, stageTransitionNote,
@@ -1683,7 +1683,7 @@ export default function OrderPage() {
                         // 중기는 새우를 빼고 조리한다. 원본 재료로 판단하면
                         // 실제로는 안 들어가는 재료 때문에 주문이 막힌다.
                         const sm = menuForStage(m, sel.stage);
-                        const hits = matchAllergens(sm.ingredients, allergies);
+                        const hits = matchSeriousAllergens(sm.ingredients, allergies);
                         const risky = hits.length > 0;
                         const okKey = day.date + '|' + m.name;
                         const acked = !!allergyOk[okKey];
@@ -3505,7 +3505,7 @@ function ReactionCtrl({ name, current, onRate }: { name: string; current?: MenuR
 
 // 메뉴 재료에 걸린 알레르겐 경고 배지
 function AllergyBadge({ ingredients, allergies }: { ingredients: string; allergies: string[] }) {
-  const hits = matchAllergens(ingredients, allergies);
+  const hits = matchSeriousAllergens(ingredients, allergies);
   if (hits.length === 0) return null;
   return (
     <div className="mt-1 flex items-center gap-1 flex-wrap">
