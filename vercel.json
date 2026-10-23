@@ -3,6 +3,7 @@
   "framework": "nextjs",
   "regions": ["icn1"],
   "crons": [
-    { "path": "/api/cron/regular", "schedule": "0 15 * * *" }
+    { "path": "/api/cron/regular", "schedule": "0 15 * * *" },
+    { "path": "/api/cron/review-ask", "schedule": "0 2 * * *" }
   ]
 }

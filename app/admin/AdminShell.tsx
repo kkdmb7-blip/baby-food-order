@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/supabase';
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, menuLabel } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
+import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 
@@ -807,11 +808,12 @@ function ReviewManager() {
   }
 
   if (loading) return <div className="text-center py-10 text-stone-400 text-sm">불러오는 중…</div>;
-  if (reviews.length === 0) return <Empty text="아직 등록된 후기가 없어요" />;
 
   const shown = reviews.filter(r => r.is_approved).length;
   return (
     <div className="space-y-3">
+      <AskForReviews />
+      {reviews.length === 0 ? <Empty text="아직 등록된 후기가 없어요" /> : <>
       <div className="text-xs text-stone-500">
         전체 {reviews.length}개 · 공개 중 {shown}개 · 숨김 {reviews.length - shown}개
         <span className="block mt-0.5 text-stone-400">숨김으로 바꾸면 손님 화면과 평균 별점에서 즉시 빠집니다.</span>
@@ -833,6 +835,131 @@ function ReviewManager() {
           <p className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{r.content}</p>
         </div>
       ))}
+      </>}
+    </div>
+  );
+}
+
+// ── 후기 부탁하기 ────────────────────────────────────────────────
+// 후기를 쓸 자리는 다 있는데(작성 화면·1,000P·승인) 아무도 "써주세요" 라고 말하지 않아서
+// 후기가 1개였다. 배송 3일 뒤에 묻는 크론(/api/cron/review-ask)을 만들었지만,
+// 세어보니 부탁할 손님 42명 중 푸시로 닿는 사람이 0명이었다 — 알림을 켠 사람이 없다.
+// 그래서 지금 열려 있는 통로를 둔다: 연락처. 문구를 복사해 직접 보내는 방식.
+// 보내는 일은 사람이 한다 — 코드가 손님에게 먼저 말을 걸지 않게.
+//
+// ⚠️ 명단에 시험용 주문이 섞인다. 운영 DB를 세어보니 주문 120건 중 대부분이
+// 번호 끝자리 0001~0011, 1000~1029 로 이어지는 시험 데이터였고(하루에 56건이
+// 한꺼번에 들어갔다), 실제로 계속 주문하시는 분은 정기배송 한 분뿐이었다.
+// 그래서 코드가 "이건 가짜" 라고 판단해 걸러내지는 않는다 — 번호 모양으로
+// 짐작해 지우다가 실제 손님을 날린 적이 있다. 누가 진짜인지는 사장님이 아신다.
+// 화면에 그 사실을 적어두고, 고르는 일은 사람에게 맡긴다.
+type ReviewTarget = { phone: string; babyName: string; orders: number; lastDelivery: string; pushable: boolean };
+type TargetSummary = { customers: number; alreadyWrote: number; toAsk: number; repeat: number; reachableByPush: number };
+
+function AskForReviews() {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<{ targets: ReviewTarget[]; summary: TargetSummary } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const d = await fetch('/api/admin/review-targets').then(r => r.json());
+      if (d.ok) setData({ targets: d.targets, summary: d.summary });
+    } catch {}
+    setLoading(false);
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !data) load();
+  }
+
+  // 보낼 문구. 아이 이름을 넣어 "우리 집에 보낸 말" 로 읽히게 한다.
+  function msg(t: ReviewTarget) {
+    return `${t.babyName} 부모님, 까꿍디미방입니다.\n`
+      + `${withSubject(t.babyName)} 이유식 잘 먹었는지 궁금해요.\n`
+      + `앱에 한 줄만 남겨주시면 다음 주문에 쓰실 수 있는 1,000포인트 드려요.\n`
+      + `https://baby-food-order.vercel.app/order`;
+  }
+
+  async function copy(t: ReviewTarget) {
+    try {
+      await navigator.clipboard.writeText(msg(t));
+      setCopied(t.phone);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      // 클립보드가 막힌 브라우저(또는 http) 에서도 보낼 수 있어야 한다
+      alert(msg(t));
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-amber-200 overflow-hidden">
+      <button onClick={toggle} className="w-full flex items-center justify-between px-4 py-3 text-left">
+        <span className="font-bold text-stone-900 text-sm">
+          후기 부탁하기
+          {data && <span className="ml-2 font-normal text-amber-700">{data.summary.toAsk}명</span>}
+        </span>
+        <span className="text-stone-400 text-xs">{open ? '접기' : '열기'}</span>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 border-t border-stone-100 pt-3">
+          {loading && <div className="text-center py-6 text-stone-400 text-sm">세는 중…</div>}
+          {!loading && !data && <div className="text-sm text-stone-500 py-4">명단을 불러오지 못했어요.</div>}
+          {!loading && data && (
+            <>
+              <div className="text-xs text-stone-500 mb-3 leading-relaxed">
+                배송 받아본 손님 {data.summary.customers}명 · 이미 쓰신 분 {data.summary.alreadyWrote}명 ·
+                두 번 이상 주문 {data.summary.repeat}명
+                <span className="block mt-1 text-stone-400">
+                  {data.summary.reachableByPush === 0
+                    ? '알림(푸시)을 켜 둔 손님이 없어서, 자동 알림은 아직 아무에게도 가지 않습니다. 아래에서 직접 보내주세요.'
+                    : `이 중 ${data.summary.reachableByPush}명은 배송 3일 뒤 자동 알림으로도 부탁이 갑니다.`}
+                </span>
+                <span className="block mt-1 text-stone-400">최근에 받으신 분이 위에 있습니다 — 맛이 아직 기억에 남아 있는 분들입니다.</span>
+              </div>
+              <div className="text-[11px] text-stone-500 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 mb-3 leading-relaxed">
+                주문 기록에서 그대로 뽑은 명단이라 <b>시험용으로 넣은 주문도 함께 보입니다.</b>
+                번호를 보고 실제 손님인지 확인한 뒤에 보내주세요.
+              </div>
+
+              {data.targets.length === 0 ? (
+                <div className="text-sm text-stone-500 py-3">부탁할 분이 없어요. 모두 이미 써주셨습니다.</div>
+              ) : (
+                <div className="space-y-2">
+                  {data.targets.map(t => (
+                    <div key={t.phone} className="flex items-center justify-between gap-2 border border-stone-200 rounded-lg px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-stone-900 truncate">
+                          {t.babyName} 부모님
+                          {t.orders >= 2 && <span className="ml-1.5 text-[11px] font-normal text-amber-700">{t.orders}번 주문</span>}
+                        </div>
+                        <div className="text-[11px] text-stone-400">
+                          {formatPhone(t.phone)} · 마지막 배송 {t.lastDelivery}
+                        </div>
+                      </div>
+                      <div className="flex gap-1.5 shrink-0">
+                        <button onClick={() => copy(t)}
+                          className="text-[11px] px-2.5 py-1.5 rounded-lg border border-amber-200 text-amber-700 font-bold whitespace-nowrap hover:bg-amber-50">
+                          {copied === t.phone ? '복사됐어요' : '문구 복사'}
+                        </button>
+                        <a href={`sms:${t.phone}?body=${encodeURIComponent(msg(t))}`}
+                          className="text-[11px] px-2.5 py-1.5 rounded-lg border border-stone-200 text-stone-600 font-bold whitespace-nowrap hover:bg-stone-50">
+                          문자
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
