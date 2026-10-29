@@ -1,4 +1,4 @@
-import { getPrice, MIN_ORDER_QTY, type StageType, type PriceTier } from '@/lib/supabase';
+import { getPrice, MIN_ORDER_QTY, shippingFeeFor, type StageType, type PriceTier } from '@/lib/supabase';
 import { notify } from '@/lib/notify';
 
 // 정기배송 스케줄 → 실제 주문 동기화.
@@ -132,6 +132,10 @@ export async function syncRegularOrders(
 
       keep.add(`${c.phone}|${u.date}`);
 
+      // 정기배송도 택배를 타면 건당 배송비가 들기 때문에 새 주문과 같은 기준을 적용한다.
+      // 직배송(강서·양천) 손님은 tier가 '직배송'이라 0원이 된다.
+      const shipping_fee = shippingFeeFor(tier, qty, pricePer * qty);
+
       const items = [{
         delivery_date: u.date,
         sets: [{
@@ -162,7 +166,7 @@ export async function syncRegularOrders(
           if (enabled) {
             const memo = String(exists.memo || '').split(' / ').filter((x: string) => x && x !== AUTO_CANCEL).join(' / ') || null;
             const { error: re } = await sb.from('baby_food_orders')
-              .update({ status: '접수', memo, stage, volume, items, total_qty: qty, total_price: pricePer * qty })
+              .update({ status: '접수', memo, stage, volume, items, total_qty: qty, total_price: pricePer * qty, shipping_fee })
               .eq('id', exists.id).eq('status', '취소');
             if (re) skipped.push({ phone: mask(c.phone), reason: `재개 실패: ${re.message}` });
             else revived++;
@@ -175,7 +179,7 @@ export async function syncRegularOrders(
         if (sig(exists.items) === sig(items)) continue;
         if (enabled) {
           const { error: ue } = await sb.from('baby_food_orders')
-            .update({ stage, volume, items, total_qty: qty, total_price: pricePer * qty })
+            .update({ stage, volume, items, total_qty: qty, total_price: pricePer * qty, shipping_fee })
             .eq('id', exists.id).eq('status', '접수'); // 읽은 뒤 상태가 바뀌었으면 덮어쓰지 않음
           if (ue) skipped.push({ phone: mask(c.phone), reason: `갱신 실패: ${ue.message}` });
           else updated++;
@@ -193,7 +197,7 @@ export async function syncRegularOrders(
           address: c.address, address_detail: c.address_detail || null,
           door_password: c.door_password || null,
           stage, volume, items,
-          total_qty: qty, total_price: pricePer * qty, delivery_date: u.date,
+          total_qty: qty, total_price: pricePer * qty, shipping_fee, delivery_date: u.date,
           order_type: '정기', status: '접수', customer_id: c.id,
           postal_code: c.postal_code || null, zone_group: zoneGroup, delivery_method: deliveryMethod,
         });

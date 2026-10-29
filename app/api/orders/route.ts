@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
-  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, shippingFeeFor,
   type StageType, type PriceTier,
 } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
@@ -202,6 +202,15 @@ export async function POST(req: NextRequest) {
       total_price = total_qty * pricePerPack;
     }
 
+    // 배송비 — 택배·당일배송의 소량 주문에만 붙는다. 서버가 금액을 다시 계산하니 여기서도
+    // 같이 계산해야 화면과 실제 청구가 어긋나지 않는다.
+    // ⚠️ total_price(팩 금액)에는 섞지 않는다. 포인트 사용 상한과 3% 적립이 total_price
+    // 기준이라, 배송비를 섞으면 배송비에까지 포인트를 쓸 수 있고 배송비의 3%까지 적립된다.
+    // 선결제는 팩을 미리 사둔 건이라 회차마다 배송비를 또 물리지 않는다.
+    const shipping_fee = order_type === '선결제'
+      ? 0
+      : shippingFeeFor(serverTier, total_qty, total_price);
+
     // 선결제 고객이면 잔여 차감
     let customer_id: string | null = null;
     if (order_type === '선결제') {
@@ -286,7 +295,7 @@ export async function POST(req: NextRequest) {
         stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
         postal_code, zone_group, delivery_method, receive_method, referred_by_phone: referredByStored,
-        points_earned: pointsEarned, acquisition_source
+        points_earned: pointsEarned, acquisition_source, shipping_fee
       })
       .select('id')
       .single();
@@ -353,6 +362,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true, id: data.id, points_earned: pointsEarned, points_used: pointsUsed, net_price,
+      shipping_fee, charged: net_price + shipping_fee,
       welcome_bonus: welcomeBonus, referral_bonus: referralBonus,
     });
   } catch (e: any) {

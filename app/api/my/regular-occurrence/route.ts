@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, MENU_TYPES, MIN_ORDER_QTY, getPrice, tierOf,
-  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
+  hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, shippingFeeFor,
   type StageType,
 } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
@@ -76,6 +76,8 @@ export async function POST(req: NextRequest) {
     const tier = tierOf(order.delivery_method);
     const pricePer = getPrice(stage, volume, tier);
     if (!pricePer) return bad('가격 정보 오류');
+    // 수량을 고치면 배송비 무료 기준(6팩)을 넘거나 못 넘게 되니 같이 다시 계산한다
+    const shipping_fee = shippingFeeFor(tier, qty, pricePer * qty);
     const items = [{
       delivery_date: order.delivery_date,
       sets: [{ stage, volume, price_per: pricePer, simple: false, menus, qty, subtotal: pricePer * qty }],
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
     }];
 
     const { data: updated, error } = await sb.from('baby_food_orders')
-      .update({ items, total_qty: qty, total_price: pricePer * qty, regular_locked: true })
+      .update({ items, total_qty: qty, total_price: pricePer * qty, shipping_fee, regular_locked: true })
       .eq('id', orderId).eq('status', '접수').select('id');
     if (error) return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     if (!updated?.length) return bad('이미 처리된 회차예요');

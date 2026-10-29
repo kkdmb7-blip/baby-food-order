@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel, PACK_SURCHARGE,
   hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
+  shippingFeeFor, packsToFreeShipping, SHIPPING_FEE, FREE_SHIPPING_QTY,
   type StageType, type MenuType, type PriceTier
 } from '@/lib/supabase';
 import { weekDateOptions, weekMonday, deliveryDateOptions, formatPhone, allWeekDays, kstToday } from '@/lib/dates';
@@ -532,6 +533,9 @@ export default function OrderPage() {
   const [usedPoints, setUsedPoints] = useState(0);
   const [welcomeBonus, setWelcomeBonus] = useState(0);
   const [referralBonusEarned, setReferralBonusEarned] = useState(0);
+  // 완료 화면에 띄우는 배송비는 서버가 실제로 적어넣은 값을 그대로 쓴다 — 화면에서 다시
+  // 계산하면 서버가 지역을 재판별(dubal_zones)한 결과와 어긋날 수 있다.
+  const [shippingFee, setShippingFee] = useState(0);
   // 포인트 사용 (결제 시)
   const [availablePoints, setAvailablePoints] = useState(0);
   const [usePoints, setUsePoints] = useState(0);
@@ -1070,6 +1074,7 @@ export default function OrderPage() {
       setUsedPoints(d.points_used || 0);
       setWelcomeBonus(d.welcome_bonus || 0);
       setReferralBonusEarned(d.referral_bonus || 0);
+      setShippingFee(d.shipping_fee || 0);
       clearDraft(); // 주문이 접수됐으니 담아둔 임시 내용은 지움
       setCompletedId(d.id);
       setStep(5);
@@ -2003,15 +2008,22 @@ export default function OrderPage() {
                   <span>포인트 사용</span><span>-{usedPoints.toLocaleString()}P</span>
                 </div>
               )}
-              합계 {totalQty}팩 · {(totalPrice - usedPoints).toLocaleString()}원
+              {shippingFee > 0 && (
+                <div className="flex justify-between text-xs text-stone-600 font-normal mb-0.5">
+                  <span>배송비</span><span>+{shippingFee.toLocaleString()}원</span>
+                </div>
+              )}
+              합계 {totalQty}팩 · {(totalPrice - usedPoints + shippingFee).toLocaleString()}원
             </div>
-            {/* 배송비가 따로 안 붙어서 "배송비는 얼마냐"고 자주 물어봄 — 단가에 포함돼 있다고 명시 */}
+            {/* "배송비는 얼마냐"고 자주 물어봄 — 받았는지 안 받았는지 그 자리에서 밝힌다 */}
             <div className="border-t border-amber-100 mt-2 pt-2 text-[11px] text-stone-500 font-normal leading-relaxed">
               {isPickup
                 ? '픽업이라 배송비가 없어요. 표시된 금액이 전부예요.'
                 : tier === '직배송'
-                ? '별도 배송비 없어요. 표시된 금액이 전부예요.'
-                : `별도 배송비는 없고, 배송비가 팩 단가에 포함돼 있어요 (직배송 지역보다 팩당 ${PACK_SURCHARGE.toLocaleString()}원).`}
+                ? `직배송 지역이라 배송비가 없어요 (택배 지역보다 팩당 ${PACK_SURCHARGE.toLocaleString()}원 저렴해요).`
+                : shippingFee > 0
+                ? `${FREE_SHIPPING_QTY}팩 미만이라 배송비 ${shippingFee.toLocaleString()}원이 붙었어요. 다음엔 ${FREE_SHIPPING_QTY}팩부터 무료예요.`
+                : `${FREE_SHIPPING_QTY}팩 이상이라 배송비가 무료예요. 표시된 금액이 전부예요.`}
             </div>
           </div>
           {(earnedPoints > 0 || usedPoints > 0) && (
@@ -2878,22 +2890,40 @@ export default function OrderPage() {
             );
           })()}
 
-          <div className="bg-stone-800 text-white rounded-xl px-4 py-3 mb-4">
-            <div className="flex justify-between text-sm font-bold">
-              <span>전체 {dateOrders.reduce((s,d)=>s+dateQty(d),0)}팩</span>
-              <span>{(dateOrders.reduce((s,d)=>s+datePrice(d, tier),0) - usePoints).toLocaleString()}원</span>
-            </div>
-            {usePoints > 0 && (
-              <div className="flex justify-between text-[11px] text-stone-400 mt-1">
-                <span>{dateOrders.reduce((s,d)=>s+datePrice(d, tier),0).toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
+          {/* 배송비 줄이 없으면 "결제하고 나서 배송비가 또 붙나?" 하고 멈칫함 */}
+          {(() => {
+            const packSub = dateOrders.reduce((s,d)=>s+datePrice(d, tier),0);
+            const qty = dateOrders.reduce((s,d)=>s+dateQty(d),0);
+            const ship = shippingFeeFor(tier, qty, packSub);
+            const left = packsToFreeShipping(tier, qty, packSub);
+            return (
+              <div className="bg-stone-800 text-white rounded-xl px-4 py-3 mb-4">
+                <div className="flex justify-between text-sm font-bold">
+                  <span>전체 {qty}팩</span>
+                  <span>{(packSub - usePoints + ship).toLocaleString()}원</span>
+                </div>
+                {usePoints > 0 && (
+                  <div className="flex justify-between text-[11px] text-stone-400 mt-1">
+                    <span>{packSub.toLocaleString()}원 − 포인트 {usePoints.toLocaleString()}P</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-[11px] text-stone-400 mt-1.5 pt-1.5 border-t border-stone-700">
+                  <span>{isPickup ? '수령' : '배송비'}</span>
+                  <span>
+                    {isPickup ? '픽업(방문수령) · 배송비 없음'
+                      : tier === '직배송' ? '직배송 · 무료'
+                      : ship === 0 ? `${FREE_SHIPPING_QTY}팩 이상 · 무료`
+                      : `${ship.toLocaleString()}원`}
+                  </span>
+                </div>
+                {left > 0 && (
+                  <div className="text-[11px] text-amber-300 font-bold mt-1">
+                    {left}팩만 더 담으면 배송비 {SHIPPING_FEE.toLocaleString()}원이 무료예요
+                  </div>
+                )}
               </div>
-            )}
-            {/* 배송비 줄이 없으면 "결제하고 나서 배송비가 또 붙나?" 하고 멈칫함 */}
-            <div className="flex justify-between text-[11px] text-stone-400 mt-1.5 pt-1.5 border-t border-stone-700">
-              <span>{isPickup ? '수령' : '배송비'}</span>
-              <span>{isPickup ? '픽업(방문수령) · 배송비 없음' : tier === '직배송' ? '무료' : '팩 단가에 포함'}</span>
-            </div>
-          </div>
+            );
+          })()}
           {/* 취소 가능 시점을 결제 전에 알려주기 — 나중에 전화로 물어보는 걸 줄임 */}
           <p className="text-[11px] text-stone-400 mb-4 leading-relaxed text-center">
             주문 후에도 조리 준비가 시작되기 전까지는 <span className="font-bold text-stone-500">내 주문내역</span>에서 직접 취소할 수 있어요.

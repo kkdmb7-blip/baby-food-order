@@ -133,6 +133,29 @@ export function getPrice(stage: StageType, volume: number, tier: PriceTier = '�
   return base + (tier === '기타' ? PACK_SURCHARGE : 0);
 }
 
+// ── 배송비 ────────────────────────────────────────────────────
+// 경쟁사(베베쿡·엘빈즈·루솔·아이배냇) 네 곳이 모두 "3만원 이상 무료 / 미달 3,000원"이라
+// 같은 문법으로 맞춘다. 택배 한 건 값은 몇 팩을 보내든 똑같이 들기 때문에, 소량 주문일 때만 받는다.
+// 기타지역 팩당 +500원(PACK_SURCHARGE)은 그대로 둔다 — 그걸 빼고 배송비만 받으면
+// 6팩 이상 구간(단골·정기배송이 대부분 여기)에서 세트당 2,800~5,600원이 날아간다.
+export const SHIPPING_FEE = 3000;           // 택배·당일배송 1건 배송비
+export const FREE_SHIPPING_QTY = 6;         // 이 팩수부터 무료
+export const FREE_SHIPPING_AMOUNT = 30000;  // 또는 이 금액부터 무료
+
+// 픽업·직배송(강서·양천 자체배송)은 택배를 안 타니 0원 — 호출하는 쪽에서 픽업이면
+// tier를 '직배송'으로 넘기고 있으므로(order page·orders API 모두) 그 한 줄로 같이 걸러진다.
+// 수량·금액 중 하나만 넘겨도 무료: 반찬세트는 1세트(=1팩)지만 38,000원이라 금액으로 걸린다.
+export function shippingFeeFor(tier: PriceTier, totalQty: number, packSubtotal: number): number {
+  if (tier === '직배송') return 0;
+  if (totalQty >= FREE_SHIPPING_QTY || packSubtotal >= FREE_SHIPPING_AMOUNT) return 0;
+  return SHIPPING_FEE;
+}
+// 무료까지 몇 팩 남았는지 (안내문에 쓰는 값). 0이면 이미 무료.
+export function packsToFreeShipping(tier: PriceTier, totalQty: number, packSubtotal: number): number {
+  if (shippingFeeFor(tier, totalQty, packSubtotal) === 0) return 0;
+  return Math.max(1, FREE_SHIPPING_QTY - totalQty);
+}
+
 // ── 수령 방법 ─────────────────────────────────────────────────
 // 배송은 1회 3팩부터(택배·직배송 모두 동일). 1~2팩도 주문은 받지만 픽업(방문수령)만 가능.
 export const MIN_ORDER_QTY = 3;        // 배송 최소 팩수
