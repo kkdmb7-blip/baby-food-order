@@ -87,7 +87,11 @@ export async function POST(req: NextRequest) {
       }
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(delivery_date)) return bad('배송일 형식 오류');
-    if (delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
+    // 손님 주문은 내일 이후만 받는다.
+    // 관리자가 직접 넣는 것은 오늘·지난 날짜도 받는다 — 조리표를 오전 7시에 뽑은 뒤
+    // 들어오는 그날 주문을 지금까지 종이에 손으로 적으셨다. 그게 앱에 들어와야
+    // 배송·주소록·입금 대조까지 같이 따라온다. 이 검사에 막혀서 들어갈 수가 없었다.
+    if (!adminManual && delivery_date <= kstToday()) return bad('조리일은 내일 이후여야 합니다');
 
     const sb = supabaseService();
     let dayKinds = new Map<string, { yusik: boolean; banchan: boolean; fromMenu: boolean }>();

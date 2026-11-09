@@ -8,6 +8,7 @@ import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import KakaoOrderEntry from './KakaoOrderEntry';
+import CookingEntry from './CookingEntry';
 
 type Tab = '주문' | '카톡주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
@@ -392,7 +393,13 @@ export default function AdminShell({
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
         {tab === '배송' && <DeliveryGroups orders={orders} today={selectedDate} />}
 
-        {tab === '조리표' && <CookingSheet orders={orders} today={selectedDate} />}
+        {tab === '조리표' && (
+          <>
+            {/* 조리표를 보면서 바로 줄을 넣을 수 있게. 프린트할 땐 안 나온다(no-print). */}
+            <CookingEntry date={selectedDate} onSaved={() => router.refresh()} />
+            <CookingSheet orders={orders} today={selectedDate} />
+          </>
+        )}
 
         {/* ── 탭 3: 주소록 ────────────────────────────────── */}
         {tab === '주소록' && <AddressBook orders={orders} today={selectedDate} />}
