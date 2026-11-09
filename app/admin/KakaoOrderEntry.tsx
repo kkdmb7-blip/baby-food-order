@@ -21,6 +21,18 @@ export default function KakaoOrderEntry({ today, onDone }: { today: string; onDo
 
   const [orderType, setOrderType] = useState<'일반' | '선결제'>('일반');
   const [receive, setReceive] = useState<'배송' | '픽업'>('배송');
+
+  /*
+    배송 권역. 카톡 주문서에는 우편번호 칸이 없다.
+    서버는 우편번호로 dubal_zones 를 찾아 강서·양천이면 직배송(기본가),
+    그 밖이면 기타(팩당 +500원)로 값을 다시 계산한다. 우편번호가 없으면
+    delivery_method 로 폴백한다.
+
+    전에는 배송이면 무조건 '당일배송' 을 보냈다. 그러면 폴백이 '기타' 로 떨어져
+    강서·양천 단골도 팩당 500원이 더 붙었다 — 6팩이면 3,000원이 더 찍힌다.
+    그래서 권역을 직접 고르게 두고, 주소를 보고 미리 짐작해 놓는다.
+  */
+  const [zone, setZone] = useState<'직배송' | '당일배송' | '택배익일배송'>('직배송');
   const [menuQty, setMenuQty] = useState<Record<string, string>>({});
   const [banchanQty, setBanchanQty] = useState('');
   const [memo, setMemo] = useState('');
@@ -38,7 +50,11 @@ export default function KakaoOrderEntry({ today, onDone }: { today: string; onDo
 
   function applyPaste(text: string) {
     setRaw(text);
-    setF(parseKakaoOrder(text, today));
+    const parsed = parseKakaoOrder(text, today);
+    setF(parsed);
+    // 주소에 강서구·양천구가 있으면 직배송 권역이다. 서버가 우편번호로 하는 판정을
+    // 여기서는 주소 글자로 짐작한다 — 틀리면 사장님이 아래에서 바꾸시면 된다.
+    setZone(/강서구|양천구/.test(parsed.address) ? '직배송' : '당일배송');
     setTouched(true);
     setMsg(null);
   }
@@ -50,7 +66,7 @@ export default function KakaoOrderEntry({ today, onDone }: { today: string; onDo
   function reset() {
     setRaw(''); setF(EMPTY_PARSED); setTouched(false);
     setMenuQty({}); setBanchanQty(''); setMemo('');
-    setOrderType('일반'); setReceive('배송'); setMsg(null);
+    setOrderType('일반'); setReceive('배송'); setZone('직배송'); setMsg(null);
   }
 
   async function submit() {
@@ -80,9 +96,9 @@ export default function KakaoOrderEntry({ today, onDone }: { today: string; onDo
           delivery_date: f.delivery_date,
           order_type: orderType,
           receive_method: receive,
-          // 주소만 있고 우편번호는 카톡 주문서에 없다. 지역 판정은 서버가
-          // delivery_method 로 폴백한다 — 강서·양천이면 직배송을 골라주세요.
-          delivery_method: receive === '픽업' ? '직배송' : '당일배송',
+          // 주소만 있고 우편번호는 카톡 주문서에 없다. 그래서 서버는 이 값으로
+          // 권역을 판정한다(폴백). 픽업은 배송을 안 나가니 기본가다.
+          delivery_method: receive === '픽업' ? '직배송' : zone,
           total_qty: totalQty,
           // memo 는 insert 대상이 아니라 보내도 조용히 버려진다 —
           // 실제로 저장되는 자유 입력칸은 customer_request(60자).
@@ -179,7 +195,22 @@ export default function KakaoOrderEntry({ today, onDone }: { today: string; onDo
               <option value="픽업">픽업</option>
             </select>
           </div>
+          {receive === '배송' && (
+            <div>
+              <span className={label}>배송 권역</span>
+              <select value={zone} onChange={e => setZone(e.target.value as any)} className={input}>
+                <option value="직배송">직배송 (강서·양천)</option>
+                <option value="당일배송">당일배송 (그 외)</option>
+                <option value="택배익일배송">택배 익일배송</option>
+              </select>
+            </div>
+          )}
         </div>
+        {receive === '배송' && (
+          <p className="mt-2 text-xs text-stone-500">
+            주소를 보고 미리 골라뒀어요. <b>직배송이 아니면 팩당 500원이 더 붙습니다</b> — 금액이 달라지니 맞는지 봐주세요.
+          </p>
+        )}
 
         <label className="mt-4 flex items-center gap-2 text-sm text-stone-700">
           <input type="checkbox" checked={f.isBanchan} onChange={e => set('isBanchan', e.target.checked)} className="h-4 w-4 accent-amber-500" />
