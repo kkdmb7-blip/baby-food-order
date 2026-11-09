@@ -7,8 +7,9 @@ import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
+import KakaoOrderEntry from './KakaoOrderEntry';
 
-type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
+type Tab = '주문' | '카톡주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -149,7 +150,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
+  const tabs: Tab[] = ['주문', '카톡주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -382,6 +383,10 @@ export default function AdminShell({
         )}
 
         {/* ── 탭: 통계 ────────────────────────────────────── */}
+        {tab === '카톡주문' && (
+          <KakaoOrderEntry today={today} onDone={() => router.refresh()} />
+        )}
+
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}

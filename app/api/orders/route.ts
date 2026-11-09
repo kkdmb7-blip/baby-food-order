@@ -13,6 +13,10 @@ import { menuKindsFor } from '@/lib/menuDays';
 export async function POST(req: NextRequest) {
   try {
     const b = await req.json();
+    // 사장님이 카톡으로 받은 주문을 옮겨 적는 경우. 이미 받아놓은 주문이라
+    // 손님용 관문(조리 안 하는 날·한우 비율·최소 팩수)은 건너뛴다.
+    // 가격·선결제 차감·포인트·알림은 손님 주문과 똑같이 탄다.
+    const adminManual = b.admin_manual === true && isAdminAuthed();
     const baby_name = String(b.baby_name || '').trim().slice(0, 20);
     const months = parseInt(b.months);
     const customer_phone = String(b.customer_phone || '').replace(/\D/g, '');
@@ -119,11 +123,11 @@ export async function POST(req: NextRequest) {
             sets.some((s: any) => s.stage !== '반찬세트'),
             sets.some((s: any) => s.stage === '반찬세트'),
           );
-          if (err) return bad(err);
+          if (err && !adminManual) return bad(err);
         }
       } else {
         const err = check(delivery_date, true, false); // 옛 단일주문 형식은 이유식만
-        if (err) return bad(err);
+        if (err && !adminManual) return bad(err);
       }
     }
 
@@ -139,7 +143,7 @@ export async function POST(req: NextRequest) {
             if (m?.menu === '한우') hanwoo += q; else others += q;
           }
         }
-        if (!hanwooAllowed(hanwoo, others)) {
+        if (!adminManual && !hanwooAllowed(hanwoo, others)) {
           const need = othersNeededForHanwoo(hanwoo, others);
           return bad(`${d.delivery_date} 한우 ${hanwoo}팩 / 나머지 ${others}팩 — 한우는 나머지 메뉴의 ${HANWOO_MAX_RATIO}배까지만 가능해요. 닭이나 기타를 ${need}팩 더 담아주세요.`);
         }
@@ -165,7 +169,7 @@ export async function POST(req: NextRequest) {
         groupQty[key] = (groupQty[key] || 0) + (d.date_qty || 0);
       }
       for (const [key, qty] of Object.entries(groupQty)) {
-        if (qty < MIN_ORDER_QTY && receive_method !== '픽업') {
+        if (qty < MIN_ORDER_QTY && receive_method !== '픽업' && !adminManual) {
           const label = key === 'A' ? '월·화 합산' : key === 'B' ? '목·금 합산' : key;
           return bad(`${label} ${qty}팩 — 배송은 1회 ${MIN_ORDER_QTY}팩부터예요. ${qty}팩은 픽업으로 받으실 수 있어요.`);
         }
