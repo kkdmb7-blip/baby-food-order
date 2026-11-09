@@ -887,7 +887,10 @@ function AskForReviews() {
     return `${t.babyName} 부모님, 까꿍디미방입니다.\n`
       + `${withSubject(t.babyName)} 이유식 잘 먹었는지 궁금해요.\n`
       + `앱에 한 줄만 남겨주시면 다음 주문에 쓰실 수 있는 1,000포인트 드려요.\n`
-      + `https://baby-food-order.vercel.app/order`;
+      // 가게 주소로 보낸다. vercel.app 주소는 손님 눈에 우리 가게로 읽히지 않고,
+      // 문자·카톡에서 낯선 도메인으로 보여 안 눌리거나 스팸으로 걸릴 수 있다.
+      // app/layout.tsx·sitemap.ts 가 쓰는 주소와 같은 것으로 맞춘다.
+      + `https://kkdmb.picolab.kr/order`;
   }
 
   async function copy(t: ReviewTarget) {
