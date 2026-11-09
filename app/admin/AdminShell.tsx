@@ -425,7 +425,39 @@ export default function AdminShell({
 }
 
 // ── 조리표 ────────────────────────────────────────────────────────
+type PrintInfo = {
+  printed: boolean; printedAt?: string; printedOrders?: number; printedPacks?: number;
+  newOrders?: number; newPacks?: number;
+};
+
 function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
+  /*
+    조리표를 언제 뽑았는지 기억해 둔다. 오전 7시에 뽑으신 뒤 들어오는 주문을
+    지금까지는 종이에 손으로 적으셨다. 뽑은 시각을 알면 그 뒤에 들어온 줄만
+    따로 뽑아드릴 수 있다.
+  */
+  const [printInfo, setPrintInfo] = useState<PrintInfo | null>(null);
+
+  async function loadPrintInfo() {
+    try {
+      const d = await fetch(`/api/admin/cooking-print?date=${today}`).then(r => r.json());
+      if (d.ok) setPrintInfo(d);
+    } catch { /* 못 읽어도 조리표 자체는 보여야 한다 */ }
+  }
+  useEffect(() => { setPrintInfo(null); loadPrintInfo(); /* eslint-disable-next-line */ }, [today, orders.length]);
+
+  async function printAll() {
+    // 창을 먼저 연다 — fetch 를 기다렸다 열면 팝업 차단에 걸린다(사용자 클릭과 멀어져서)
+    window.open(`/admin/print/cooking?date=${today}`, '_blank');
+    try {
+      await fetch('/api/admin/cooking-print', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: today }),
+      });
+    } catch { /* 기록 실패해도 프린트는 이미 떴다 */ }
+    loadPrintInfo();
+  }
+
   // ⚠️ 예전엔 주문의 stage/volume으로 묶어서, 복합주문(stage='mixed', volume=null)이
   // 어느 그룹에도 안 잡혀 화면 조리표에서 통째로 빠졌음 — 인쇄용 조리표와 동일하게
   // "그날 몫 세트" 단위로 묶는다.
@@ -449,11 +481,33 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
 
   return (
     <div>
-      <div className="flex gap-2 mb-4 no-print">
-        <button onClick={() => window.open(`/admin/print/cooking?date=${today}`, '_blank')}
-          className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
-          🖨 조리표 프린트
-        </button>
+      <div className="mb-4 no-print">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={printAll}
+            className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
+            🖨 조리표 프린트
+          </button>
+          {/* 프린트한 뒤에 들어온 줄이 있을 때만 — 없을 때 보이면 눌러보게 된다 */}
+          {(printInfo?.newOrders ?? 0) > 0 && (
+            <button onClick={() => window.open(`/admin/print/cooking?date=${today}&only=new`, '_blank')}
+              className="px-4 py-2 bg-white border-2 border-amber-500 text-amber-700 rounded-lg text-sm font-bold">
+              추가분만 프린트 ({printInfo!.newOrders}건)
+            </button>
+          )}
+        </div>
+
+        {/* 언제 뽑았고 그 뒤로 몇 건이 들어왔는지. 지금까지 이 줄들을 종이에 손으로 적으셨다. */}
+        {printInfo?.printed && (
+          <p className="mt-2 text-xs text-stone-500 leading-relaxed">
+            {fmtDateTime(printInfo.printedAt!)}에 뽑으셨어요 — 그때 {printInfo.printedOrders}명 {printInfo.printedPacks}팩.
+            {(printInfo.newOrders ?? 0) > 0
+              ? <span className="text-amber-700 font-bold"> 그 뒤로 {printInfo.newOrders}명 {printInfo.newPacks}팩이 더 들어왔습니다.</span>
+              : <span> 그 뒤로 들어온 주문은 없습니다.</span>}
+          </p>
+        )}
+        {printInfo && !printInfo.printed && (
+          <p className="mt-2 text-xs text-stone-400">아직 이 날짜 조리표를 뽑지 않으셨어요.</p>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-stone-200 p-5 space-y-5">
@@ -467,7 +521,13 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
               <tbody>
                 {g.rows.map((row, ri) => (
                   <tr key={`${row.order.id}-${ri}`} className="border-b border-stone-100">
-                    <td className="py-1.5 font-bold w-24">{row.order.baby_name}</td>
+                    <td className="py-1.5 font-bold w-24">
+                      {row.order.baby_name}
+                      {/* 프린트한 뒤에 들어온 줄 — 손에 든 종이에는 없는 사람이다 */}
+                      {printInfo?.printedAt && row.order.created_at > printInfo.printedAt && (
+                        <span className="ml-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-px align-middle">추가</span>
+                      )}
+                    </td>
                     <td className="py-1.5">
                       {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${menuLabel(m)} ${row.menus[m]}팩`).join(' · ')}
                     </td>
