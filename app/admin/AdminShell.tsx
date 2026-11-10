@@ -7,7 +7,6 @@ import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
-import CookingEntry from './CookingEntry';
 import GridEntry from './GridEntry';
 import SheetEditor from './SheetEditor';
 
@@ -492,8 +491,9 @@ export default function AdminShell({
         {tab === '조리표' && (
           <>
             {/* 조리표를 보면서 바로 줄을 넣을 수 있게. 프린트할 땐 안 나온다(no-print).
-                주문접수(GridEntry)로 거의 다 넣고, 폼(CookingEntry)은 선결제·픽업·반찬처럼
-                칸이 더 필요할 때만. 둘 다 같은 /api/orders 로 들어간다.
+                '조리표에 줄 넣기'(CookingEntry) 는 뺐다 — 거기만 할 수 있던 반찬 세트·픽업·
+                권역 고르기·선결제·손님요청이 주문접수 안으로 들어왔다. 같은 일을 두 군데서
+                하면 한쪽만 고치게 된다. 컴포넌트 파일은 남겨 뒀다.
                 날짜는 이 화면의 selectedDate 하나뿐이다 — 주문접수에서 날짜를 바꾸면
                 주소창(?date=)까지 같이 바뀌어서 넣은 주문이 바로 아래 조리표에 보인다. */}
             {/* 저장할 때마다 서버에서 주문 500건을 다시 받으면 한 건 넣을 때마다 화면이 멈춘다.
@@ -504,7 +504,6 @@ export default function AdminShell({
                 else router.refresh();
               }}
               onDateChange={d => router.push(`/admin?date=${d}`)} />
-            <CookingEntry date={selectedDate} onSaved={() => router.refresh()} />
             <CookingSheet orders={orders} today={selectedDate} customers={customers}
               onChanged={() => router.refresh()} />
           </>

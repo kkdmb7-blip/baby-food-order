@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { MENU_TYPES, menuLabel, type StageType } from '@/lib/supabase';
-import { SLOTS, slotKey, fitSlot, spreadPacks, type Slot } from '@/lib/slots';
+import { MENU_TYPES, menuLabel, BANCHAN_DOW, type StageType } from '@/lib/supabase';
+import { SLOTS, slotKey, fitSlot, spreadPacks } from '@/lib/slots';
 import { slicesOn } from '@/lib/orderItems';
 import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
@@ -40,7 +40,11 @@ import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } fr
   처음 오는 손님도 여기서 받는다
     단골은 이름만 고르면 연락처·주소·개월수가 지난 주문에서 따라온다.
     처음 오는 손님은 그 자리에서 연락처·주소·개월수를 받아 고객으로도 저장한다.
-    선결제·픽업과 반찬(유아식)은 아직 아래 '조리표에 줄 넣기'로 넣어야 한다.
+
+  여기서 다 된다 (전에는 아래 '조리표에 줄 넣기' 로 가야 했던 것들)
+    반찬 세트 — 여덟 칸 아래 한 줄. 단계·용량이 없고 단가 체계가 다르다.
+    픽업·권역·선결제·손님요청 — 그 아래 접힌 줄. 대개 지난 주문 그대로라 접어 뒀다.
+    열지 않으면 지금까지와 똑같이 동작한다(지난 주문 값, 주소로 권역 짐작).
 */
 
 type Addr = {
@@ -65,6 +69,12 @@ const addDays = (d: string, n: number) =>
     : d;
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
+/** 그 날짜에 기본으로 받을 것 — 수요일은 반찬, 나머지 조리일은 이유식 */
+function modeFor(d: string): '이유식' | '반찬' {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '이유식';
+  return new Date(d + 'T00:00:00Z').getUTCDay() === BANCHAN_DOW ? '반찬' : '이유식';
+}
+
 /** 조리일에 이름만 적어둔 것. 팩수도 메뉴도 없는 '그날 할 일'이다 */
 type Pend = {
   id: string; delivery_date: string; baby_name: string;
@@ -77,9 +87,25 @@ const copyQty = (q: Qty): Qty => Object.fromEntries(Object.entries(q).map(([k, v
 
 /** 넣을 때 화면에 있던 것 전부. 되돌리기를 누르면 이걸 그대로 다시 올린다 —
     되돌리기는 지우는 버튼이 아니라 고치는 버튼이라, 내용이 돌아와야 고칠 수 있다. */
+/** 받는 방법·권역·주문종류·요청 — 대개 지난 주문 그대로라 접어 둔다 */
+type Opts = {
+  receive: '배송' | '픽업';
+  zone: '' | '직배송' | '당일배송' | '택배익일배송';   // '' 면 주소·지난 주문으로 짐작
+  orderType: '일반' | '선결제';
+  request: string;
+  months: string;     // '' 면 지난 주문으로 짐작한 개월수를 쓴다
+};
+const OPTS0: Opts = { receive: '배송', zone: '', orderType: '일반', request: '', months: '' };
+
+/** 넣은 줄을 가리키는 이름표. 반찬 세트는 여덟 칸에 없으므로 칸 자체가 아니라 이름표만 쓴다 */
+type LineSlot = { key: string; label: string };
+const BANCHAN_SLOT: LineSlot = { key: '반찬세트|0', label: '반찬 세트' };
+
 type Snap = {
   deliveryDate: string;
   pendId: string | null;      // 적어둔 이름에서 끌어온 것이면 그 id — 되돌리면 다시 '할 일'로 돌아간다
+  opts: Opts;
+  banchan: string;
   q: string;
   hit: Hit | null;
   isNew: boolean;
@@ -99,7 +125,7 @@ type Done = {
   pending?: boolean;          // 보내는 중 — 화면은 기다리지 않고 다음 사람을 치게 한다
   snap: Snap;
   lines: {
-    slot: Slot; menus: Record<string, number>; total: number;
+    slot: LineSlot; menus: Record<string, number>; total: number;
     ok: boolean; pending?: boolean; error?: string; id?: string; row?: any;
   }[];
 };
@@ -157,6 +183,27 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
           postalCode: null, deliveryMethod: null, lastDate: '' }
       : (addrList[addrIdx] || addrList[0] || null);
 
+  // 권역 짐작 — 고른 주소로 지난번에 나간 방법, 없으면 강서·양천이면 직배송.
+  // 사장님이 직접 고르셨으면(opts.zone) 그 값이 우선이다. 팩당 500원이 걸린다.
+  const addrNow = hit ? (chosenAddr ? fullAddr(chosenAddr) : '') : nc.address.trim();
+  const zoneGuess: '직배송' | '당일배송' | '택배익일배송' =
+    chosenAddr?.deliveryMethod === '직배송' || chosenAddr?.deliveryMethod === '당일배송'
+      || chosenAddr?.deliveryMethod === '택배익일배송'
+      ? chosenAddr.deliveryMethod
+      : (/강서구|양천구/.test(addrNow) ? '직배송' : '당일배송');
+
+  /* 이유식 접수 / 반찬 접수 — 받는 모양이 아예 다르다(반찬은 단계·용량·메뉴가 없다).
+     월·화·목·금은 이유식, 수요일은 반찬이 기본이다. 공휴일 때문에 요일이 바뀌는 주가 있어서
+     옆에 전환 버튼을 둔다. 날짜를 옮기면 그 날짜의 기본값으로 돌아온다. */
+  const [mode, setMode] = useState<'이유식' | '반찬'>(() => modeFor(date));
+  useEffect(() => { setMode(modeFor(date)); }, [date]);
+
+  // 반찬 세트 수 (반찬 접수일 때만 쓴다)
+  const [banchan, setBanchan] = useState('');
+  // 받는 방법·권역·주문종류·요청 — 대개 지난 주문 그대로라 접어 둔다
+  const [opts, setOpts] = useState<Opts>(OPTS0);
+  const [optsOpen, setOptsOpen] = useState(false);
+
   // 카톡 주문서 붙여넣기 — 읽을 수 있는 만큼만 읽어 아래 칸을 채운다.
   // 멋대로 저장하지 않는다. 사장님이 보고 고친 뒤 엔터를 쳐야 들어간다.
   const [paste, setPaste] = useState('');
@@ -207,6 +254,14 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   function pick(h: Hit, prefill = true) {
     setHit(h); setQ(h.babyName); setHits([]); setListOpen(false); setIsNew(false);
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
+    // 받는 방법·주문종류는 지난 주문 그대로 시작한다 (선결제 손님은 계속 선결제다)
+    setOpts({
+      receive: h.receiveMethod === '픽업' ? '픽업' : '배송',
+      zone: h.deliveryMethod === '직배송' || h.deliveryMethod === '당일배송' || h.deliveryMethod === '택배익일배송'
+        ? h.deliveryMethod : '',
+      orderType: h.orderType === '선결제' ? '선결제' : '일반',
+      request: '', months: '',
+    });
     if (!prefill) return;   // 카톡에서 읽은 팩수를 덮어쓰면 안 된다
     // 지난번 시키던 칸에 지난번 팩수를 미리 넣어둔다 — 대개 그대로 이어가신다
     const slot = SLOTS.find(s => s.stage === h.stage && s.volume === Number(h.volume));
@@ -305,8 +360,14 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     if (dateMoved) notes.push(`조리일을 ${dateMoved}(${dowOf(dateMoved)})로 옮겼어요`);
     if (moved.length) notes.push(`용량을 그 단계 칸으로 맞췄어요: ${moved.join(', ')}`);
     if (autoFilled.length) notes.push(`메뉴가 안 적혀 나눠 담았어요(고치실 수 있어요): ${autoFilled.join(', ')}`);
+    // 반찬 주문서면 반찬 접수로 전환한다. 세트 수는 주문서에 또박또박 적히지 않아
+    // 한 세트로 두고 확인하게 한다.
     if (p.isBanchan && !Object.keys(nq).length) {
-      notes.push('반찬(유아식) 주문은 이 칸으로 못 넣어요 — 아래 "조리표에 줄 넣기"로 넣어주세요');
+      setMode('반찬'); setBanchan('1');
+      notes.push('반찬(유아식)으로 읽어 반찬 접수로 바꿨어요 — 세트 수를 확인해주세요');
+    } else if (Object.keys(nq).length && mode === '반찬') {
+      setMode('이유식');
+      notes.push('이유식 주문서라 이유식 접수로 바꿨어요');
     }
     if (unknown.length) notes.push(`못 넣은 칸: ${unknown.join(', ')}`);
     if (miss.length) notes.push(`못 읽음: ${miss.join('·')}`);
@@ -319,6 +380,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
     setPendUsed(null); setParkOpen(false); setPark({ date: '', name: '', note: '' });
+    setBanchan(''); setOpts(OPTS0); setOptsOpen(false);
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
@@ -330,6 +392,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     setIsNew(s.isNew); setNc({ ...s.nc });
     setAddrIdx(s.addrIdx); setAddrAdding(s.addrAdding); setAddrNew({ ...s.addrNew });
     setQty(copyQty(s.qty));
+    setBanchan(s.banchan); setOpts({ ...s.opts });
     setPaste(''); setParsed(null); setPasteNote(null);
     setErr(null);
     setTimeout(() => nameRef.current?.focus(), 0);
@@ -401,8 +464,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   }
 
   const slotTotal = (k: string) => MENU_TYPES.reduce((a, m) => a + (Number(qty[k]?.[m]) || 0), 0);
-  const usedSlots = SLOTS.filter(s => slotTotal(s.key) > 0);
-  const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0);
+  // 지금 받는 것만 센다 — 모드를 바꾸기 전에 쳐둔 숫자가 같이 들어가면 안 된다
+  const usedSlots = mode === '이유식' ? SLOTS.filter(s => slotTotal(s.key) > 0) : [];
+  const banchanQty = mode === '반찬' ? (Number(banchan) || 0) : 0;
+  const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0) + banchanQty;
   const whoOk = hit ? true : (isNew && ncValid);
   const canConfirm = whoOk && currentTotal > 0 && !busy;
 
@@ -412,7 +477,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
         setErr(isNew
           ? '연락처(10~11자리)·주소·개월수를 넣어주세요'
           : '이름을 쳐서 뜨는 집을 고르거나, 처음 오는 손님이면 "새 손님"을 눌러주세요');
-      } else if (currentTotal === 0) setErr('팩수를 넣어주세요');
+      } else if (currentTotal === 0) setErr(mode === '반찬' ? '반찬 세트 수를 넣어주세요' : '팩수를 넣어주세요');
       return;
     }
     setErr(null); setInfo(null);
@@ -421,35 +486,54 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     const snap: Snap = {
       deliveryDate, pendId: pendUsed, q: q.trim(), hit, isNew, nc: { ...nc },
       addrIdx, addrAdding, addrNew: { ...addrNew }, qty: copyQty(qty),
+      opts: { ...opts }, banchan,
     };
 
     // 단골이면 지난 주문에서(고른 주소로), 처음이면 지금 치신 값에서
     const name = hit ? hit.babyName : q.trim();
     const addr = hit ? (chosenAddr ? fullAddr(chosenAddr) : '') : nc.address.trim();
     const phone = (hit ? hit.phone : ncPhone).replace(/\D/g, '');
-    const months = hit ? (hit.guessMonths || hit.lastMonths) : Number(nc.months);
+    // 개월수는 지난 주문값 + 그 뒤 지난 달수로 짐작한다. 사장님이 고치셨으면 그 값.
+    const months = hit
+      ? (Number(opts.months) || hit.guessMonths || hit.lastMonths)
+      : Number(nc.months);
     const door = (hit ? chosenAddr?.doorPassword : nc.door.trim()) || null;
     const postal = hit ? chosenAddr?.postalCode ?? null : null;
-    const orderType = hit?.orderType === '선결제' ? '선결제' : '일반';
+    const orderType = opts.orderType;
+    const receive = opts.receive;
     // 우편번호가 없으면 서버가 이 값으로 권역을 판정한다 (팩당 500원이 걸린다).
-    // 주소마다 권역이 다를 수 있으므로 고른 주소의 값을 쓴다.
-    const dm = hit ? chosenAddr?.deliveryMethod : null;
-    const zone =
-      dm === '직배송' || dm === '당일배송' || dm === '택배익일배송'
-        ? dm
-        : (/강서구|양천구/.test(addr) ? '직배송' : '당일배송');
-    const receive = hit?.receiveMethod === '픽업' ? '픽업' : '배송';
+    // 사장님이 고르셨으면 그 값을, 아니면 고른 주소의 지난 값, 그것도 없으면 주소로 짐작한다.
+    const zone = opts.zone || zoneGuess;
 
     // 칸마다 주문 한 건. 전에는 한 건씩 차례로 보내고 다 끝나야 입력칸이 비워졌다 —
     // 칸이 셋이면 왕복 세 번을 기다렸다. 같이 보내고, 화면은 기다리지 않고 바로 비운다.
-    const jobs = usedSlots.map(slot => {
+    type Job = {
+      slot: LineSlot; menus: Record<string, number>; total: number;
+      stage: StageType | null; volume: number | null; sets: any[];
+    };
+    const jobs: Job[] = usedSlots.map(slot => {
       const menus: Record<string, number> = {};
       for (const m of MENU_TYPES) {
         const n = Number(qty[slot.key]?.[m]) || 0;
         if (n > 0) menus[m] = n;
       }
-      return { slot, menus, total: slotTotal(slot.key) };
+      const total = slotTotal(slot.key);
+      return {
+        slot: { key: slot.key, label: slot.label }, menus, total,
+        stage: slot.stage, volume: slot.volume,
+        sets: [{
+          stage: slot.stage, volume: slot.volume, simple: false, qty: total,
+          menus: Object.entries(menus).map(([menu, n]) => ({ menu, qty: n })),
+        }],
+      };
     });
+    // 반찬 세트 — 단계·용량이 없고 한 세트가 한 묶음이다(단가 체계가 다르다)
+    if (banchanQty > 0) {
+      jobs.push({
+        slot: BANCHAN_SLOT, menus: {}, total: banchanQty, stage: null, volume: null,
+        sets: [{ stage: '반찬세트', volume: null, simple: true, menus: [], qty: banchanQty }],
+      });
+    }
 
     // 먼저 아래에 '넣는 중'으로 올려두고 입력칸을 비운다 — 다음 사람을 바로 치실 수 있게
     const key = SEQ++;
@@ -460,7 +544,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     }, ...d]);
     reset();
 
-    const lines: Done['lines'] = await Promise.all(jobs.map(async ({ slot, menus, total }) => {
+    const lines: Done['lines'] = await Promise.all(jobs.map(async ({ slot, menus, total, stage, volume, sets }) => {
       try {
         const res = await fetch('/api/orders', {
           method: 'POST',
@@ -472,22 +556,16 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             customer_phone: phone,
             address: addr,
             door_password: door,
-            stage: slot.stage,
-            volume: slot.volume,
+            stage,
+            volume,
             delivery_date: deliveryDate,
             order_type: orderType,
             receive_method: receive,
             delivery_method: receive === '픽업' ? '직배송' : zone,
             postal_code: postal || null,
             total_qty: total,
-            items: [{
-              delivery_date: deliveryDate,
-              sets: [{
-                stage: slot.stage, volume: slot.volume, simple: false, qty: total,
-                menus: Object.entries(menus).map(([menu, n]) => ({ menu, qty: n })),
-              }],
-              date_qty: total,
-            }],
+            customer_request: opts.request.trim() || null,
+            items: [{ delivery_date: deliveryDate, sets, date_qty: total }],
           }),
         });
         const j = await res.json().catch(() => ({}));
@@ -597,6 +675,17 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const grand = tally.reduce((a, t) => a + t.sum, 0) + extras.reduce((a, e) => a + e.qty, 0);
   const mineAll = tally.reduce((a, t) => a + t.mine, 0);
 
+  // 반찬 접수일 때 보는 숫자 — 그날 반찬 세트 합과 사람 수
+  const banchanDay = dayOrders.reduce((a, o) =>
+    a + slicesOn(o as any, deliveryDate)
+      .filter(sl => sl.stage === '반찬세트')
+      .reduce((b, sl) => b + (Number(sl.qty) || 0), 0), 0);
+  const banchanPeople = dayOrders.filter(o =>
+    slicesOn(o as any, deliveryDate).some(sl => sl.stage === '반찬세트')).length;
+  const mineBanchan = done.reduce((a, d) =>
+    a + (d.undone || d.date !== deliveryDate ? 0
+      : d.lines.filter(l => l.ok && l.slot.key === BANCHAN_SLOT.key).reduce((b, l) => b + l.total, 0)), 0);
+
   const inp = 'rounded border border-stone-300 px-1.5 py-1 text-sm focus:border-amber-500 focus:outline-none';
   const onEnterConfirm = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') { e.preventDefault(); confirm(); }
@@ -604,36 +693,48 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
 
   return (
     <div className="bg-white rounded-xl border border-amber-200 overflow-hidden no-print mb-4">
-      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
-        <span className="font-bold text-stone-900 text-sm">
-          주문접수
-          {grand > 0 && (
-            <span className="ml-2 font-normal text-stone-500">
-              이 날짜 {grand}팩
-              {mineAll > 0 && <span className="ml-1 text-amber-700">(방금 {mineAll}팩)</span>}
+      {/* 머리말 — 제목 옆에 '무엇을 받는 중인지' 와 전환 버튼.
+          수요일은 반찬이 기본이고, 공휴일로 요일이 바뀌면 여기서 전환한다. */}
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button onClick={() => setOpen(o => !o)} className="flex-1 min-w-0 text-left">
+          <span className="font-bold text-stone-900 text-sm">
+            주문접수
+            {/* 어느 날짜에 넣는지 — 틀리면 제일 비싼 실수라 치는 자리 옆에 늘 띄워 둔다.
+                바꾸는 칸은 맨 위 줄(sticky)에 하나뿐이다. */}
+            <span className="ml-1.5 font-black text-amber-700">
+              {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))}({dowOf(deliveryDate)})
             </span>
-          )}
-        </span>
-        <span className="text-stone-400 text-xs">{open ? '접기' : '열기'}</span>
-      </button>
+            <span className={`ml-1.5 text-[11px] px-1.5 py-0.5 rounded font-bold align-middle ${
+              mode === '반찬' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+              {mode}
+            </span>
+            {grand > 0 && (
+              <span className="ml-2 font-normal text-stone-500">
+                이 날짜 {grand}{mode === '반찬' ? '팩·세트' : '팩'}
+                {mineAll > 0 && <span className="ml-1 text-amber-700">(방금 {mineAll}팩)</span>}
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          onClick={() => { setMode(m => (m === '이유식' ? '반찬' : '이유식')); setOpen(true); setErr(null); setInfo(null); }}
+          title="공휴일 때문에 요일이 바뀐 주에 씁니다. 날짜를 옮기면 그 날짜의 기본값으로 돌아옵니다"
+          className={`flex-shrink-0 px-2.5 py-1 rounded-lg border-2 text-[11px] font-bold ${
+            mode === '이유식'
+              ? 'border-emerald-300 text-emerald-800 hover:bg-emerald-50'
+              : 'border-amber-300 text-amber-800 hover:bg-amber-50'}`}>
+          {mode === '이유식' ? '반찬 접수로 전환' : '이유식 접수로 전환'}
+        </button>
+        <button onClick={() => setOpen(o => !o)} className="flex-shrink-0 text-stone-400 text-xs">
+          {open ? '접기' : '열기'}
+        </button>
+      </div>
 
       {open && (
         <div className="px-3 pb-4 border-t border-stone-100 pt-3">
-          <div className="flex flex-wrap items-center gap-3 mb-3">
-            {/* 화면 맨 위 날짜와 같은 칸이다. 여기서 바꾸면 위도 같이 바뀐다 */}
-            <label className="flex items-center gap-2">
-              <span className="text-xs font-medium text-stone-500">조리일</span>
-              <input type="date" value={deliveryDate}
-                onChange={e => { if (e.target.value) onDateChange(e.target.value); }}
-                className="rounded border border-stone-300 px-2 py-1 text-sm" />
-              <span className="text-sm font-bold text-stone-700">({dowOf(deliveryDate)})</span>
-              <span className="text-[10px] text-stone-400">맨 위 날짜와 같은 칸</span>
-            </label>
-            <p className="text-[11px] text-stone-500 leading-snug">
-              이름 → <b>엔터</b>로 집 고르기 → 칸에 팩수 → <b>엔터</b>면 저장. 칸 여러 개 같이 됩니다.
-              잘못 넣었으면 오른쪽 <b>되돌리기</b> — 취소되고 넣었던 내용이 다시 올라옵니다.
-            </p>
-          </div>
+          {/* 조리일 칸은 뺐다 — 맨 위 날짜 줄이 sticky 라 스크롤해도 늘 보이고,
+              여기서 바꾸면 그 줄이 바뀌는 같은 칸이었다. 날짜는 머리말에 글자로 남겼다.
+              쓰는 법 설명도 뺐다 — 사장님 혼자 쓰는 화면이라 자리만 차지한다. */}
 
           {/* 치는 곳(왼쪽)과 확인하는 곳(오른쪽)을 나란히 — 스크롤해야 합계가 보이면
               엔터를 칠 때마다 눈이 아래로 내려갔다 와야 한다 */}
@@ -848,7 +949,28 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             </div>
           )}
 
-          {/* ② 여덟 칸 */}
+          {/* ② 반찬 접수 — 단계·용량·메뉴가 없다. 세트 수만 받는다 */}
+          {mode === '반찬' && (
+            <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-emerald-900">반찬 세트</span>
+                <input inputMode="numeric" disabled={busy}
+                  value={banchan}
+                  onChange={e => setBanchan(e.target.value.replace(/\D/g, '').slice(0, 2))}
+                  onKeyDown={onEnterConfirm}
+                  placeholder="0"
+                  className="w-20 rounded border-2 border-emerald-300 px-2 py-1.5 text-center text-xl font-black
+                             focus:border-emerald-500 focus:outline-none" />
+                <span className="text-sm font-bold text-emerald-900">세트</span>
+                <span className="text-[11px] text-stone-500">
+                  이유식과 단가 체계가 다릅니다 · 메뉴는 나누지 않습니다
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* ② 여덟 칸 (이유식 접수) */}
+          {mode === '이유식' && (
           <div className="rounded-lg border border-stone-300 overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -890,6 +1012,82 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
               </tbody>
             </table>
           </div>
+          )}
+
+          {/* 받는 방법·권역·주문종류·요청 — 대개 지난 주문 그대로여서 접어 둔다.
+              열지 않으면 지금까지와 똑같이 동작한다(지난 주문 값, 주소로 권역 짐작). */}
+          <div className="mt-2 rounded-lg border border-stone-200 bg-stone-50/60">
+            <button onClick={() => setOptsOpen(o => !o)}
+              className="w-full flex items-center justify-between px-2 py-1 text-left">
+              <span className="text-[11px] text-stone-600">
+                {opts.receive === '픽업' ? <b className="text-emerald-700">픽업</b> : '배송'}
+                {opts.receive === '배송' && <span className="ml-1 text-stone-500">{opts.zone || `${zoneGuess} (짐작)`}</span>}
+                {opts.orderType === '선결제' && <b className="ml-1.5 text-sky-700">선결제</b>}
+                {opts.request.trim() && <span className="ml-1.5 text-amber-700">요청 있음</span>}
+                {hit && opts.months && <span className="ml-1.5 text-stone-500">{opts.months}개월</span>}
+              </span>
+              <span className="text-[10px] text-stone-400">{optsOpen ? '접기' : '픽업·선결제·권역·개월수·요청'}</span>
+            </button>
+            {optsOpen && (
+              <div className="px-2 pb-2 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] text-stone-500 w-12">받는 법</span>
+                  {(['배송', '픽업'] as const).map(v => (
+                    <button key={v} onClick={() => setOpts(o => ({ ...o, receive: v }))}
+                      className={`px-2 py-0.5 rounded text-[11px] border ${opts.receive === v ? 'bg-stone-800 text-white border-stone-800 font-bold' : 'bg-white border-stone-300 text-stone-600'}`}>
+                      {v}
+                    </button>
+                  ))}
+                  {opts.receive === '픽업' && <span className="text-[10px] text-stone-500">배송 안 나가고 기본가로 계산됩니다</span>}
+                </div>
+                {opts.receive === '배송' && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] text-stone-500 w-12">권역</span>
+                    {([['', `짐작 (${zoneGuess})`], ['직배송', '직배송'], ['당일배송', '당일배송'], ['택배익일배송', '택배익일']] as const).map(([v, label]) => (
+                      <button key={v} onClick={() => setOpts(o => ({ ...o, zone: v }))}
+                        className={`px-2 py-0.5 rounded text-[11px] border ${opts.zone === v ? 'bg-stone-800 text-white border-stone-800 font-bold' : 'bg-white border-stone-300 text-stone-600'}`}>
+                        {label}
+                      </button>
+                    ))}
+                    <span className="text-[10px] text-stone-500">직배송 아니면 팩당 +500원</span>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] text-stone-500 w-12">종류</span>
+                  {(['일반', '선결제'] as const).map(v => (
+                    <button key={v} onClick={() => setOpts(o => ({ ...o, orderType: v }))}
+                      className={`px-2 py-0.5 rounded text-[11px] border ${opts.orderType === v ? 'bg-sky-700 text-white border-sky-700 font-bold' : 'bg-white border-stone-300 text-stone-600'}`}>
+                      {v === '선결제' ? '선결제 (잔여 차감)' : v}
+                    </button>
+                  ))}
+                  {opts.orderType === '선결제' && (
+                    <span className="text-[10px] text-stone-500">고객관리에 충전된 잔여에서 팩수만큼 빠집니다</span>
+                  )}
+                </div>
+                {/* 개월수 — 아기는 자라니 지난 주문값 그대로면 틀린다. 짐작값을 보여주고 고치게 한다 */}
+                {hit && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-stone-500 w-12">개월수</span>
+                    <input inputMode="numeric" value={opts.months}
+                      onChange={e => setOpts(o => ({ ...o, months: e.target.value.replace(/\D/g, '').slice(0, 2) }))}
+                      onKeyDown={onEnterConfirm}
+                      placeholder={String(hit.guessMonths || hit.lastMonths || '')}
+                      className={`${inp} w-16 text-center`} />
+                    <span className="text-[10px] text-stone-500">
+                      비워두면 {hit.guessMonths || hit.lastMonths}개월 (지난 주문 {hit.lastDate} {hit.lastMonths}개월 기준)
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-stone-500 w-12">요청</span>
+                  <input value={opts.request}
+                    onChange={e => setOpts(o => ({ ...o, request: e.target.value.slice(0, 200) }))}
+                    onKeyDown={onEnterConfirm}
+                    placeholder="손님 요청 (선택)" className={`${inp} flex-1 text-[12px]`} />
+                </div>
+              </div>
+            )}
+          </div>
 
           {info && (
             <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 flex items-start gap-2">
@@ -902,9 +1100,12 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
           <button onClick={confirm} disabled={!canConfirm}
             className="mt-2 w-full rounded-lg bg-amber-500 py-2.5 text-sm font-semibold text-white disabled:bg-stone-200 disabled:text-stone-400">
             {busy ? '넣는 중…'
-              : canConfirm ? `확인 — ${hit ? hit.babyName : q.trim()} ${currentTotal}팩 (칸 ${usedSlots.length}개)  ⏎`
-              : isNew ? '연락처·주소·개월수와 팩수를 넣어주세요'
-              : '이름 고르고 팩수를 넣어주세요'}
+              : canConfirm
+                ? (mode === '반찬'
+                    ? `확인 — ${hit ? hit.babyName : q.trim()} 반찬 ${banchanQty}세트  ⏎`
+                    : `확인 — ${hit ? hit.babyName : q.trim()} ${currentTotal}팩 (칸 ${usedSlots.length}개)  ⏎`)
+              : isNew ? `연락처·주소·개월수와 ${mode === '반찬' ? '세트 수' : '팩수'}를 넣어주세요`
+              : `이름 고르고 ${mode === '반찬' ? '세트 수' : '팩수'}를 넣어주세요`}
           </button>
 
           </div>
@@ -945,7 +1146,30 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
               );
             })()}
 
+            {/* 반찬 접수일 때 — 여덟 칸 표는 뜻이 없다. 그날 세트 수만 본다 */}
+            {mode === '반찬' && (
+              <div className="rounded-lg border-2 border-emerald-300 overflow-hidden">
+                <div className="px-2.5 py-1 bg-emerald-100 border-b border-emerald-200 flex items-baseline justify-between">
+                  <span className="text-[13px] font-black text-emerald-900">
+                    반찬 세트
+                    <span className="ml-1 font-normal text-[11px] text-emerald-800">
+                      {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-emerald-800">{banchanPeople}명</span>
+                </div>
+                <div className="px-3 py-3 text-center">
+                  <div className="text-3xl font-black text-emerald-900">{banchanDay}</div>
+                  <div className="text-[11px] text-stone-500">
+                    세트
+                    {mineBanchan > 0 && <span className="ml-1 text-amber-700 font-bold">(방금 +{mineBanchan})</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 조리갯수 — 비어 있어도 자리를 지킨다. 칸이 움직이면 눈이 다시 찾아야 한다 */}
+            {mode === '이유식' && (
             <div className="rounded-lg border border-stone-300 overflow-hidden">
               <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200">
                 <div className="flex items-baseline justify-between">
@@ -1016,6 +1240,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                 </p>
               )}
             </div>
+            )}
 
             {/* 방금 넣은 것들 — 최근 것이 위로 */}
             {done.length > 0 && (
