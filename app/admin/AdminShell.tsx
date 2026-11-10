@@ -498,7 +498,7 @@ export default function AdminShell({
                 주소창(?date=)까지 같이 바뀌어서 넣은 주문이 바로 아래 조리표에 보인다. */}
             {/* 저장할 때마다 서버에서 주문 500건을 다시 받으면 한 건 넣을 때마다 화면이 멈춘다.
                 만들어진 줄만 받아서 꽂는다 — 아래 조리표에 바로 보이고 기다릴 게 없다. */}
-            <GridEntry date={selectedDate}
+            <GridEntry date={selectedDate} orders={orders}
               onSaved={rows => {
                 if (rows?.length) setOrders(prev => [...(rows as Order[]), ...prev]);
                 else router.refresh();
@@ -576,10 +576,14 @@ function CookingSheet({ orders, today, customers, onChanged }: {
   // "그날 몫 세트" 단위로 묶는다.
   type Row = { order: Order; menus: Record<string, number>; qty: number };
   const totals: Record<MenuType, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
+  // 팩수 합계는 메뉴 합과 따로 센다 — 메뉴를 안 적은 몫(카톡에 "300g 3팩" 만 온 경우)이
+  // 있으면 둘이 다르다. 메뉴 합만 보여주면 그 팩은 어디에도 안 세어져 만드는 양이 모자란다.
+  let packTotal = 0;
   const groupMap = new Map<string, { stage: string; volume: number; rows: Row[] }>();
   for (const o of orders) {
     for (const s of slicesOn(o as any, today)) {
       for (const m of MENU_TYPES) totals[m] += s.menus[m] || 0;
+      packTotal += Number(s.qty) || 0;
       const key = `${s.stage ?? '-'}|${s.volume ?? 0}`;
       if (!groupMap.has(key)) groupMap.set(key, { stage: String(s.stage ?? '-'), volume: Number(s.volume ?? 0), rows: [] });
       groupMap.get(key)!.rows.push({ order: o, menus: s.menus, qty: s.qty });
@@ -675,11 +679,17 @@ function CookingSheet({ orders, today, customers, onChanged }: {
 
         <div className="border-t-2 border-stone-900 pt-3">
           <div className="font-bold text-sm mb-2">■ 합계</div>
-          <div className="flex gap-6 text-sm">
+          <div className="flex gap-6 text-sm flex-wrap">
             {MENU_TYPES.map(m => (
               <div key={m}><span className="text-stone-500">{m}</span> <strong>{totals[m]}팩</strong></div>
             ))}
-            <div><span className="text-stone-500">전체</span> <strong>{Object.values(totals).reduce((a,b)=>a+b,0)}팩</strong></div>
+            {packTotal - Object.values(totals).reduce((a, b) => a + b, 0) > 0 && (
+              <div className="text-rose-700">
+                <span>메뉴 미정</span>{' '}
+                <strong>{packTotal - Object.values(totals).reduce((a, b) => a + b, 0)}팩</strong>
+              </div>
+            )}
+            <div><span className="text-stone-500">전체</span> <strong>{packTotal}팩</strong></div>
           </div>
         </div>
       </div>

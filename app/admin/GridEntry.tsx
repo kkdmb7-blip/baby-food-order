@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { MENU_TYPES, menuLabel, type StageType } from '@/lib/supabase';
-import { SLOTS, fitSlot, type Slot } from '@/lib/slots';
+import { SLOTS, slotKey, fitSlot, type Slot } from '@/lib/slots';
+import { slicesOn } from '@/lib/orderItems';
 import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
 /*
@@ -105,8 +106,10 @@ type Done = {
 
 let SEQ = 1;
 
-export default function GridEntry({ date, onSaved, onDateChange }: {
+export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   date: string;
+  /** 그날 주문 전부 — 오른쪽 조리갯수를 아래 조리표와 같은 자료로 세기 위해 받는다 */
+  orders: any[];
   /** 만들어진 주문 줄을 넘긴다 — 화면이 주문 전체를 다시 받지 않고 그 줄만 꽂으면 된다 */
   onSaved: (rows?: any[]) => void;
   onDateChange: (d: string) => void;
@@ -545,20 +548,52 @@ export default function GridEntry({ date, onSaved, onDateChange }: {
     onSaved();
   }
 
-  // 넣은 것들의 조리갯수 (엑셀 '조리갯수' 시트 자리). 되돌린 건 빠진다.
-  // 지금 고른 조리일 것만 센다 — 날짜를 바꿔가며 치면 다른 날 팩수가 섞여 대조가 안 된다.
+  /* 조리갯수 (엑셀 '조리갯수' 시트 자리)
+
+     ⚠️ 전에는 '이 화면에서 방금 넣은 것' 만 셌다. 그러면 아래 조리표와 숫자가 달라진다 —
+        아래 조리표는 그날 주문 전부(손님이 직접 넣은 것, 어제 들어온 것, 다른 기기에서
+        넣은 것)를 보여주기 때문이다. 담는 쪽이 쓰는 숫자가 두 가지면 그게 사고가 된다.
+        이제 아래 조리표·담는 수량 프린트와 같은 자료(그날 주문 + slicesOn)로 센다.
+        방금 넣은 몫은 각 줄에 '+n' 으로 따로 보여준다.
+
+     미지정: 팩수는 있는데 메뉴를 안 적은 몫(카톡에 "300g 3팩" 만 적혀 온 경우).
+             이걸 빼놓으면 합계가 조리표와 어긋나므로 칸을 따로 둔다. */
+  const dayOrders = orders.filter(o => o && o.status !== '취소');
   const tally = SLOTS.map(s => {
     const counts: Record<string, number> = {};
     for (const m of MENU_TYPES) counts[m] = 0;
-    for (const d of done) {
-      if (d.undone || d.date !== deliveryDate) continue;
-      for (const l of d.lines) {
-        if (l.ok && l.slot.key === s.key) for (const m of MENU_TYPES) counts[m] += l.menus[m] || 0;
+    let sum = 0;
+    for (const o of dayOrders) {
+      for (const sl of slicesOn(o as any, deliveryDate)) {
+        if (slotKey(sl.stage, sl.volume) !== s.key) continue;
+        for (const m of MENU_TYPES) counts[m] += sl.menus[m] || 0;
+        sum += Number(sl.qty) || 0;
       }
     }
-    return { slot: s, counts, sum: MENU_TYPES.reduce((a, m) => a + counts[m], 0) };
+    // 이 화면에서 방금 넣은 몫 (되돌린 건 빠진다)
+    let mine = 0;
+    for (const d of done) {
+      if (d.undone || d.date !== deliveryDate) continue;
+      for (const l of d.lines) if (l.ok && l.slot.key === s.key) mine += l.total;
+    }
+    const named = MENU_TYPES.reduce((a, m) => a + counts[m], 0);
+    return { slot: s, counts, sum, mine, unnamed: Math.max(0, sum - named) };
   });
-  const grand = tally.reduce((a, t) => a + t.sum, 0);
+  // 여덟 칸에 없는 줄(반찬세트, 옛 복합주문 등) — 합계가 조리표와 맞아야 하므로 같이 센다
+  const extras = (() => {
+    const map = new Map<string, number>();
+    for (const o of dayOrders) {
+      for (const sl of slicesOn(o as any, deliveryDate)) {
+        const key = slotKey(sl.stage, sl.volume);
+        if (SLOTS.some(x => x.key === key)) continue;
+        const label = `${sl.stage ?? '-'}${sl.volume ? ` ${sl.volume}g` : ''}`;
+        map.set(label, (map.get(label) || 0) + (Number(sl.qty) || 0));
+      }
+    }
+    return [...map.entries()].map(([label, qty]) => ({ label, qty }));
+  })();
+  const grand = tally.reduce((a, t) => a + t.sum, 0) + extras.reduce((a, e) => a + e.qty, 0);
+  const mineAll = tally.reduce((a, t) => a + t.mine, 0);
 
   const inp = 'rounded border border-stone-300 px-1.5 py-1 text-sm focus:border-amber-500 focus:outline-none';
   const onEnterConfirm = (e: React.KeyboardEvent) => {
@@ -570,7 +605,12 @@ export default function GridEntry({ date, onSaved, onDateChange }: {
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
         <span className="font-bold text-stone-900 text-sm">
           주문접수
-          {grand > 0 && <span className="ml-2 font-normal text-amber-700">{grand}팩 넣음</span>}
+          {grand > 0 && (
+            <span className="ml-2 font-normal text-stone-500">
+              이 날짜 {grand}팩
+              {mineAll > 0 && <span className="ml-1 text-amber-700">(방금 {mineAll}팩)</span>}
+            </span>
+          )}
         </span>
         <span className="text-stone-400 text-xs">{open ? '접기' : '열기'}</span>
       </button>
@@ -905,23 +945,28 @@ export default function GridEntry({ date, onSaved, onDateChange }: {
 
             {/* 조리갯수 — 비어 있어도 자리를 지킨다. 칸이 움직이면 눈이 다시 찾아야 한다 */}
             <div className="rounded-lg border border-stone-300 overflow-hidden">
-              <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200 flex items-baseline justify-between">
-                <span className="text-[13px] font-black text-stone-800">
-                  조리갯수
-                  <span className="ml-1 font-normal text-[11px] text-stone-500">
-                    {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)}
+              <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[13px] font-black text-stone-800">
+                    조리갯수
+                    <span className="ml-1 font-normal text-[11px] text-stone-500">
+                      {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
+                    </span>
                   </span>
-                </span>
-                <span className="text-[11px] text-stone-500">
-                  넣은 것 {done.filter(d => !d.undone && d.date === deliveryDate).length}명
-                </span>
+                  <span className="text-[11px] text-stone-500">{dayOrders.length}명</span>
+                </div>
+                <p className="text-[10px] text-stone-400 leading-tight">
+                  아래 조리표·담는 수량과 같은 숫자입니다
+                  {mineAll > 0 && <span className="text-amber-700"> · 그중 방금 넣은 것 +{mineAll}팩</span>}
+                </p>
               </div>
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="text-[10px] text-stone-400 bg-stone-50">
                     <th className="text-left font-medium px-2 py-0.5">칸</th>
-                    {MENU_TYPES.map(m => <th key={m} className="font-medium py-0.5 w-9">{menuLabel(m)}</th>)}
-                    <th className="font-medium py-0.5 w-9">합</th>
+                    {MENU_TYPES.map(m => <th key={m} className="font-medium py-0.5 w-8">{menuLabel(m)}</th>)}
+                    <th className="font-medium py-0.5 w-8" title="팩수는 있는데 메뉴를 안 적은 몫">미정</th>
+                    <th className="font-medium py-0.5 w-8">합</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -937,19 +982,37 @@ export default function GridEntry({ date, onSaved, onDateChange }: {
                         {MENU_TYPES.map(m => (
                           <td key={m} className="py-0.5 text-center">{t.counts[m] || '·'}</td>
                         ))}
-                        <td className="py-0.5 text-center font-bold">{t.sum || '·'}</td>
+                        <td className={`py-0.5 text-center ${t.unnamed ? 'text-rose-600 font-bold' : ''}`}>{t.unnamed || '·'}</td>
+                        <td className="py-0.5 text-center font-bold">
+                          {t.sum || '·'}
+                          {t.mine > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-700">+{t.mine}</span>}
+                        </td>
                       </tr>
                     );
                   })}
+                  {/* 여덟 칸에 없는 줄 — 빼놓으면 합계가 조리표와 어긋난다 */}
+                  {extras.map(e => (
+                    <tr key={e.label} className="border-t border-stone-100 text-stone-500">
+                      <td className="px-2 py-0.5 whitespace-nowrap text-[11px]">{e.label}</td>
+                      <td colSpan={MENU_TYPES.length + 1} className="py-0.5 text-center text-[10px] text-stone-400">여기선 안 나눠요</td>
+                      <td className="py-0.5 text-center font-bold">{e.qty}</td>
+                    </tr>
+                  ))}
                   <tr className="border-t-2 border-stone-400 bg-stone-50 font-black">
                     <td className="px-2 py-1">합계</td>
                     {MENU_TYPES.map(m => (
                       <td key={m} className="py-1 text-center">{tally.reduce((a, t) => a + t.counts[m], 0) || '·'}</td>
                     ))}
+                    <td className="py-1 text-center">{tally.reduce((a, t) => a + t.unnamed, 0) || '·'}</td>
                     <td className="py-1 text-center text-amber-700">{grand || '·'}</td>
                   </tr>
                 </tbody>
               </table>
+              {tally.some(t => t.unnamed > 0) && (
+                <p className="px-2 py-1 text-[10px] text-rose-700 bg-rose-50 border-t border-rose-200 leading-snug">
+                  '미정' 은 팩수만 들어오고 메뉴를 안 적은 몫이에요 — 아래 조리표에서 <b>고치기</b>로 나눠주세요.
+                </p>
+              )}
             </div>
 
             {/* 방금 넣은 것들 — 최근 것이 위로 */}
