@@ -11,6 +11,8 @@ import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } fr
     ② 여덟 칸(중기1 240·310, 중기2 230·300, 후기 230·300, 완료기 230·300)에
        해당하는 자리에 한우·닭·기타 팩수를 넣는다
     ③ 엔터나 '확인' → 저장되고 아래로 쌓인다. 입력칸은 비워져 다음 사람 차례.
+    ④ 잘못 넣었으면 '되돌리기' → 그 주문은 취소되고, 넣었던 내용이 위 칸에 그대로 올라온다.
+       되돌리기는 지우는 버튼이 아니라 고치는 버튼이다 — 고쳐서 다시 엔터를 치면 된다.
 
   왜 여덟 칸을 다 열어두나
     한 사람이 같은 단계를 다른 용량으로 시키기도 하고(중기2 230 + 중기2 300),
@@ -26,9 +28,10 @@ import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } fr
     조리표에서는 같은 사람으로 묶여 '합쳐 담기' 표시가 붙는다.
     한 칸이 실패해도 나머지는 들어가고, 어느 칸이 실패했는지 아래에 적힌다.
 
-  단골 전용이다
-    저장에 연락처·주소·개월수가 필요한데 그건 이름을 골라야 채워진다.
-    처음 오는 손님은 아래 '조리표에 줄 넣기'로 넣어야 한다.
+  처음 오는 손님도 여기서 받는다
+    단골은 이름만 고르면 연락처·주소·개월수가 지난 주문에서 따라온다.
+    처음 오는 손님은 그 자리에서 연락처·주소·개월수를 받아 고객으로도 저장한다.
+    선결제·픽업과 반찬(유아식)은 아직 아래 '조리표에 줄 넣기'로 넣어야 한다.
 */
 
 type Addr = {
@@ -62,11 +65,28 @@ const SLOTS: Slot[] = STAGES.flatMap(s => {
 
 type Qty = Record<string, Record<string, string>>;   // slotKey → menu → 팩수
 
+const copyQty = (q: Qty): Qty => Object.fromEntries(Object.entries(q).map(([k, v]) => [k, { ...v }]));
+
+/** 넣을 때 화면에 있던 것 전부. 되돌리기를 누르면 이걸 그대로 다시 올린다 —
+    되돌리기는 지우는 버튼이 아니라 고치는 버튼이라, 내용이 돌아와야 고칠 수 있다. */
+type Snap = {
+  deliveryDate: string;
+  q: string;
+  hit: Hit | null;
+  isNew: boolean;
+  nc: { phone: string; address: string; months: string; door: string };
+  addrIdx: number;
+  addrAdding: boolean;
+  addrNew: { address: string; door: string };
+  qty: Qty;
+};
+
 /** 넣고 난 줄 — 아래로 쌓인다. id 를 들고 있어야 잘못 친 걸 되돌릴 수 있다 */
 type Done = {
   key: number;
   name: string;
   undone?: boolean;
+  snap: Snap;
   lines: { slot: Slot; menus: Record<string, number>; total: number; ok: boolean; error?: string; id?: string }[];
 };
 
@@ -121,6 +141,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setDeliveryDate(date); }, [date]);
@@ -229,10 +250,22 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   }
 
   function reset() {
-    setQ(''); setHit(null); setQty({}); setHits([]); setListOpen(false); setErr(null);
+    setQ(''); setHit(null); setQty({}); setHits([]); setListOpen(false); setErr(null); setInfo(null);
     setPaste(''); setParsed(null); setPasteNote(null);
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
+    setTimeout(() => nameRef.current?.focus(), 0);
+  }
+
+  /** 넣었던 것을 화면에 그대로 다시 올린다 — 이름·연락처·주소·팩수까지. 고쳐서 엔터만 치면 된다 */
+  function restore(s: Snap) {
+    setDeliveryDate(s.deliveryDate);
+    setQ(s.q); setHit(s.hit); setHits([]); setListOpen(false);
+    setIsNew(s.isNew); setNc({ ...s.nc });
+    setAddrIdx(s.addrIdx); setAddrAdding(s.addrAdding); setAddrNew({ ...s.addrNew });
+    setQty(copyQty(s.qty));
+    setPaste(''); setParsed(null); setPasteNote(null);
+    setErr(null);
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
@@ -251,7 +284,13 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       } else if (currentTotal === 0) setErr('팩수를 넣어주세요');
       return;
     }
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setInfo(null);
+
+    // 넣기 전에 화면을 그대로 떠 둔다 — 되돌리기를 누르면 이걸 다시 올린다
+    const snap: Snap = {
+      deliveryDate, q: q.trim(), hit, isNew, nc: { ...nc },
+      addrIdx, addrAdding, addrNew: { ...addrNew }, qty: copyQty(qty),
+    };
 
     // 단골이면 지난 주문에서(고른 주소로), 처음이면 지금 치신 값에서
     const name = hit ? hit.babyName : q.trim();
@@ -315,19 +354,30 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       }
     }
 
-    setDone(d => [{ key: SEQ++, name, lines }, ...d]);
+    setDone(d => [{ key: SEQ++, name, lines, snap }, ...d]);
     setBusy(false);
     if (lines.some(l => l.ok)) onSaved();
     if (lines.every(l => l.ok)) reset();
     else setErr('일부 칸이 안 들어갔어요 — 아래에서 확인해주세요');
   }
 
-  /** 실수로 엔터를 쳤을 때 — 방금 넣은 것을 취소한다.
-      취소된 주문은 조리표·주소록에서 빠지므로 안 만들고 안 나간다. */
+  /** 잘못 넣었을 때 — 그 주문을 취소하고, 넣었던 내용을 위 칸에 그대로 다시 올린다.
+      지우는 버튼이 아니라 고치는 버튼이다. 내용이 사라지면 처음부터 다시 쳐야 하니
+      이름·연락처·주소·팩수를 그대로 되돌려 두고, 고친 뒤 엔터를 치면 새로 들어간다.
+      취소된 주문은 조리표·주소록에서 빠지므로 안 만들고 안 나간다.
+      선결제 손님은 취소할 때 서버가 잔액을 되돌려주므로(applyCancelReversal)
+      다시 넣어도 두 번 빠지지 않는다. */
   async function undo(d: Done) {
     const ids = d.lines.filter(l => l.ok && l.id).map(l => l.id!);
     if (!ids.length) return;
-    setBusy(true); setErr(null);
+
+    // 이미 다음 사람을 치고 있으면 그게 날아간다 — 그때만 한 번 묻는다.
+    // 되돌리는 사람이 지금 화면에 올라와 있는 사람이면 물을 일이 아니다.
+    const typing = q.trim() !== '' || currentTotal > 0 || isNew;
+    if (typing && q.trim() !== d.snap.q
+        && !window.confirm(`지금 치고 있는 내용이 지워지고 ${d.name}이(가) 올라옵니다. 되돌릴까요?`)) return;
+
+    setBusy(true); setErr(null); setInfo(null);
     let failed = 0;
     for (const id of ids) {
       try {
@@ -339,8 +389,13 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       } catch { failed++; }
     }
     setBusy(false);
-    if (failed) setErr(`${failed}건을 못 되돌렸어요 — 주문 탭에서 확인해주세요`);
-    else setDone(ds => ds.map(x => (x.key === d.key ? { ...x, undone: true } : x)));
+    if (failed) {
+      setErr(`${failed}건을 못 되돌렸어요 — 주문 탭에서 확인해주세요`);
+    } else {
+      setDone(ds => ds.map(x => (x.key === d.key ? { ...x, undone: true } : x)));
+      restore(d.snap);
+      setInfo(`${d.name} — 취소했어요. 넣었던 내용을 위에 그대로 올려뒀으니 고친 뒤 엔터를 치면 다시 들어갑니다.`);
+    }
     onSaved();
   }
 
@@ -384,7 +439,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
             </label>
             <p className="text-[11px] text-stone-500 leading-snug">
               이름 → <b>엔터</b>로 집 고르기 → 칸에 팩수 → <b>엔터</b>면 저장. 칸 여러 개 같이 됩니다.
-              처음 오는 손님은 아래 <b>조리표에 줄 넣기</b>로.
+              잘못 넣었으면 오른쪽 <b>되돌리기</b> — 취소되고 넣었던 내용이 다시 올라옵니다.
             </p>
           </div>
 
@@ -603,6 +658,12 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
             </table>
           </div>
 
+          {info && (
+            <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 flex items-start gap-2">
+              <span className="flex-1">{info}</span>
+              <button onClick={() => setInfo(null)} className="flex-shrink-0 text-amber-700/70 underline">닫기</button>
+            </p>
+          )}
           {err && <p className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</p>}
 
           <button onClick={confirm} disabled={!canConfirm}
@@ -678,15 +739,15 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                           </span>
                         ))}
                       </div>
-                      {/* 실수로 엔터를 쳤을 때 — 여기서 바로 되돌린다 */}
+                      {/* 잘못 넣었을 때 — 취소하고 내용을 위 칸에 그대로 올린다(고치는 버튼) */}
                       {!d.undone && d.lines.some(l => l.ok && l.id) && (
                         <button onClick={() => undo(d)} disabled={busy}
-                          title="이 줄을 취소합니다"
-                          className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 disabled:opacity-40">
+                          title="취소하고 넣었던 내용을 위 칸에 그대로 올립니다 — 고쳐서 다시 엔터"
+                          className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300 disabled:opacity-40">
                           되돌리기
                         </button>
                       )}
-                      {d.undone && <span className="flex-shrink-0 text-[10px] text-stone-400">취소됨</span>}
+                      {d.undone && <span className="flex-shrink-0 text-[10px] text-stone-400">위로 올림</span>}
                     </div>
                   ))}
                 </div>
