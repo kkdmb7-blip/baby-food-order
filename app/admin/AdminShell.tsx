@@ -9,6 +9,7 @@ import { slicesOn, qtyOn } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import KakaoOrderEntry from './KakaoOrderEntry';
 import CookingEntry from './CookingEntry';
+import GridEntry from './GridEntry';
 
 type Tab = '주문' | '카톡주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
 
@@ -395,7 +396,10 @@ export default function AdminShell({
 
         {tab === '조리표' && (
           <>
-            {/* 조리표를 보면서 바로 줄을 넣을 수 있게. 프린트할 땐 안 나온다(no-print). */}
+            {/* 조리표를 보면서 바로 줄을 넣을 수 있게. 프린트할 땐 안 나온다(no-print).
+                격자(GridEntry)는 단골을 줄줄이 칠 때, 폼(CookingEntry)은 처음 오는 손님이나
+                반찬 주문처럼 칸이 더 필요할 때. 둘 다 같은 /api/orders 로 들어간다. */}
+            <GridEntry date={selectedDate} onSaved={() => router.refresh()} />
             <CookingEntry date={selectedDate} onSaved={() => router.refresh()} />
             <CookingSheet orders={orders} today={selectedDate} />
           </>
@@ -486,6 +490,12 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
           <button onClick={printAll}
             className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
             🖨 조리표 프린트
+          </button>
+          {/* 담는 쪽은 "누가 뭘 먹는지"가 아니라 "단계·용량별 몇 개"만 보면 된다.
+              엑셀에서도 '조리갯수' 시트를 따로 뽑아 담는 대에서 쓰고 계셨다. */}
+          <button onClick={() => window.open(`/admin/print/tally?date=${today}`, '_blank')}
+            className="px-4 py-2 bg-white border-2 border-stone-400 text-stone-700 rounded-lg text-sm font-bold">
+            📋 담는 수량 프린트
           </button>
           {/* 프린트한 뒤에 들어온 줄이 있을 때만 — 없을 때 보이면 눌러보게 된다 */}
           {(printInfo?.newOrders ?? 0) > 0 && (
