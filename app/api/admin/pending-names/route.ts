@@ -42,9 +42,16 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: true })
     .limit(500);
 
-  if (DATE.test(from) && DATE.test(to)) q = q.gte('delivery_date', from).lte('delivery_date', to);
-  else if (DATE.test(date)) q = q.eq('delivery_date', date);
-  else return NextResponse.json({ error: 'invalid date' }, { status: 400 });
+  if (DATE.test(from) && DATE.test(to)) {
+    // 요일을 아직 안 고른 '이름 행'(delivery_date 가 null)도 같이 준다 — 체크판의 줄이 된다.
+    // 다만 영원히 쌓이면 판이 길어지므로 최근 2주 안에 적은 것만.
+    const since = new Date(Date.parse(from + 'T00:00:00Z') - 14 * 86400000).toISOString();
+    q = q.or(`and(delivery_date.gte.${from},delivery_date.lte.${to}),and(delivery_date.is.null,created_at.gte.${since})`);
+  } else if (DATE.test(date)) {
+    q = q.eq('delivery_date', date);
+  } else {
+    return NextResponse.json({ error: 'invalid date' }, { status: 400 });
+  }
 
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -55,9 +62,11 @@ export async function POST(req: NextRequest) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const b = await req.json().catch(() => ({}));
 
-  const delivery_date = String(b.delivery_date || '').trim();
+  // 날짜 없이 이름만 올릴 수 있다 — 요일은 나중에 체크한다(이름 행)
+  const raw = String(b.delivery_date || '').trim();
+  const delivery_date = DATE.test(raw) ? raw : null;
   const baby_name = String(b.baby_name || '').trim().slice(0, 20);
-  if (!DATE.test(delivery_date)) return NextResponse.json({ error: '조리일을 골라주세요' }, { status: 400 });
+  if (raw && !delivery_date) return NextResponse.json({ error: '조리일 형식이 아니에요' }, { status: 400 });
   if (!baby_name) return NextResponse.json({ error: '이름을 넣어주세요' }, { status: 400 });
 
   const phone = String(b.customer_phone || '').replace(/\D/g, '');
@@ -76,18 +85,20 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, row: data });
 }
 
-/** 처리됨 표시(또는 되돌리기). body: { id, done: boolean } */
+/** 처리됨 표시(또는 되돌리기), 또는 비고 고치기. body: { id, done?: boolean, note?: string } */
 export async function PATCH(req: NextRequest) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const b = await req.json().catch(() => ({}));
   const id = String(b.id || '');
   if (!UUID.test(id)) return NextResponse.json({ error: 'invalid id' }, { status: 400 });
 
+  const patch: Record<string, any> = {};
+  if (typeof b.note === 'string') patch.note = b.note.trim().slice(0, 100) || null;
+  if (b.done !== undefined) patch.done_at = b.done === false ? null : new Date().toISOString();
+  if (!Object.keys(patch).length) return NextResponse.json({ error: '바꿀 게 없어요' }, { status: 400 });
+
   const sb = supabaseService();
-  const { error } = await sb
-    .from('baby_food_pending_names')
-    .update({ done_at: b.done === false ? null : new Date().toISOString() })
-    .eq('id', id);
+  const { error } = await sb.from('baby_food_pending_names').update(patch).eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

@@ -84,9 +84,12 @@ function modeFor(d: string): '이유식' | '반찬' {
   return new Date(d + 'T00:00:00Z').getUTCDay() === BANCHAN_DOW ? '반찬' : '이유식';
 }
 
-/** 조리일에 이름만 적어둔 것. 팩수도 메뉴도 없는 '그날 할 일'이다 */
+/**
+ * 미리 적어둔 것. 팩수도 메뉴도 없는 '그날 할 일'이다.
+ * delivery_date 가 null 이면 요일을 아직 안 고른 '이름 행' — 비고를 여기에 적는다.
+ */
 type Pend = {
-  id: string; delivery_date: string; baby_name: string;
+  id: string; delivery_date: string | null; baby_name: string;
   customer_phone: string | null; note: string | null; done_at: string | null;
 };
 
@@ -413,7 +416,29 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
      목요일 자리에 이름만 적어두고 목요일에 카톡을 다시 보며 채우는 것이 원래 방식이다.
      주문으로 넣으면 0팩 주문이 조리표·매출에 섞이니 따로 둔다. */
 
-  /** 요일 체크판에서 칸을 눌렀을 때 — 비어 있으면 적어두고, 체크돼 있으면 지운다 */
+  /** 적어두기 한 줄 넣기. date 가 null 이면 요일 없는 '이름 행' */
+  async function addPend(name: string, phone: string | null, d: string | null) {
+    const r = await fetch('/api/admin/pending-names', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delivery_date: d || '', baby_name: name, customer_phone: phone || '' }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || '적어두기 실패');
+    if (j.row) setPend(p => [...p, j.row]);
+    return j.row as Pend | undefined;
+  }
+
+  /** 이름만 체크판에 올린다 — 요일은 안 골라도 된다 */
+  async function addName(name: string, phone: string | null) {
+    const nm = name.trim();
+    if (!nm) return;
+    if (pend.some(p => p.baby_name === nm)) return;   // 이미 판에 있다
+    setErr(null);
+    try { await addPend(nm, phone, null); }
+    catch (e: any) { setErr(e?.message || '적어두기 실패'); }
+  }
+
+  /** 요일 칸을 눌렀을 때 — 비어 있으면 그 날로 적어두고, 체크돼 있으면 지운다 */
   async function toggleCell(name: string, phone: string | null, d: string) {
     const nm = name.trim();
     if (!nm || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
@@ -421,14 +446,26 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     if (found) { void removePend(found.id); return; }
     setErr(null);
     try {
-      const r = await fetch('/api/admin/pending-names', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ delivery_date: d, baby_name: nm, customer_phone: phone || '' }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) { setErr(j.error || '적어두기 실패'); return; }
-      if (j.row) setPend(p => [...p, j.row]);
+      // 비고를 적을 집(이름 행)이 없으면 같이 만들어 둔다
+      if (!pend.some(p => p.baby_name === nm && !p.delivery_date)) await addPend(nm, phone, null);
+      await addPend(nm, phone, d);
     } catch (e: any) { setErr(e?.message || '적어두기 실패'); }
+  }
+
+  /** 비고 — 이름 행에 적는다(요일마다 따로 적을 일이 아니다) */
+  async function saveNote(name: string, phone: string | null, note: string) {
+    const nm = name.trim();
+    if (!nm) return;
+    let row = pend.find(p => p.baby_name === nm && !p.delivery_date);
+    setPend(ps => ps.map(x => (x.baby_name === nm && !x.delivery_date ? { ...x, note } : x)));
+    try {
+      if (!row) row = await addPend(nm, phone, null);
+      if (!row) return;
+      await fetch('/api/admin/pending-names', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: row.id, note }),
+      });
+    } catch { /* 비고만 못 적힌 것이라 입력은 영향 없다 */ }
   }
 
   /** 적어둔 이름을 눌렀을 때 — 이름을 쳐서 집을 고른 것과 똑같은 상태가 된다 */
@@ -701,8 +738,16 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     slicesOn(o as any, deliveryDate).some(sl => sl.stage === '반찬세트')).length;
   // 요일 체크판의 줄 — 그 주에 적어둔 이름들(먼저 적어둔 순서)
   const boardRows = (() => {
-    const m = new Map<string, { name: string; phone: string | null }>();
-    for (const p of pend) if (!m.has(p.baby_name)) m.set(p.baby_name, { name: p.baby_name, phone: p.customer_phone });
+    const m = new Map<string, { name: string; phone: string | null; note: string }>();
+    for (const p of pend) {
+      const prev = m.get(p.baby_name);
+      m.set(p.baby_name, {
+        name: p.baby_name,
+        phone: prev?.phone || p.customer_phone,
+        // 비고는 이름 행(날짜 없는 줄)에 있다
+        note: (!p.delivery_date ? p.note : prev?.note) || prev?.note || '',
+      });
+    }
     return [...m.values()];
   })();
 
@@ -762,7 +807,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
 
           {/* 치는 곳(왼쪽)과 확인하는 곳(오른쪽)을 나란히 — 스크롤해야 합계가 보이면
               엔터를 칠 때마다 눈이 아래로 내려갔다 와야 한다 */}
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] items-start">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] items-start">
           <div>
 
           {/* ⓪ 카톡 주문서 — 읽을 수 있는 만큼만 읽어 아래 칸을 채운다. 저장은 사장님이 엔터로 */}
@@ -822,7 +867,8 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                   else confirm();
                 }}
                 placeholder="아기 이름"
-                className={`${inp} flex-1 text-base font-bold ${hit ? 'border-emerald-400 bg-emerald-50/50' : ''}`}
+                /* 이름만 치는 칸이라 넓을 필요가 없다 — 넓으면 뒤 칸까지 눈이 가야 한다 */
+                className={`${inp} w-[130px] text-base font-bold ${hit ? 'border-emerald-400 bg-emerald-50/50' : ''}`}
               />
               {/* '+ 다른 날' 버튼은 뺐다 — 오른쪽 요일 체크판에서 칸을 누르면 된다 */}
               {(hit || isNew) && (
@@ -1205,31 +1251,35 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             <div className="rounded-lg border border-sky-300 overflow-hidden">
               <div className="px-2 py-1 bg-sky-100 border-b border-sky-200 flex items-baseline justify-between">
                 <span className="text-[12px] font-black text-sky-900">미리 적어두기</span>
+                {/* 요일이 체크된 것 중 아직 주문 안 들어간 것만 센다 (이름만 올려둔 줄은 할 일이 아니다) */}
                 <span className="text-[10px] text-sky-800">
-                  {pend.filter(p => !p.done_at).length ? `${pend.filter(p => !p.done_at).length}건 남음` : '남은 것 없음'}
+                  {(() => {
+                    const n = pend.filter(p => p.delivery_date && !p.done_at).length;
+                    return n ? `${n}건 남음` : '남은 것 없음';
+                  })()}
                 </span>
               </div>
-              <table className="w-full text-[12px]">
+              <table className="w-full text-[12px] table-fixed">
                 <thead>
                   <tr className="bg-sky-50 text-[10px] text-sky-900">
-                    <th className="text-left font-medium pl-2 py-1">이름</th>
+                    <th className="text-left font-medium pl-1.5 py-1 w-[62px]">이름</th>
                     {week.map(d => (
-                      <th key={d} className={`font-bold py-1 w-7 ${d === deliveryDate ? 'bg-sky-200' : ''}`}>
-                        {dowOf(d)}
-                        <span className="block font-normal text-[9px] text-sky-700">{Number(d.slice(8, 10))}</span>
+                      <th key={d} className={`font-bold py-1 w-[26px] ${d === deliveryDate ? 'bg-sky-200' : ''}`}>
+                        {Number(d.slice(8, 10))}{dowOf(d)}
                       </th>
                     ))}
-                    <th className="w-5"></th>
+                    <th className="font-medium py-1 text-left pl-1">비고</th>
+                    <th className="w-4"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {boardRows.map(r => (
                     <tr key={r.name} className="border-t border-sky-100">
                       {/* 이름을 누르면 그 사람이 위 칸에 올라온다 */}
-                      <td className="pl-2 py-0.5">
+                      <td className="pl-1.5 py-0.5">
                         <button onClick={() => useName(r.name, r.phone)} disabled={busy}
                           title="이 이름을 위에 올립니다"
-                          className="text-[12px] font-bold text-stone-900 hover:text-sky-700 disabled:opacity-40 truncate max-w-[88px] text-left">
+                          className="w-full text-[12px] font-bold text-stone-900 hover:text-sky-700 disabled:opacity-40 truncate text-left">
                           {r.name}
                         </button>
                       </td>
@@ -1240,7 +1290,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                           <td key={d} className={`py-0.5 text-center ${d === deliveryDate ? 'bg-sky-50' : ''}`}>
                             <button onClick={() => toggleCell(r.name, r.phone, d)}
                               title={done ? '주문이 들어갔어요 (눌러서 지우기)' : cell ? '적어둔 것 (눌러서 지우기)' : '여기에 적어두기'}
-                              className={`w-5 h-5 rounded border text-[11px] font-black leading-none ${
+                              className={`w-[19px] h-[19px] rounded border text-[11px] font-black leading-none ${
                                 done ? 'bg-stone-200 border-stone-300 text-stone-500'
                                 : cell ? 'bg-sky-600 border-sky-600 text-white'
                                 : 'bg-white border-stone-300 text-transparent hover:border-sky-400'}`}>
@@ -1249,6 +1299,17 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                           </td>
                         );
                       })}
+                      {/* 비고 — 이름 행에 적힌다 */}
+                      <td className="py-0.5 pl-1">
+                        <input
+                          key={r.name + (r.note || '')}
+                          defaultValue={r.note || ''}
+                          onBlur={e => { if (e.target.value !== (r.note || '')) void saveNote(r.name, r.phone, e.target.value); }}
+                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                          maxLength={100}
+                          className="w-full bg-transparent border border-transparent rounded px-1 text-[11px]
+                                     hover:border-stone-200 focus:border-sky-400 focus:bg-white outline-none" />
+                      </td>
                       <td className="text-center">
                         {/* 그 사람 줄을 통째로 지운다 */}
                         <button onClick={() => { for (const p of pend.filter(x => x.baby_name === r.name)) void removePend(p.id); }}
@@ -1257,25 +1318,26 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                     </tr>
                   ))}
                   {boardRows.length === 0 && (
-                    <tr><td colSpan={week.length + 2} className="px-2 py-2 text-center text-[11px] text-stone-400">
-                      아래에 이름을 넣고 요일을 체크해두세요
+                    <tr><td colSpan={week.length + 3} className="px-2 py-2 text-center text-[11px] text-stone-400">
+                      아래에 이름을 넣으세요 — 요일은 나중에 체크해도 됩니다
                     </td></tr>
                   )}
                 </tbody>
               </table>
               <div className="flex gap-1 p-1.5 border-t border-sky-100 bg-sky-50/50">
+                {/* 이름만 넣으면 바로 줄이 생긴다 — 요일은 안 골라도 된다 */}
                 <input value={newName} onChange={e => setNewName(e.target.value.slice(0, 20))}
                   onKeyDown={e => {
                     if (e.key !== 'Enter') return;
                     e.preventDefault();
                     const nm = newName.trim();
-                    if (nm) { void toggleCell(nm, null, deliveryDate); setNewName(''); }
+                    if (nm) { void addName(nm, null); setNewName(''); }
                   }}
-                  placeholder="이름 추가 → 엔터"
+                  placeholder="이름 넣고 엔터 (요일은 나중에)"
                   className={`${inp} flex-1 min-w-0 text-[12px] py-0.5`} />
                 {/* 지금 치고 있는 사람을 한 번에 — 월요일 치면서 목요일 체크할 때 */}
                 {(hit?.babyName || q.trim()) && !boardRows.some(r => r.name === (hit?.babyName || q.trim())) && (
-                  <button onClick={() => toggleCell(hit?.babyName || q.trim(), hit?.phone || null, deliveryDate)}
+                  <button onClick={() => addName(hit?.babyName || q.trim(), hit?.phone || null)}
                     title="지금 치고 있는 사람을 체크판에 올립니다"
                     className="flex-shrink-0 px-2 rounded bg-sky-600 text-white text-[11px] font-bold">
                     + {hit?.babyName || q.trim()}

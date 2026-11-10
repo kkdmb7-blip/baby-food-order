@@ -35,6 +35,14 @@ function shiftDay(date: string, days: number): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+/** 그 날짜가 든 주의 월~금 */
+function weekDaysOf(date: string): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+  const dow = new Date(date + 'T00:00:00Z').getUTCDay();   // 일=0
+  const mon = shiftDay(date, dow === 0 ? -6 : 1 - dow);
+  return [0, 1, 2, 3, 4].map(i => shiftDay(mon, i));
+}
+
 export default function AdminShell({
   initialOrders, cancelledOrders, customers: initCustomers, weeklyMenus: initMenus,
   today, selectedDate, weekStart
@@ -226,21 +234,38 @@ export default function AdminShell({
 
         {/* 조리일 선택 — 기본은 오늘, 다른 날은 직접 골라서 본다.
             (주문은 항상 "내일 이후" 조리분이라 오늘만 볼 수 있으면 확인이 안 됐음) */}
-        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-2">
-          <span className="text-xs text-stone-500 font-bold">조리일</span>
-          {/* 전에는 <a href> 라 날짜를 옮길 때마다 페이지를 처음부터 다시 받았다(느리고 탭도 풀렸다).
-              이제 화면만 다시 그린다 — 주문 목록은 위 useEffect 가 새 값으로 맞춘다. */}
-          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, -1)}`)} aria-label="하루 전"
-            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</button>
-          <input type="date" value={selectedDate}
-            onChange={e => { if (e.target.value) router.push(`/admin?date=${e.target.value}`); }}
-            className="px-2 py-1 border border-stone-200 rounded-lg text-sm font-bold bg-white" />
-          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, 1)}`)} aria-label="하루 후"
-            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</button>
-          <span className="text-sm font-bold text-stone-600">({DOW_KO[new Date(selectedDate + 'T00:00:00Z').getUTCDay()]})</span>
+        {/* 조리일 — 날짜를 입력칸에 치는 게 아니라 그 주 월~금을 펼쳐 놓고 누른다.
+            화살표는 한 주씩 옮긴다. 조리는 월·화·목·금(이유식)과 수(반찬)에만 하므로
+            주말은 올리지 않는다. */}
+        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-1.5">
+          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, -7)}`)} aria-label="지난 주"
+            title="지난 주"
+            className="px-2 py-1.5 rounded-lg border-2 border-stone-300 bg-white text-stone-700 text-base font-black leading-none hover:bg-stone-50">
+            ‹‹
+          </button>
+          {weekDaysOf(selectedDate).map(d => {
+            const on = d === selectedDate;
+            const isToday = d === today;
+            const dow = DOW_KO[new Date(d + 'T00:00:00Z').getUTCDay()];
+            return (
+              <button key={d} onClick={() => router.push(`/admin?date=${d}`)}
+                className={`px-2.5 py-1.5 rounded-lg border-2 text-sm leading-none whitespace-nowrap ${
+                  on ? 'border-amber-500 bg-amber-500 text-white font-black'
+                     : isToday ? 'border-amber-300 bg-white text-amber-800 font-bold'
+                     : 'border-stone-200 bg-white text-stone-600 font-bold hover:bg-stone-50'}`}>
+                {Number(d.slice(8, 10))}<span className="ml-0.5">{dow}</span>
+              </button>
+            );
+          })}
+          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, 7)}`)} aria-label="다음 주"
+            title="다음 주"
+            className="px-2 py-1.5 rounded-lg border-2 border-stone-300 bg-white text-stone-700 text-base font-black leading-none hover:bg-stone-50">
+            ››
+          </button>
+          <span className="text-[11px] text-stone-400 ml-0.5">{selectedDate.slice(0, 7).replace('-', '. ')}</span>
           {selectedDate !== today && (
             <button onClick={() => router.push('/admin')}
-              className="text-xs text-amber-700 font-bold underline underline-offset-2">오늘</button>
+              className="text-xs text-amber-700 font-bold underline underline-offset-2 ml-1">오늘</button>
           )}
         </div>
         <div className="max-w-5xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
