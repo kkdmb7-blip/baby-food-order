@@ -323,7 +323,10 @@ export async function POST(req: NextRequest) {
       if (order_type !== '선결제') {
         if (custRow) {
           await applyPointsDelta(sb, custRow.id, custRow.points, pointsEarned - pointsUsed);
-        } else if (pointsEarned > 0) {
+        } else {
+          // ⚠️ 전에는 pointsEarned > 0 일 때만 만들었다. 적립이 0인 주문으로 들어온 손님은
+          // 고객 표에 행이 아예 안 생겨서 고객관리에서 찾을 수도, 이름을 고칠 수도 없었다.
+          // 주문한 사람은 고객 목록에 있어야 한다.
           await sb.from('baby_food_customers').insert({ baby_name, phone: customer_phone, points: pointsEarned });
         }
       }

@@ -72,6 +72,14 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   const [finding, setFinding] = useState(false);
   const [listOpen, setListOpen] = useState(false);
 
+  // 처음 오는 손님 — 지난 주문이 없으니 연락처·주소·개월수를 여기서 받는다.
+  // 전에는 이 화면이 단골 전용이라 신규는 아래 긴 폼으로 가야 했다. 아침에 화면을
+  // 옮겨다니는 게 결국 느린 쪽이라, 그 자리에서 받고 주문과 함께 고객으로 저장한다.
+  const [isNew, setIsNew] = useState(false);
+  const [nc, setNc] = useState({ phone: '', address: '', months: '', door: '' });
+  const ncPhone = nc.phone.replace(/\D/g, '');
+  const ncValid = /^\d{10,11}$/.test(ncPhone) && nc.address.trim().length > 3 && Number(nc.months) > 0;
+
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -96,7 +104,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   }, [q, hit, listOpen]);
 
   function pick(h: Hit) {
-    setHit(h); setQ(h.babyName); setHits([]); setListOpen(false);
+    setHit(h); setQ(h.babyName); setHits([]); setListOpen(false); setIsNew(false);
     // 지난번 시키던 칸에 지난번 팩수를 미리 넣어둔다 — 대개 그대로 이어가신다
     const slot = SLOTS.find(s => s.stage === h.stage && s.volume === Number(h.volume));
     if (slot && h.lastMenus) {
@@ -111,28 +119,43 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
 
   function reset() {
     setQ(''); setHit(null); setQty({}); setHits([]); setListOpen(false); setErr(null);
+    setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
   const slotTotal = (k: string) => MENU_TYPES.reduce((a, m) => a + (Number(qty[k]?.[m]) || 0), 0);
   const usedSlots = SLOTS.filter(s => slotTotal(s.key) > 0);
   const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0);
-  const canConfirm = !!hit && currentTotal > 0 && !busy;
+  const whoOk = hit ? true : (isNew && ncValid);
+  const canConfirm = whoOk && currentTotal > 0 && !busy;
 
   async function confirm() {
     if (!canConfirm) {
-      if (!hit) setErr('이름을 쳐서 뜨는 집을 골라주세요');
-      else if (currentTotal === 0) setErr('팩수를 넣어주세요');
+      if (!whoOk) {
+        setErr(isNew
+          ? '연락처(10~11자리)·주소·개월수를 넣어주세요'
+          : '이름을 쳐서 뜨는 집을 고르거나, 처음 오는 손님이면 "새 손님"을 눌러주세요');
+      } else if (currentTotal === 0) setErr('팩수를 넣어주세요');
       return;
     }
     setBusy(true); setErr(null);
-    const h = hit!;
-    const addr = h.address + (h.addressDetail ? ' ' + h.addressDetail : '');
+
+    // 단골이면 지난 주문에서, 처음이면 지금 치신 값에서
+    const name = hit ? hit.babyName : q.trim();
+    const addr = hit
+      ? hit.address + (hit.addressDetail ? ' ' + hit.addressDetail : '')
+      : nc.address.trim();
+    const phone = (hit ? hit.phone : ncPhone).replace(/\D/g, '');
+    const months = hit ? (hit.guessMonths || hit.lastMonths) : Number(nc.months);
+    const door = (hit ? hit.doorPassword : nc.door.trim()) || null;
+    const postal = hit ? hit.postalCode : null;
+    const orderType = hit?.orderType === '선결제' ? '선결제' : '일반';
+    // 우편번호가 없으면 서버가 이 값으로 권역을 판정한다 (팩당 500원이 걸린다)
     const zone =
-      h.deliveryMethod === '직배송' || h.deliveryMethod === '당일배송' || h.deliveryMethod === '택배익일배송'
-        ? h.deliveryMethod
+      hit && (hit.deliveryMethod === '직배송' || hit.deliveryMethod === '당일배송' || hit.deliveryMethod === '택배익일배송')
+        ? hit.deliveryMethod
         : (/강서구|양천구/.test(addr) ? '직배송' : '당일배송');
-    const receive = h.receiveMethod === '픽업' ? '픽업' : '배송';
+    const receive = hit?.receiveMethod === '픽업' ? '픽업' : '배송';
 
     const lines: Done['lines'] = [];
     for (const slot of usedSlots) {
@@ -148,18 +171,18 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             admin_manual: true,
-            baby_name: h.babyName,
-            months: h.guessMonths || h.lastMonths,
-            customer_phone: h.phone.replace(/\D/g, ''),
+            baby_name: name,
+            months,
+            customer_phone: phone,
             address: addr,
-            door_password: h.doorPassword || null,
+            door_password: door,
             stage: slot.stage,
             volume: slot.volume,
             delivery_date: deliveryDate,
-            order_type: h.orderType === '선결제' ? '선결제' : '일반',
+            order_type: orderType,
             receive_method: receive,
             delivery_method: receive === '픽업' ? '직배송' : zone,
-            postal_code: h.postalCode || null,
+            postal_code: postal || null,
             total_qty: total,
             items: [{
               delivery_date: deliveryDate,
@@ -179,7 +202,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       }
     }
 
-    setDone(d => [{ key: SEQ++, name: h.babyName, lines }, ...d]);
+    setDone(d => [{ key: SEQ++, name, lines }, ...d]);
     setBusy(false);
     if (lines.some(l => l.ok)) onSaved();
     if (lines.every(l => l.ok)) reset();
@@ -242,13 +265,13 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                 onKeyDown={e => {
                   if (e.key !== 'Enter') return;
                   e.preventDefault();
-                  if (!hit && hits.length) pick(hits[0]);
-                  else if (hit) confirm();
+                  if (!hit && !isNew && hits.length) pick(hits[0]);
+                  else confirm();
                 }}
                 placeholder="아기 이름"
                 className={`${inp} flex-1 text-base font-bold ${hit ? 'border-emerald-400 bg-emerald-50/50' : ''}`}
               />
-              {hit && (
+              {(hit || isNew) && (
                 <button onClick={reset} className="px-3 py-1.5 rounded border border-stone-300 text-xs text-stone-600">
                   지우기
                 </button>
@@ -265,7 +288,18 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               <div className="absolute z-30 left-0 right-0 mt-0.5 bg-white border border-stone-200 rounded-lg shadow-lg max-h-56 overflow-auto">
                 {finding && <p className="px-2 py-1.5 text-xs text-stone-400">찾는 중…</p>}
                 {!finding && hits.length === 0 && (
-                  <p className="px-2 py-1.5 text-xs text-stone-400">지난 주문에 없는 이름이에요</p>
+                  <button onMouseDown={e => { e.preventDefault(); setIsNew(true); setListOpen(false); }}
+                    className="block w-full text-left px-2 py-2 hover:bg-amber-50">
+                    <span className="text-sm font-bold text-amber-700">+ 처음 오는 손님으로 넣기</span>
+                    <span className="block text-[11px] text-stone-400">지난 주문에 없는 이름이에요 — 연락처·주소를 여기서 받습니다</span>
+                  </button>
+                )}
+                {!finding && hits.length > 0 && (
+                  <button onMouseDown={e => { e.preventDefault(); setIsNew(true); setListOpen(false); }}
+                    className="block w-full text-left px-2 py-1.5 border-t border-stone-200 hover:bg-amber-50">
+                    <span className="text-[12px] font-bold text-amber-700">+ 처음 오는 손님</span>
+                    <span className="ml-1 text-[11px] text-stone-400">위에 없으면</span>
+                  </button>
                 )}
                 {hits.map(h => (
                   <button key={h.phone} onMouseDown={e => { e.preventDefault(); pick(h); }}
@@ -280,6 +314,35 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               </div>
             )}
           </div>
+
+          {/* 처음 오는 손님 — 지난 주문이 없으니 여기서 받는다. 주문과 함께 고객으로도 저장된다 */}
+          {isNew && !hit && (
+            <div className="mb-2 rounded-lg border border-amber-300 bg-amber-50/60 p-2">
+              <p className="text-[11px] font-bold text-amber-800 mb-1.5">
+                처음 오는 손님 — 넣으면 <b>고객관리에도 같이 저장</b>됩니다
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                <input inputMode="numeric" value={nc.phone}
+                  onChange={e => setNc(v => ({ ...v, phone: e.target.value.replace(/[^\d-]/g, '').slice(0, 13) }))}
+                  onKeyDown={onEnterConfirm} placeholder="연락처"
+                  className={`${inp} ${ncPhone && !/^\d{10,11}$/.test(ncPhone) ? 'border-rose-400' : ''}`} />
+                <input inputMode="numeric" value={nc.months}
+                  onChange={e => setNc(v => ({ ...v, months: e.target.value.replace(/\D/g, '').slice(0, 2) }))}
+                  onKeyDown={onEnterConfirm} placeholder="개월수" className={inp} />
+                <input value={nc.door}
+                  onChange={e => setNc(v => ({ ...v, door: e.target.value.slice(0, 20) }))}
+                  onKeyDown={onEnterConfirm} placeholder="현관비번 (선택)" className={inp} />
+                <input value={nc.address}
+                  onChange={e => setNc(v => ({ ...v, address: e.target.value }))}
+                  onKeyDown={onEnterConfirm} placeholder="주소"
+                  className={`${inp} col-span-3`} />
+              </div>
+              <p className="mt-1 text-[11px] text-stone-500 leading-snug">
+                주소에 <b>강서구·양천구</b>가 있으면 직배송(기본가), 아니면 당일배송(팩당 +500원)으로 잡힙니다.
+                우편번호가 없으면 이 판정이 값을 정하니 구 이름을 꼭 넣어주세요.
+              </p>
+            </div>
+          )}
 
           {/* ② 여덟 칸 */}
           <div className="rounded-lg border border-stone-300 overflow-hidden">
@@ -326,7 +389,8 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
           <button onClick={confirm} disabled={!canConfirm}
             className="mt-2 w-full rounded-lg bg-amber-500 py-2.5 text-sm font-semibold text-white disabled:bg-stone-200 disabled:text-stone-400">
             {busy ? '넣는 중…'
-              : canConfirm ? `확인 — ${hit!.babyName} ${currentTotal}팩 (칸 ${usedSlots.length}개)  ⏎`
+              : canConfirm ? `확인 — ${hit ? hit.babyName : q.trim()} ${currentTotal}팩 (칸 ${usedSlots.length}개)  ⏎`
+              : isNew ? '연락처·주소·개월수와 팩수를 넣어주세요'
               : '이름 고르고 팩수를 넣어주세요'}
           </button>
 
