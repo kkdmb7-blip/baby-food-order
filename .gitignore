@@ -7,3 +7,6 @@ node_modules
 .DS_Store
 
 .vercel
+
+# scripts/build-intro.mjs 가 쓰는 작업 로그
+build-intro.txt
