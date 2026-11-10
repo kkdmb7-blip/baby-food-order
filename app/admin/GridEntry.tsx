@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { MENU_TYPES, STAGES, STAGE_OPTIONS, menuLabel, type StageType } from '@/lib/supabase';
+import { MENU_TYPES, menuLabel, type StageType } from '@/lib/supabase';
+import { SLOTS, fitSlot, type Slot } from '@/lib/slots';
 import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
 /*
@@ -63,37 +64,11 @@ const addDays = (d: string, n: number) =>
     : d;
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
-type Slot = { stage: StageType; volume: number; key: string; label: string; isBig: boolean };
-
-const SLOTS: Slot[] = STAGES.flatMap(s => {
-  const vols = STAGE_OPTIONS[s].map(o => o.volume);
-  const big = Math.max(...vols);
-  return vols.map(v => ({
-    stage: s, volume: v, key: `${s}|${v}`,
-    label: `${s.replace('단계', '')} ${v}g`, isBig: v === big,
-  }));
-});
-
 /** 조리일에 이름만 적어둔 것. 팩수도 메뉴도 없는 '그날 할 일'이다 */
 type Pend = {
   id: string; delivery_date: string; baby_name: string;
   customer_phone: string | null; note: string | null; done_at: string | null;
 };
-
-/**
- * 주문서에 적힌 용량을 그 단계의 칸으로 맞춘다.
- * 양식 안내문이 "230g 또는 300g" 이라 중기1단계도 230·300 으로 적어 보내신다.
- * 중기1은 240·310 이다 — 중기2를 한 번 더 갈아 다시 끓이면서 양이 늘기 때문이다.
- * 10g 차이까지만 맞춘다. 그보다 멀면 잘못 적힌 것이니 사장님께 알린다.
- */
-function fitSlot(stage: StageType, volume: number): Slot | null {
-  const mine = SLOTS.filter(s => s.stage === stage);
-  if (!mine.length || !volume) return null;
-  const exact = mine.find(s => s.volume === volume);
-  if (exact) return exact;
-  const near = mine.reduce((a, b) => (Math.abs(b.volume - volume) < Math.abs(a.volume - volume) ? b : a));
-  return Math.abs(near.volume - volume) <= 10 ? near : null;
-}
 
 type Qty = Record<string, Record<string, string>>;   // slotKey → menu → 팩수
 

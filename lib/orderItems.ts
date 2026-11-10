@@ -34,6 +34,28 @@ export function isMultiItems(o: OrderLike): boolean {
   return items.length > 0 && items[0]?.delivery_date !== undefined;
 }
 
+/**
+ * 그 날짜 몫의 메뉴·팩수를 바꿔치운다 — 조리표에서 팩수를 고칠 때 쓴다.
+ *
+ * 신형(중첩)은 그 날짜 칸의 sets 안쪽 menus·qty 와 date_qty 를 고친다.
+ * 구형(평면)은 items 자체가 메뉴 목록이라 통째로 갈아끼운다.
+ *
+ * ⚠️ 윗칸(total_qty)만 고치고 여기를 안 고치면 조리표·라벨·엑셀은 옛 팩수를 계속 보여준다.
+ *    그 둘이 다르면 만드는 양과 청구한 양이 어긋난다.
+ */
+export function rewriteMenusOn(
+  items: any, date: string, menus: { menu: string; qty: number }[], qty: number,
+): any {
+  const arr = Array.isArray(items) ? items : [];
+  const nested = arr.length > 0 && arr[0] && typeof arr[0] === 'object' && 'delivery_date' in arr[0];
+  if (!nested) return menus;
+  return arr.map(it => {
+    if (!it || typeof it !== 'object' || it.delivery_date !== date) return it;
+    const sets = Array.isArray(it.sets) ? it.sets : [];
+    return { ...it, sets: sets.map((s: any) => ({ ...s, qty, menus })), date_qty: qty };
+  });
+}
+
 /** 이 주문이 실제로 걸쳐 있는 조리일 전부 (복합주문은 여러 날) */
 export function orderDates(o: OrderLike): string[] {
   if (!isMultiItems(o)) return o.delivery_date ? [o.delivery_date] : [];

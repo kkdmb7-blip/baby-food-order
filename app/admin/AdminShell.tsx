@@ -9,6 +9,7 @@ import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import CookingEntry from './CookingEntry';
 import GridEntry from './GridEntry';
+import SheetEditor from './SheetEditor';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
@@ -504,7 +505,8 @@ export default function AdminShell({
               }}
               onDateChange={d => router.push(`/admin?date=${d}`)} />
             <CookingEntry date={selectedDate} onSaved={() => router.refresh()} />
-            <CookingSheet orders={orders} today={selectedDate} />
+            <CookingSheet orders={orders} today={selectedDate} customers={customers}
+              onChanged={() => router.refresh()} />
           </>
         )}
 
@@ -537,7 +539,11 @@ type PrintInfo = {
   newOrders?: number; newPacks?: number;
 };
 
-function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
+function CookingSheet({ orders, today, customers, onChanged }: {
+  orders: Order[]; today: string; customers: Customer[]; onChanged: () => void;
+}) {
+  // 고치고 있는 사람(연락처). 한 사람이 중기·후기를 같이 시키기도 하니 줄이 아니라 사람 단위로 연다.
+  const [editPhone, setEditPhone] = useState<string | null>(null);
   /*
     조리표를 언제 뽑았는지 기억해 둔다. 오전 7시에 뽑으신 뒤 들어오는 주문을
     지금까지는 종이에 손으로 적으셨다. 뽑은 시각을 알면 그 뒤에 들어온 줄만
@@ -641,10 +647,29 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
                       {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${menuLabel(m)} ${row.menus[m]}팩`).join(' · ')}
                     </td>
                     <td className="py-1.5 text-right text-stone-500 text-xs w-12">{row.qty}팩</td>
+                    {/* 손님이 바꿔 달라고 하실 때 — 여기서 바로 고친다(프린트에는 안 나온다) */}
+                    <td className="py-1.5 pl-1 w-12 no-print">
+                      <button onClick={() => setEditPhone(p => p === row.order.customer_phone ? null : row.order.customer_phone)}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300">
+                        고치기
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {/* 이 묶음에 고치는 중인 사람이 있으면 바로 아래에 펼친다 */}
+            {editPhone && g.rows.some(r => r.order.customer_phone === editPhone) && (
+              <div className="no-print">
+                <SheetEditor
+                  date={today}
+                  orders={orders.filter(o => o.customer_phone === editPhone)}
+                  customers={customers}
+                  onClose={() => setEditPhone(null)}
+                  onChanged={onChanged}
+                />
+              </div>
+            )}
           </div>
         ))}
 
