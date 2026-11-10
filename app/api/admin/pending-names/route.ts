@@ -24,17 +24,29 @@ export const dynamic = 'force-dynamic';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f-]{36}$/i;
 
+/**
+ * GET ?date=YYYY-MM-DD        그 날짜만
+ * GET ?from=…&to=…            기간 (요일 체크판이 한 주를 한 번에 받는다)
+ */
 export async function GET(req: NextRequest) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  const date = (req.nextUrl.searchParams.get('date') || '').trim();
-  if (!DATE.test(date)) return NextResponse.json({ error: 'invalid date' }, { status: 400 });
+  const sp = req.nextUrl.searchParams;
+  const date = (sp.get('date') || '').trim();
+  const from = (sp.get('from') || '').trim();
+  const to = (sp.get('to') || '').trim();
 
   const sb = supabaseService();
-  const { data, error } = await sb
+  let q = sb
     .from('baby_food_pending_names')
     .select('id, delivery_date, baby_name, customer_phone, note, done_at, created_at')
-    .eq('delivery_date', date)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: true })
+    .limit(500);
+
+  if (DATE.test(from) && DATE.test(to)) q = q.gte('delivery_date', from).lte('delivery_date', to);
+  else if (DATE.test(date)) q = q.eq('delivery_date', date);
+  else return NextResponse.json({ error: 'invalid date' }, { status: 400 });
+
+  const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, rows: data || [] });
 }

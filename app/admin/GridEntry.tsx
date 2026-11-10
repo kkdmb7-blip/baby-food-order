@@ -69,6 +69,15 @@ const addDays = (d: string, n: number) =>
     : d;
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
+/** 그 날짜가 든 주의 월~금 (요일 체크판의 다섯 칸) */
+function weekDays(d: string): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return [];
+  const t = new Date(d + 'T00:00:00Z');
+  const dow = t.getUTCDay();                 // 일=0
+  const mon = addDays(d, dow === 0 ? -6 : 1 - dow);
+  return [0, 1, 2, 3, 4].map(i => addDays(mon, i));
+}
+
 /** 그 날짜에 기본으로 받을 것 — 수요일은 반찬, 나머지 조리일은 이유식 */
 function modeFor(d: string): '이유식' | '반찬' {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '이유식';
@@ -210,11 +219,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const [parsed, setParsed] = useState<ParsedKakaoOrder | null>(null);
   const [pasteNote, setPasteNote] = useState<string | null>(null);
 
-  // 적어둔 이름 — 이 조리일에 이름만 미리 적어둔 것들
+  // 적어둔 이름 — 요일 체크판(월~금)에 쓰는 것들
   const [pend, setPend] = useState<Pend[]>([]);
   const [pendUsed, setPendUsed] = useState<string | null>(null);   // 지금 치는 사람이 그 목록에서 왔으면 그 id
-  const [parkOpen, setParkOpen] = useState(false);
-  const [park, setPark] = useState({ date: '', name: '', note: '' });
+  const [newName, setNewName] = useState('');                      // 체크판에 줄 하나 더 만들기
 
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
@@ -222,13 +230,15 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const [info, setInfo] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
-  // 날짜가 바뀌면 그 날짜에 적어둔 이름을 불러온다
+  // 그 주(월~금)에 적어둔 이름을 한 번에 불러온다 — 요일 체크판이 한 주를 보여준다
+  const week = weekDays(date);
   useEffect(() => {
     if (!open || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const [a, b] = [weekDays(date)[0], weekDays(date)[4]];
     let alive = true;
     (async () => {
       try {
-        const d = await fetch(`/api/admin/pending-names?date=${date}`).then(r => r.json());
+        const d = await fetch(`/api/admin/pending-names?from=${a}&to=${b}`).then(r => r.json());
         if (alive && d.ok) setPend(d.rows || []);
       } catch { /* 못 불러와도 입력은 된다 */ }
     })();
@@ -379,7 +389,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     setPaste(''); setParsed(null); setPasteNote(null);
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
-    setPendUsed(null); setParkOpen(false); setPark({ date: '', name: '', note: '' });
+    setPendUsed(null);
     setBanchan(''); setOpts(OPTS0); setOptsOpen(false);
     setTimeout(() => nameRef.current?.focus(), 0);
   }
@@ -403,27 +413,22 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
      목요일 자리에 이름만 적어두고 목요일에 카톡을 다시 보며 채우는 것이 원래 방식이다.
      주문으로 넣으면 0팩 주문이 조리표·매출에 섞이니 따로 둔다. */
 
-  /** 다른 날짜에 이름만 적어둔다 */
-  async function addPark() {
-    const name = park.name.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(park.date)) { setErr('적어둘 조리일을 골라주세요'); return; }
-    if (!name) { setErr('적어둘 이름을 넣어주세요'); return; }
-    setBusy(true); setErr(null);
+  /** 요일 체크판에서 칸을 눌렀을 때 — 비어 있으면 적어두고, 체크돼 있으면 지운다 */
+  async function toggleCell(name: string, phone: string | null, d: string) {
+    const nm = name.trim();
+    if (!nm || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    const found = pend.find(p => p.baby_name === nm && p.delivery_date === d);
+    if (found) { void removePend(found.id); return; }
+    setErr(null);
     try {
       const r = await fetch('/api/admin/pending-names', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          delivery_date: park.date, baby_name: name,
-          customer_phone: hit?.phone || '', note: park.note,
-        }),
+        body: JSON.stringify({ delivery_date: d, baby_name: nm, customer_phone: phone || '' }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) { setErr(j.error || '적어두기 실패'); setBusy(false); return; }
-      if (park.date === date && j.row) setPend(p => [...p, j.row]);
-      setInfo(`${park.date}(${dowOf(park.date)}) 에 ${name} 적어뒀어요 — 그날 날짜를 고르면 오른쪽에 뜹니다`);
-      setParkOpen(false); setPark({ date: '', name: '', note: '' });
+      if (!r.ok || j.ok === false) { setErr(j.error || '적어두기 실패'); return; }
+      if (j.row) setPend(p => [...p, j.row]);
     } catch (e: any) { setErr(e?.message || '적어두기 실패'); }
-    setBusy(false);
   }
 
   /** 적어둔 이름을 눌렀을 때 — 이름을 쳐서 집을 고른 것과 똑같은 상태가 된다 */
@@ -449,6 +454,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
 
   /** 처리됨 표시 / 되돌리기 */
   async function markPend(id: string, done: boolean) {
+    if (!id) return;
     setPend(ps => ps.map(x => (x.id === id ? { ...x, done_at: done ? new Date().toISOString() : null } : x)));
     try {
       await fetch('/api/admin/pending-names', {
@@ -458,7 +464,18 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     } catch { /* 표시만 못 바뀐 것이라 입력은 영향 없다 */ }
   }
 
+  /** 체크판에서 이름을 눌렀을 때 — 그 사람을 위 칸에 올린다(이름을 치고 집을 고른 것과 같다) */
+  async function useName(name: string, phone: string | null) {
+    const onDate = pend.find(p => p.baby_name === name && p.delivery_date === date && !p.done_at);
+    if (onDate) return usePend(onDate);
+    return usePend({
+      id: '', delivery_date: date, baby_name: name,
+      customer_phone: phone, note: null, done_at: null,
+    });
+  }
+
   async function removePend(id: string) {
+    if (!id) return;
     setPend(ps => ps.filter(x => x.id !== id));
     try { await fetch(`/api/admin/pending-names?id=${id}`, { method: 'DELETE' }); } catch { /* 화면에서만 빠진다 */ }
   }
@@ -682,6 +699,13 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
       .reduce((b, sl) => b + (Number(sl.qty) || 0), 0), 0);
   const banchanPeople = dayOrders.filter(o =>
     slicesOn(o as any, deliveryDate).some(sl => sl.stage === '반찬세트')).length;
+  // 요일 체크판의 줄 — 그 주에 적어둔 이름들(먼저 적어둔 순서)
+  const boardRows = (() => {
+    const m = new Map<string, { name: string; phone: string | null }>();
+    for (const p of pend) if (!m.has(p.baby_name)) m.set(p.baby_name, { name: p.baby_name, phone: p.customer_phone });
+    return [...m.values()];
+  })();
+
   const mineBanchan = done.reduce((a, d) =>
     a + (d.undone || d.date !== deliveryDate ? 0
       : d.lines.filter(l => l.ok && l.slot.key === BANCHAN_SLOT.key).reduce((b, l) => b + l.total, 0)), 0);
@@ -800,12 +824,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                 placeholder="아기 이름"
                 className={`${inp} flex-1 text-base font-bold ${hit ? 'border-emerald-400 bg-emerald-50/50' : ''}`}
               />
-              {/* 월·목을 같이 주문하셨을 때 — 목요일 자리에 이름만 적어둔다 */}
-              <button onClick={() => { setParkOpen(o => !o); setPark({ date: '', name: (hit?.babyName || q).trim(), note: '' }); }}
-                title="다른 날짜에 이름만 적어둡니다 — 그날 정리할 때 뜹니다"
-                className={`px-2 py-1.5 rounded border text-[11px] whitespace-nowrap ${parkOpen ? 'border-sky-400 bg-sky-50 text-sky-800' : 'border-stone-300 text-stone-600 hover:bg-sky-50'}`}>
-                + 다른 날
-              </button>
+              {/* '+ 다른 날' 버튼은 뺐다 — 오른쪽 요일 체크판에서 칸을 누르면 된다 */}
               {(hit || isNew) && (
                 <button onClick={reset} className="px-3 py-1.5 rounded border border-stone-300 text-xs text-stone-600">
                   지우기
@@ -885,40 +904,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             )}
           </div>
 
-          {/* 다른 날 이름만 적어두기 — 주문이 아니라 그날 할 일이다 */}
-          {parkOpen && (
-            <div className="mb-2 rounded-lg border border-sky-300 bg-sky-50/60 p-2">
-              <p className="text-[11px] font-bold text-sky-900 mb-1.5">
-                다른 날 <b>이름만</b> 적어두기 — 주문으로 들어가지 않습니다. 그날 날짜를 고르면 오른쪽에 떠요.
-              </p>
-              <div className="flex flex-wrap gap-1 mb-1.5">
-                {[1, 2, 3, 4, 5, 6, 7].map(n => {
-                  const d = addDays(deliveryDate, n);
-                  const on = park.date === d;
-                  return (
-                    <button key={n} onClick={() => setPark(v => ({ ...v, date: d }))}
-                      className={`px-1.5 py-0.5 rounded text-[11px] border ${on ? 'bg-sky-600 text-white border-sky-600 font-bold' : 'bg-white border-stone-300 text-stone-600'}`}>
-                      {Number(d.slice(5, 7))}/{Number(d.slice(8, 10))} {dowOf(d)}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="grid grid-cols-[132px_1fr_1fr_auto] gap-1.5">
-                <input type="date" value={park.date} onChange={e => setPark(v => ({ ...v, date: e.target.value }))}
-                  className={`${inp} text-[12px]`} />
-                <input value={park.name} onChange={e => setPark(v => ({ ...v, name: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPark(); } }}
-                  placeholder="아기 이름" className={`${inp} font-bold`} />
-                <input value={park.note} onChange={e => setPark(v => ({ ...v, note: e.target.value.slice(0, 100) }))}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPark(); } }}
-                  placeholder="메모 (선택) — 예: 월·목 같이 주문" className={`${inp} text-[12px]`} />
-                <button onClick={addPark} disabled={busy || !park.date || !park.name.trim()}
-                  className="px-3 rounded bg-sky-600 text-white text-[12px] font-bold disabled:bg-stone-200 disabled:text-stone-400">
-                  적어두기
-                </button>
-              </div>
-            </div>
-          )}
+          {/* 다른 날 적어두기는 오른쪽 요일 체크판으로 옮겼다 */}
 
           {/* 처음 오는 손님 — 지난 주문이 없으니 여기서 받는다. 주문과 함께 고객으로도 저장된다 */}
           {isNew && !hit && (
@@ -949,6 +935,9 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             </div>
           )}
 
+          {/* 치는 칸(왼쪽)과 그날 집계(오른쪽)를 나란히 — 입력칸 옆이 비어 있었다 */}
+          <div className="flex flex-col sm:flex-row gap-3 items-start">
+            <div className="w-full sm:w-[320px] flex-shrink-0">
           {/* ② 반찬 접수 — 단계·용량·메뉴가 없다. 세트 수만 받는다 */}
           {mode === '반찬' && (
             <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3">
@@ -976,10 +965,9 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
               <thead>
                 {/* 칸 이름과 숫자칸이 멀면 눈이 가로로 왔다 갔다 한다 — 폭을 고정해 붙여 둔다 */}
                 <tr className="bg-stone-50 text-[11px] text-stone-500">
-                  <th className="text-left font-medium pl-2 pr-1 py-1 w-[88px]">칸</th>
-                  {MENU_TYPES.map(m => <th key={m} className="font-medium py-1 w-12">{menuLabel(m)}</th>)}
-                  <th className="font-medium py-1 w-9">합</th>
-                  <th></th>
+                  <th className="text-left font-medium pl-2 pr-1 py-1 w-[84px]">칸</th>
+                  {MENU_TYPES.map(m => <th key={m} className="font-medium py-1">{menuLabel(m)}</th>)}
+                  <th className="font-medium py-1 w-8">합</th>
                 </tr>
               </thead>
               <tbody>
@@ -1005,7 +993,6 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                         </td>
                       ))}
                       <td className="text-center font-bold text-stone-700">{t || ''}</td>
-                      <td></td>
                     </tr>
                   );
                 })}
@@ -1013,6 +1000,105 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             </table>
           </div>
           )}
+            </div>
+            <div className="w-full sm:flex-1 min-w-0">
+            {/* 반찬 접수일 때 — 여덟 칸 표는 뜻이 없다. 그날 세트 수만 본다 */}
+              {mode === '반찬' && (
+                <div className="rounded-lg border-2 border-emerald-300 overflow-hidden">
+                  <div className="px-2.5 py-1 bg-emerald-100 border-b border-emerald-200 flex items-baseline justify-between">
+                    <span className="text-[13px] font-black text-emerald-900">
+                      반찬 세트
+                      <span className="ml-1 font-normal text-[11px] text-emerald-800">
+                        {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-emerald-800">{banchanPeople}명</span>
+                  </div>
+                  <div className="px-3 py-3 text-center">
+                    <div className="text-3xl font-black text-emerald-900">{banchanDay}</div>
+                    <div className="text-[11px] text-stone-500">
+                      세트
+                      {mineBanchan > 0 && <span className="ml-1 text-amber-700 font-bold">(방금 +{mineBanchan})</span>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 조리갯수 — 비어 있어도 자리를 지킨다. 칸이 움직이면 눈이 다시 찾아야 한다 */}
+              {mode === '이유식' && (
+              <div className="rounded-lg border border-stone-300 overflow-hidden">
+                <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[13px] font-black text-stone-800">
+                      조리갯수
+                      <span className="ml-1 font-normal text-[11px] text-stone-500">
+                        {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-stone-500">{dayOrders.length}명</span>
+                  </div>
+                  <p className="text-[10px] text-stone-400 leading-tight">
+                    아래 조리표·담는 수량과 같은 숫자입니다
+                    {mineAll > 0 && <span className="text-amber-700"> · 그중 방금 넣은 것 +{mineAll}팩</span>}
+                  </p>
+                </div>
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="text-[10px] text-stone-400 bg-stone-50">
+                      <th className="text-left font-medium px-2 py-0.5">칸</th>
+                      {MENU_TYPES.map(m => <th key={m} className="font-medium py-0.5 w-8">{menuLabel(m)}</th>)}
+                      <th className="font-medium py-0.5 w-8" title="팩수는 있는데 메뉴를 안 적은 몫">미정</th>
+                      <th className="font-medium py-0.5 w-8">합</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tally.map((t, i) => {
+                      const newStage = i > 0 && tally[i - 1].slot.stage !== t.slot.stage;
+                      return (
+                        <tr key={t.slot.key}
+                            className={`${newStage ? 'border-t-2 border-t-stone-300' : 'border-t border-stone-100'} ${t.sum ? '' : 'text-stone-300'}`}>
+                          <td className="px-2 py-0.5 whitespace-nowrap">
+                            {t.slot.stage.replace('단계', '')}
+                            <span className={`ml-1 ${t.slot.isBig && t.sum ? 'text-red-600' : ''}`}>{t.slot.volume}</span>
+                          </td>
+                          {MENU_TYPES.map(m => (
+                            <td key={m} className="py-0.5 text-center">{t.counts[m] || '·'}</td>
+                          ))}
+                          <td className={`py-0.5 text-center ${t.unnamed ? 'text-rose-600 font-bold' : ''}`}>{t.unnamed || '·'}</td>
+                          <td className="py-0.5 text-center font-bold">
+                            {t.sum || '·'}
+                            {t.mine > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-700">+{t.mine}</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {/* 여덟 칸에 없는 줄 — 빼놓으면 합계가 조리표와 어긋난다 */}
+                    {extras.map(e => (
+                      <tr key={e.label} className="border-t border-stone-100 text-stone-500">
+                        <td className="px-2 py-0.5 whitespace-nowrap text-[11px]">{e.label}</td>
+                        <td colSpan={MENU_TYPES.length + 1} className="py-0.5 text-center text-[10px] text-stone-400">여기선 안 나눠요</td>
+                        <td className="py-0.5 text-center font-bold">{e.qty}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-stone-400 bg-stone-50 font-black">
+                      <td className="px-2 py-1">합계</td>
+                      {MENU_TYPES.map(m => (
+                        <td key={m} className="py-1 text-center">{tally.reduce((a, t) => a + t.counts[m], 0) || '·'}</td>
+                      ))}
+                      <td className="py-1 text-center">{tally.reduce((a, t) => a + t.unnamed, 0) || '·'}</td>
+                      <td className="py-1 text-center text-amber-700">{grand || '·'}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                {tally.some(t => t.unnamed > 0) && (
+                  <p className="px-2 py-1 text-[10px] text-rose-700 bg-rose-50 border-t border-rose-200 leading-snug">
+                    '미정' 은 팩수만 들어오고 메뉴를 안 적은 몫이에요 — 아래 조리표에서 <b>고치기</b>로 나눠주세요.
+                  </p>
+                )}
+              </div>
+              )}
+            </div>
+          </div>
 
           {/* 받는 방법·권역·주문종류·요청 — 대개 지난 주문 그대로여서 접어 둔다.
               열지 않으면 지금까지와 똑같이 동작한다(지난 주문 값, 주소로 권역 짐작). */}
@@ -1112,135 +1198,91 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
 
           {/* 오른쪽 — 치면서 바로 보는 곳. 붙여 두어서 스크롤 없이 확인된다 */}
           <div className="lg:sticky lg:top-3 space-y-2">
-            {/* 적어둔 이름 — 이 날짜에 미리 적어둔 '할 일'. 눌러서 그 자리에서 채운다 */}
-            {pend.length > 0 && (() => {
-              const left = pend.filter(p => !p.done_at);
-              return (
-                <div className="rounded-lg border border-sky-300 overflow-hidden">
-                  <div className="px-2.5 py-1 bg-sky-100 border-b border-sky-200 flex items-baseline justify-between">
-                    <span className="text-[13px] font-black text-sky-900">적어둔 이름</span>
-                    <span className="text-[11px] text-sky-800">
-                      {left.length ? `${left.length}명 남음` : '다 넣었어요'}
-                    </span>
-                  </div>
-                  <div className="divide-y divide-sky-100 max-h-36 overflow-auto">
-                    {pend.map(p => (
-                      <div key={p.id} className={`px-2 py-1 flex items-center gap-1 ${p.done_at ? 'opacity-45' : ''}`}>
-                        <button onClick={() => usePend(p)} disabled={busy}
-                          title="이 이름을 위에 올립니다"
-                          className="flex-1 min-w-0 text-left disabled:opacity-40">
-                          <span className={`text-[13px] font-bold text-stone-900 ${p.done_at ? 'line-through' : ''}`}>
-                            {p.baby_name}
-                          </span>
-                          {p.note && <span className="ml-1 text-[11px] text-stone-500">{p.note}</span>}
-                        </button>
-                        {p.done_at
-                          ? <button onClick={() => markPend(p.id, false)} className="flex-shrink-0 text-[10px] text-stone-400 underline">되돌리기</button>
-                          : <button onClick={() => markPend(p.id, true)} title="주문은 다른 데서 넣었을 때" className="flex-shrink-0 text-[10px] px-1 py-0.5 rounded border border-stone-300 text-stone-500">완료</button>}
-                        <button onClick={() => removePend(p.id)} title="적어둔 것 지우기"
-                          className="flex-shrink-0 text-[11px] text-stone-300 hover:text-rose-600 px-0.5">×</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* 반찬 접수일 때 — 여덟 칸 표는 뜻이 없다. 그날 세트 수만 본다 */}
-            {mode === '반찬' && (
-              <div className="rounded-lg border-2 border-emerald-300 overflow-hidden">
-                <div className="px-2.5 py-1 bg-emerald-100 border-b border-emerald-200 flex items-baseline justify-between">
-                  <span className="text-[13px] font-black text-emerald-900">
-                    반찬 세트
-                    <span className="ml-1 font-normal text-[11px] text-emerald-800">
-                      {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
-                    </span>
-                  </span>
-                  <span className="text-[11px] text-emerald-800">{banchanPeople}명</span>
-                </div>
-                <div className="px-3 py-3 text-center">
-                  <div className="text-3xl font-black text-emerald-900">{banchanDay}</div>
-                  <div className="text-[11px] text-stone-500">
-                    세트
-                    {mineBanchan > 0 && <span className="ml-1 text-amber-700 font-bold">(방금 +{mineBanchan})</span>}
-                  </div>
-                </div>
+            {/* 요일 체크판 — 월·목을 같이 주문하신 손님을 미리 체크해 두고,
+                그날 정리할 때 다시 본다. 주문이 아니라 '그날 할 일' 이다.
+                칸을 누르면 적어두고, 체크된 칸을 누르면 지운다.
+                주문이 들어가면 ✓ 가 회색으로 바뀐다(markPend). */}
+            <div className="rounded-lg border border-sky-300 overflow-hidden">
+              <div className="px-2 py-1 bg-sky-100 border-b border-sky-200 flex items-baseline justify-between">
+                <span className="text-[12px] font-black text-sky-900">미리 적어두기</span>
+                <span className="text-[10px] text-sky-800">
+                  {pend.filter(p => !p.done_at).length ? `${pend.filter(p => !p.done_at).length}건 남음` : '남은 것 없음'}
+                </span>
               </div>
-            )}
-
-            {/* 조리갯수 — 비어 있어도 자리를 지킨다. 칸이 움직이면 눈이 다시 찾아야 한다 */}
-            {mode === '이유식' && (
-            <div className="rounded-lg border border-stone-300 overflow-hidden">
-              <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-[13px] font-black text-stone-800">
-                    조리갯수
-                    <span className="ml-1 font-normal text-[11px] text-stone-500">
-                      {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)} 전체
-                    </span>
-                  </span>
-                  <span className="text-[11px] text-stone-500">{dayOrders.length}명</span>
-                </div>
-                <p className="text-[10px] text-stone-400 leading-tight">
-                  아래 조리표·담는 수량과 같은 숫자입니다
-                  {mineAll > 0 && <span className="text-amber-700"> · 그중 방금 넣은 것 +{mineAll}팩</span>}
-                </p>
-              </div>
-              <table className="w-full text-[13px]">
+              <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="text-[10px] text-stone-400 bg-stone-50">
-                    <th className="text-left font-medium px-2 py-0.5">칸</th>
-                    {MENU_TYPES.map(m => <th key={m} className="font-medium py-0.5 w-8">{menuLabel(m)}</th>)}
-                    <th className="font-medium py-0.5 w-8" title="팩수는 있는데 메뉴를 안 적은 몫">미정</th>
-                    <th className="font-medium py-0.5 w-8">합</th>
+                  <tr className="bg-sky-50 text-[10px] text-sky-900">
+                    <th className="text-left font-medium pl-2 py-1">이름</th>
+                    {week.map(d => (
+                      <th key={d} className={`font-bold py-1 w-7 ${d === deliveryDate ? 'bg-sky-200' : ''}`}>
+                        {dowOf(d)}
+                        <span className="block font-normal text-[9px] text-sky-700">{Number(d.slice(8, 10))}</span>
+                      </th>
+                    ))}
+                    <th className="w-5"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {tally.map((t, i) => {
-                    const newStage = i > 0 && tally[i - 1].slot.stage !== t.slot.stage;
-                    return (
-                      <tr key={t.slot.key}
-                          className={`${newStage ? 'border-t-2 border-t-stone-300' : 'border-t border-stone-100'} ${t.sum ? '' : 'text-stone-300'}`}>
-                        <td className="px-2 py-0.5 whitespace-nowrap">
-                          {t.slot.stage.replace('단계', '')}
-                          <span className={`ml-1 ${t.slot.isBig && t.sum ? 'text-red-600' : ''}`}>{t.slot.volume}</span>
-                        </td>
-                        {MENU_TYPES.map(m => (
-                          <td key={m} className="py-0.5 text-center">{t.counts[m] || '·'}</td>
-                        ))}
-                        <td className={`py-0.5 text-center ${t.unnamed ? 'text-rose-600 font-bold' : ''}`}>{t.unnamed || '·'}</td>
-                        <td className="py-0.5 text-center font-bold">
-                          {t.sum || '·'}
-                          {t.mine > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-700">+{t.mine}</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {/* 여덟 칸에 없는 줄 — 빼놓으면 합계가 조리표와 어긋난다 */}
-                  {extras.map(e => (
-                    <tr key={e.label} className="border-t border-stone-100 text-stone-500">
-                      <td className="px-2 py-0.5 whitespace-nowrap text-[11px]">{e.label}</td>
-                      <td colSpan={MENU_TYPES.length + 1} className="py-0.5 text-center text-[10px] text-stone-400">여기선 안 나눠요</td>
-                      <td className="py-0.5 text-center font-bold">{e.qty}</td>
+                  {boardRows.map(r => (
+                    <tr key={r.name} className="border-t border-sky-100">
+                      {/* 이름을 누르면 그 사람이 위 칸에 올라온다 */}
+                      <td className="pl-2 py-0.5">
+                        <button onClick={() => useName(r.name, r.phone)} disabled={busy}
+                          title="이 이름을 위에 올립니다"
+                          className="text-[12px] font-bold text-stone-900 hover:text-sky-700 disabled:opacity-40 truncate max-w-[88px] text-left">
+                          {r.name}
+                        </button>
+                      </td>
+                      {week.map(d => {
+                        const cell = pend.find(p => p.baby_name === r.name && p.delivery_date === d);
+                        const done = !!cell?.done_at;
+                        return (
+                          <td key={d} className={`py-0.5 text-center ${d === deliveryDate ? 'bg-sky-50' : ''}`}>
+                            <button onClick={() => toggleCell(r.name, r.phone, d)}
+                              title={done ? '주문이 들어갔어요 (눌러서 지우기)' : cell ? '적어둔 것 (눌러서 지우기)' : '여기에 적어두기'}
+                              className={`w-5 h-5 rounded border text-[11px] font-black leading-none ${
+                                done ? 'bg-stone-200 border-stone-300 text-stone-500'
+                                : cell ? 'bg-sky-600 border-sky-600 text-white'
+                                : 'bg-white border-stone-300 text-transparent hover:border-sky-400'}`}>
+                              ✓
+                            </button>
+                          </td>
+                        );
+                      })}
+                      <td className="text-center">
+                        {/* 그 사람 줄을 통째로 지운다 */}
+                        <button onClick={() => { for (const p of pend.filter(x => x.baby_name === r.name)) void removePend(p.id); }}
+                          title="이 줄 지우기" className="text-[11px] text-stone-300 hover:text-rose-600">×</button>
+                      </td>
                     </tr>
                   ))}
-                  <tr className="border-t-2 border-stone-400 bg-stone-50 font-black">
-                    <td className="px-2 py-1">합계</td>
-                    {MENU_TYPES.map(m => (
-                      <td key={m} className="py-1 text-center">{tally.reduce((a, t) => a + t.counts[m], 0) || '·'}</td>
-                    ))}
-                    <td className="py-1 text-center">{tally.reduce((a, t) => a + t.unnamed, 0) || '·'}</td>
-                    <td className="py-1 text-center text-amber-700">{grand || '·'}</td>
-                  </tr>
+                  {boardRows.length === 0 && (
+                    <tr><td colSpan={week.length + 2} className="px-2 py-2 text-center text-[11px] text-stone-400">
+                      아래에 이름을 넣고 요일을 체크해두세요
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
-              {tally.some(t => t.unnamed > 0) && (
-                <p className="px-2 py-1 text-[10px] text-rose-700 bg-rose-50 border-t border-rose-200 leading-snug">
-                  '미정' 은 팩수만 들어오고 메뉴를 안 적은 몫이에요 — 아래 조리표에서 <b>고치기</b>로 나눠주세요.
-                </p>
-              )}
+              <div className="flex gap-1 p-1.5 border-t border-sky-100 bg-sky-50/50">
+                <input value={newName} onChange={e => setNewName(e.target.value.slice(0, 20))}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const nm = newName.trim();
+                    if (nm) { void toggleCell(nm, null, deliveryDate); setNewName(''); }
+                  }}
+                  placeholder="이름 추가 → 엔터"
+                  className={`${inp} flex-1 min-w-0 text-[12px] py-0.5`} />
+                {/* 지금 치고 있는 사람을 한 번에 — 월요일 치면서 목요일 체크할 때 */}
+                {(hit?.babyName || q.trim()) && !boardRows.some(r => r.name === (hit?.babyName || q.trim())) && (
+                  <button onClick={() => toggleCell(hit?.babyName || q.trim(), hit?.phone || null, deliveryDate)}
+                    title="지금 치고 있는 사람을 체크판에 올립니다"
+                    className="flex-shrink-0 px-2 rounded bg-sky-600 text-white text-[11px] font-bold">
+                    + {hit?.babyName || q.trim()}
+                  </button>
+                )}
+              </div>
             </div>
-            )}
 
             {/* 방금 넣은 것들 — 최근 것이 위로 */}
             {done.length > 0 && (
