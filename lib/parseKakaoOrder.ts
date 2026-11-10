@@ -192,12 +192,21 @@ function parseMenus(seg: string): Record<string, number> {
 }
 
 /**
+ * 메뉴를 안 적고 가짓수만 적는 분들이 있다 — "완료기 3가지(230g)".
+ * 3가지는 3팩이라는 뜻이다. 무엇을 담을지는 모르니 팩수만 읽는다.
+ */
+function segQtyOf(seg: string): number {
+  const m = seg.match(/(\d{1,2})\s*(?:팩|개|가지|종류)/);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
  * 단계 줄을 묶음으로 쪼갠다.
  *   "중기2-한우2,닭가슴살1,렌틸콩1"        → [중기2 {한우2,닭1,기타1}]
  *   "후기(한우2, 닭2, 가자미2) 완료기(한우1, 닭1)" → [후기 {...}, 완료기 {...}]
  *   "후기"                                  → [후기 {}]
  */
-function parseStageSets(raw: string): { stage: StageType | ''; menus: Record<string, number>; banchan: boolean }[] {
+function parseStageSets(raw: string): { stage: StageType | ''; menus: Record<string, number>; banchan: boolean; qty: number }[] {
   const text = String(raw || '');
   const marks: { idx: number; len: number; tok: string }[] = [];
   STAGE_TOKEN.lastIndex = 0;
@@ -206,19 +215,20 @@ function parseStageSets(raw: string): { stage: StageType | ''; menus: Record<str
   }
   if (!marks.length) return [];
 
-  const out: { stage: StageType | ''; menus: Record<string, number>; banchan: boolean }[] = [];
+  const out: { stage: StageType | ''; menus: Record<string, number>; banchan: boolean; qty: number }[] = [];
   for (let i = 0; i < marks.length; i++) {
     const seg = text.slice(marks[i].idx + marks[i].len, i + 1 < marks.length ? marks[i + 1].idx : undefined);
     const st = toStage(marks[i].tok);
-    if (st === '반찬') { out.push({ stage: '', menus: {}, banchan: true }); continue; }
+    if (st === '반찬') { out.push({ stage: '', menus: {}, banchan: true, qty: 0 }); continue; }
     if (!st) continue;
     // 같은 단계가 두 번 잡히면(예: "중기" 와 "중기2" 가 겹칠 때) 뒤엣것에 합친다
     const prev = out.find(o => o.stage === st);
     const menus = parseMenus(seg);
     if (prev) {
       for (const k of Object.keys(menus)) prev.menus[k] = (prev.menus[k] || 0) + menus[k];
+      prev.qty = prev.qty || segQtyOf(seg);
     } else {
-      out.push({ stage: st, menus, banchan: false });
+      out.push({ stage: st, menus, banchan: false, qty: segQtyOf(seg) });
     }
   }
   return out;
@@ -267,8 +277,9 @@ export function parseKakaoOrder(text: string, today: string): ParsedKakaoOrder {
       stage: g.stage,
       volume: vol.volume,
       menus: menuSum ? g.menus : {},
-      // 메뉴를 안 적었으면 용량 줄의 팩수를 쓴다("300g 3팩"). 묶음이 여럿이면 나눌 수 없으니 0.
-      qty: menuSum || (groups.length === 1 ? vol.qty : 0),
+      // 메뉴를 안 적었으면 단계 줄의 팩수("완료기 3가지"), 그것도 없으면 용량 줄의 팩수("300g 3팩").
+      // 용량 줄 팩수는 전체 합이라 묶음이 여럿이면 어느 쪽 것인지 알 수 없어 쓰지 않는다.
+      qty: menuSum || g.qty || (groups.length === 1 ? vol.qty : 0),
     });
   }
 

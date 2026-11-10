@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { applyCancelReversal } from '@/lib/orderCancel';
+import { orderDates } from '@/lib/orderItems';
 import { sendStatusPush, statusPushText } from '@/lib/push';
 
 const STATUSES = ['접수', '준비중', '배송중', '배송완료', '취소'];
@@ -32,6 +33,40 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     const { error } = await sb.from('baby_food_orders').update({ baby_name }).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, baby_name });
+  }
+
+  // 조리일 고치기 — 손님이 날짜를 잘못 적거나 아예 안 적는 일이 많다.
+  // ⚠️ 날짜는 두 군데 있다: 윗칸(delivery_date)과 items 안쪽. 조리표·주소록·대시보드는
+  //    items 쪽을 보고 날짜를 가른다(orderDates). 윗칸만 고치면 조리표에는 옛 날짜에 남는다.
+  //    여러 날짜가 묶인 주문은 어느 쪽을 옮길지 알 수 없어 받지 않는다.
+  if (status === undefined && typeof body.delivery_date === 'string') {
+    const next = body.delivery_date.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+      return NextResponse.json({ ok: false, error: '날짜 형식이 아니에요' }, { status: 400 });
+    }
+    const { data: o } = await sb
+      .from('baby_food_orders').select('id, items, delivery_date').eq('id', id).single();
+    if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
+
+    const dates = orderDates(o as any);
+    if (dates.length > 1) {
+      return NextResponse.json({
+        ok: false,
+        error: `여러 날짜(${dates.join(', ')})가 묶인 주문이라 날짜만 바꿀 수 없어요 — 취소하고 다시 넣어주세요`,
+      }, { status: 409 });
+    }
+
+    const items = Array.isArray(o.items)
+      ? (o.items as any[]).map(it =>
+          it && typeof it === 'object' && !Array.isArray(it) && 'delivery_date' in it
+            ? { ...it, delivery_date: next }
+            : it)
+      : o.items;
+
+    const { error } = await sb
+      .from('baby_food_orders').update({ delivery_date: next, items }).eq('id', id);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, delivery_date: next, was: o.delivery_date });
   }
 
   if (!STATUSES.includes(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 });

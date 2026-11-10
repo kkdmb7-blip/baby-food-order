@@ -305,7 +305,9 @@ export async function POST(req: NextRequest) {
         postal_code, zone_group, delivery_method, receive_method, referred_by_phone: referredByStored,
         points_earned: pointsEarned, acquisition_source, shipping_fee
       })
-      .select('id')
+      // 만든 줄을 그대로 돌려준다 — 관리자 입력판이 이 줄을 화면에 바로 꽂아서
+      // 저장할 때마다 주문 500건을 다시 받아오지 않게 하려는 것이다(입력이 끊긴다).
+      .select('*')
       .single();
 
     if (error) {
@@ -372,7 +374,8 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
 
     return NextResponse.json({
-      ok: true, id: data.id, points_earned: pointsEarned, points_used: pointsUsed, net_price,
+      ok: true, id: data.id, row: data,
+      points_earned: pointsEarned, points_used: pointsUsed, net_price,
       shipping_fee, charged: net_price + shipping_fee,
       welcome_bonus: welcomeBonus, referral_bonus: referralBonus,
     });

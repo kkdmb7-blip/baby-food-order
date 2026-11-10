@@ -13,6 +13,13 @@ import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } fr
     ③ 엔터나 '확인' → 저장되고 아래로 쌓인다. 입력칸은 비워져 다음 사람 차례.
     ④ 잘못 넣었으면 '되돌리기' → 그 주문은 취소되고, 넣었던 내용이 위 칸에 그대로 올라온다.
        되돌리기는 지우는 버튼이 아니라 고치는 버튼이다 — 고쳐서 다시 엔터를 치면 된다.
+    ⑤ 월·목을 같이 주문하셨으면 목요일에 '이름만 적어둔다'. 목요일을 정리할 때
+       오른쪽에 그 이름이 떠 있고, 눌러서 그때 채워 넣는다.
+
+  조리일은 하나다
+    전에는 이 판에 날짜 칸이 따로 있어서, 여기서 날짜를 바꾸면 화면 위쪽은 그대로인 채
+    주문만 다른 날짜로 들어갔다. 넣고 나서 어디로 갔는지 알 수 없었다.
+    이제 이 날짜 칸은 화면 맨 위 날짜와 같은 칸이다 — 여기서 바꾸면 화면 전체가 따라간다.
 
   왜 여덟 칸을 다 열어두나
     한 사람이 같은 단계를 다른 용량으로 시키기도 하고(중기2 230 + 중기2 300),
@@ -50,6 +57,10 @@ type Hit = {
 
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 const dowOf = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? DOW[new Date(d + 'T00:00:00Z').getUTCDay()] : '');
+const addDays = (d: string, n: number) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(d)
+    ? new Date(new Date(d + 'T00:00:00Z').getTime() + n * 86400000).toISOString().slice(0, 10)
+    : d;
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
 type Slot = { stage: StageType; volume: number; key: string; label: string; isBig: boolean };
@@ -63,6 +74,27 @@ const SLOTS: Slot[] = STAGES.flatMap(s => {
   }));
 });
 
+/** 조리일에 이름만 적어둔 것. 팩수도 메뉴도 없는 '그날 할 일'이다 */
+type Pend = {
+  id: string; delivery_date: string; baby_name: string;
+  customer_phone: string | null; note: string | null; done_at: string | null;
+};
+
+/**
+ * 주문서에 적힌 용량을 그 단계의 칸으로 맞춘다.
+ * 양식 안내문이 "230g 또는 300g" 이라 중기1단계도 230·300 으로 적어 보내신다.
+ * 중기1은 240·310 이다 — 중기2를 한 번 더 갈아 다시 끓이면서 양이 늘기 때문이다.
+ * 10g 차이까지만 맞춘다. 그보다 멀면 잘못 적힌 것이니 사장님께 알린다.
+ */
+function fitSlot(stage: StageType, volume: number): Slot | null {
+  const mine = SLOTS.filter(s => s.stage === stage);
+  if (!mine.length || !volume) return null;
+  const exact = mine.find(s => s.volume === volume);
+  if (exact) return exact;
+  const near = mine.reduce((a, b) => (Math.abs(b.volume - volume) < Math.abs(a.volume - volume) ? b : a));
+  return Math.abs(near.volume - volume) <= 10 ? near : null;
+}
+
 type Qty = Record<string, Record<string, string>>;   // slotKey → menu → 팩수
 
 const copyQty = (q: Qty): Qty => Object.fromEntries(Object.entries(q).map(([k, v]) => [k, { ...v }]));
@@ -71,6 +103,7 @@ const copyQty = (q: Qty): Qty => Object.fromEntries(Object.entries(q).map(([k, v
     되돌리기는 지우는 버튼이 아니라 고치는 버튼이라, 내용이 돌아와야 고칠 수 있다. */
 type Snap = {
   deliveryDate: string;
+  pendId: string | null;      // 적어둔 이름에서 끌어온 것이면 그 id — 되돌리면 다시 '할 일'로 돌아간다
   q: string;
   hit: Hit | null;
   isNew: boolean;
@@ -85,16 +118,30 @@ type Snap = {
 type Done = {
   key: number;
   name: string;
+  date: string;               // 어느 조리일에 넣었는지 — 날짜를 바꿔가며 치면 섞인다
   undone?: boolean;
+  pending?: boolean;          // 보내는 중 — 화면은 기다리지 않고 다음 사람을 치게 한다
   snap: Snap;
-  lines: { slot: Slot; menus: Record<string, number>; total: number; ok: boolean; error?: string; id?: string }[];
+  lines: {
+    slot: Slot; menus: Record<string, number>; total: number;
+    ok: boolean; pending?: boolean; error?: string; id?: string; row?: any;
+  }[];
 };
 
 let SEQ = 1;
 
-export default function GridEntry({ date, onSaved }: { date: string; onSaved: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [deliveryDate, setDeliveryDate] = useState(date);
+export default function GridEntry({ date, onSaved, onDateChange }: {
+  date: string;
+  /** 만들어진 주문 줄을 넘긴다 — 화면이 주문 전체를 다시 받지 않고 그 줄만 꽂으면 된다 */
+  onSaved: (rows?: any[]) => void;
+  onDateChange: (d: string) => void;
+}) {
+  // 아침에 조리표 탭을 열면 바로 치기 시작하신다 — 접혀 있으면 매번 한 번 더 눌러야 한다
+  const [open, setOpen] = useState(true);
+
+  // 조리일은 화면 위쪽과 같은 값이다. 여기서 바꾸면 위도 같이 바뀐다(onDateChange).
+  // 따로 들고 있으면 넣은 주문이 화면에 없는 날짜로 가버린다.
+  const deliveryDate = date;
 
   // 지금 치고 있는 한 사람
   const [q, setQ] = useState('');
@@ -138,13 +185,30 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   const [parsed, setParsed] = useState<ParsedKakaoOrder | null>(null);
   const [pasteNote, setPasteNote] = useState<string | null>(null);
 
+  // 적어둔 이름 — 이 조리일에 이름만 미리 적어둔 것들
+  const [pend, setPend] = useState<Pend[]>([]);
+  const [pendUsed, setPendUsed] = useState<string | null>(null);   // 지금 치는 사람이 그 목록에서 왔으면 그 id
+  const [parkOpen, setParkOpen] = useState(false);
+  const [park, setPark] = useState({ date: '', name: '', note: '' });
+
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setDeliveryDate(date); }, [date]);
+  // 날짜가 바뀌면 그 날짜에 적어둔 이름을 불러온다
+  useEffect(() => {
+    if (!open || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    let alive = true;
+    (async () => {
+      try {
+        const d = await fetch(`/api/admin/pending-names?date=${date}`).then(r => r.json());
+        if (alive && d.ok) setPend(d.rows || []);
+      } catch { /* 못 불러와도 입력은 된다 */ }
+    })();
+    return () => { alive = false; };
+  }, [date, open]);
 
   // 이름 찾기
   useEffect(() => {
@@ -193,17 +257,31 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     const p = parsed;
     if (!p) return;
     setErr(null);
-    if (p.delivery_date) setDeliveryDate(p.delivery_date);
+    // 주문서에 적힌 조리일이 화면 날짜와 다르면 화면 날짜를 그 날로 옮긴다(위쪽까지 같이).
+    // 조용히 다른 날짜로 저장하면 넣은 게 화면에서 사라져 어디로 갔는지 알 수 없다.
+    const dateMoved = p.delivery_date && p.delivery_date !== date ? p.delivery_date : '';
+    if (dateMoved) onDateChange(dateMoved);
 
     // 단계 묶음 → 여덟 칸
     const nq: Qty = {};
     const unknown: string[] = [];
+    const moved: string[] = [];      // 용량을 그 단계의 칸으로 맞춘 것
+    const noQty: string[] = [];      // 칸은 찾았는데 팩수가 안 적힌 것
     let noMenu = 0;
     for (const s of p.sets) {
-      const key = `${s.stage}|${s.volume}`;
-      if (!s.stage || !s.volume || !SLOTS.some(x => x.key === key)) {
+      if (!s.stage || !s.volume) {
         unknown.push(`${s.stage || '단계?'} ${s.volume ? s.volume + 'g' : '용량?'}`);
         continue;
+      }
+      // 주문서 안내문이 "230g 또는 300g" 이라 중기1단계도 230·300 으로 적어 보내신다.
+      // 중기1은 240·310 이므로(중기2를 한 번 더 갈아 다시 끓이니 양이 는다) 그 칸으로 맞춘다.
+      const slot = fitSlot(s.stage, Number(s.volume));
+      if (!slot) {
+        unknown.push(`${s.stage} ${s.volume}g`);
+        continue;
+      }
+      if (slot.volume !== Number(s.volume)) {
+        moved.push(`${s.stage.replace('단계', '')} ${s.volume}g→${slot.volume}g`);
       }
       const row: Record<string, string> = {};
       let sum = 0;
@@ -211,8 +289,11 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
         const n = s.menus[m] || 0;
         if (n) { row[m] = String(n); sum += n; }
       }
-      if (!sum) noMenu += s.qty;
-      nq[key] = row;
+      if (!sum) {
+        if (s.qty) noMenu += s.qty;
+        else noQty.push(slot.label);
+      }
+      nq[slot.key] = row;
     }
 
     // 손님 찾기 — 번호가 가장 확실하다
@@ -240,6 +321,9 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     const miss = missingFields(p).map(k => FIELD_LABEL[k]);
     const notes: string[] = [];
     notes.push(found ? `${found.babyName} — 지난 주문에서 찾았어요` : '처음 오는 손님으로 받았어요');
+    if (dateMoved) notes.push(`조리일을 ${dateMoved}(${dowOf(dateMoved)})로 옮겼어요`);
+    if (moved.length) notes.push(`용량을 그 단계 칸으로 맞췄어요: ${moved.join(', ')}`);
+    if (noQty.length) notes.push(`${noQty.join('·')} 칸 — 팩수를 넣어주세요`);
     if (p.isBanchan && !Object.keys(nq).length) {
       notes.push('반찬(유아식) 주문은 이 칸으로 못 넣어요 — 아래 "조리표에 줄 넣기"로 넣어주세요');
     }
@@ -254,12 +338,14 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     setPaste(''); setParsed(null); setPasteNote(null);
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
+    setPendUsed(null); setParkOpen(false); setPark({ date: '', name: '', note: '' });
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
   /** 넣었던 것을 화면에 그대로 다시 올린다 — 이름·연락처·주소·팩수까지. 고쳐서 엔터만 치면 된다 */
   function restore(s: Snap) {
-    setDeliveryDate(s.deliveryDate);
+    if (s.deliveryDate && s.deliveryDate !== date) onDateChange(s.deliveryDate);
+    setPendUsed(s.pendId);
     setQ(s.q); setHit(s.hit); setHits([]); setListOpen(false);
     setIsNew(s.isNew); setNc({ ...s.nc });
     setAddrIdx(s.addrIdx); setAddrAdding(s.addrAdding); setAddrNew({ ...s.addrNew });
@@ -267,6 +353,71 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     setPaste(''); setParsed(null); setPasteNote(null);
     setErr(null);
     setTimeout(() => nameRef.current?.focus(), 0);
+  }
+
+  /* ── 적어둔 이름 ──────────────────────────────────────────────
+     월·목을 같이 주문하셨을 때, 목요일 것까지 한 번에 치려면 시간이 너무 걸린다.
+     목요일 자리에 이름만 적어두고 목요일에 카톡을 다시 보며 채우는 것이 원래 방식이다.
+     주문으로 넣으면 0팩 주문이 조리표·매출에 섞이니 따로 둔다. */
+
+  /** 다른 날짜에 이름만 적어둔다 */
+  async function addPark() {
+    const name = park.name.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(park.date)) { setErr('적어둘 조리일을 골라주세요'); return; }
+    if (!name) { setErr('적어둘 이름을 넣어주세요'); return; }
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch('/api/admin/pending-names', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          delivery_date: park.date, baby_name: name,
+          customer_phone: hit?.phone || '', note: park.note,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) { setErr(j.error || '적어두기 실패'); setBusy(false); return; }
+      if (park.date === date && j.row) setPend(p => [...p, j.row]);
+      setInfo(`${park.date}(${dowOf(park.date)}) 에 ${name} 적어뒀어요 — 그날 날짜를 고르면 오른쪽에 뜹니다`);
+      setParkOpen(false); setPark({ date: '', name: '', note: '' });
+    } catch (e: any) { setErr(e?.message || '적어두기 실패'); }
+    setBusy(false);
+  }
+
+  /** 적어둔 이름을 눌렀을 때 — 이름을 쳐서 집을 고른 것과 똑같은 상태가 된다 */
+  async function usePend(p: Pend) {
+    setErr(null); setInfo(null); setQty({});
+    setPaste(''); setParsed(null); setPasteNote(null);
+    setPendUsed(p.id);
+    const term = (p.customer_phone || '').replace(/\D/g, '') || p.baby_name;
+    try {
+      const d = await fetch(`/api/admin/order-lookup?q=${encodeURIComponent(term)}`).then(r => r.json());
+      const list: Hit[] = d.ok ? (d.hits || []) : [];
+      const want = (p.customer_phone || '').replace(/\D/g, '');
+      const found = want
+        ? list.find(h => h.phone.replace(/\D/g, '') === want)
+        : (list.length === 1 ? list[0] : null);
+      if (found) { pick(found); return; }
+    } catch { /* 아래로 떨어진다 */ }
+    // 못 찾으면 이름만 올려두고 고르게 한다 — 멋대로 처음 오는 손님으로 만들지 않는다
+    setHit(null); setIsNew(false); setQ(p.baby_name); setListOpen(true);
+    setInfo(`${p.baby_name} — 지난 주문을 못 찾았어요. 뜨는 집을 고르거나 처음 오는 손님으로 넣어주세요`);
+    setTimeout(() => nameRef.current?.focus(), 0);
+  }
+
+  /** 처리됨 표시 / 되돌리기 */
+  async function markPend(id: string, done: boolean) {
+    setPend(ps => ps.map(x => (x.id === id ? { ...x, done_at: done ? new Date().toISOString() : null } : x)));
+    try {
+      await fetch('/api/admin/pending-names', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, done }),
+      });
+    } catch { /* 표시만 못 바뀐 것이라 입력은 영향 없다 */ }
+  }
+
+  async function removePend(id: string) {
+    setPend(ps => ps.filter(x => x.id !== id));
+    try { await fetch(`/api/admin/pending-names?id=${id}`, { method: 'DELETE' }); } catch { /* 화면에서만 빠진다 */ }
   }
 
   const slotTotal = (k: string) => MENU_TYPES.reduce((a, m) => a + (Number(qty[k]?.[m]) || 0), 0);
@@ -284,11 +435,11 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       } else if (currentTotal === 0) setErr('팩수를 넣어주세요');
       return;
     }
-    setBusy(true); setErr(null); setInfo(null);
+    setErr(null); setInfo(null);
 
     // 넣기 전에 화면을 그대로 떠 둔다 — 되돌리기를 누르면 이걸 다시 올린다
     const snap: Snap = {
-      deliveryDate, q: q.trim(), hit, isNew, nc: { ...nc },
+      deliveryDate, pendId: pendUsed, q: q.trim(), hit, isNew, nc: { ...nc },
       addrIdx, addrAdding, addrNew: { ...addrNew }, qty: copyQty(qty),
     };
 
@@ -309,14 +460,27 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
         : (/강서구|양천구/.test(addr) ? '직배송' : '당일배송');
     const receive = hit?.receiveMethod === '픽업' ? '픽업' : '배송';
 
-    const lines: Done['lines'] = [];
-    for (const slot of usedSlots) {
+    // 칸마다 주문 한 건. 전에는 한 건씩 차례로 보내고 다 끝나야 입력칸이 비워졌다 —
+    // 칸이 셋이면 왕복 세 번을 기다렸다. 같이 보내고, 화면은 기다리지 않고 바로 비운다.
+    const jobs = usedSlots.map(slot => {
       const menus: Record<string, number> = {};
       for (const m of MENU_TYPES) {
         const n = Number(qty[slot.key]?.[m]) || 0;
         if (n > 0) menus[m] = n;
       }
-      const total = slotTotal(slot.key);
+      return { slot, menus, total: slotTotal(slot.key) };
+    });
+
+    // 먼저 아래에 '넣는 중'으로 올려두고 입력칸을 비운다 — 다음 사람을 바로 치실 수 있게
+    const key = SEQ++;
+    const pid = pendUsed;
+    setDone(d => [{
+      key, name, date: deliveryDate, snap, pending: true,
+      lines: jobs.map(j => ({ ...j, ok: false, pending: true })),
+    }, ...d]);
+    reset();
+
+    const lines: Done['lines'] = await Promise.all(jobs.map(async ({ slot, menus, total }) => {
       try {
         const res = await fetch('/api/orders', {
           method: 'POST',
@@ -348,17 +512,22 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
         });
         const j = await res.json().catch(() => ({}));
         const ok = res.ok && j.ok !== false;
-        lines.push({ slot, menus, total, ok, id: j.id, error: ok ? undefined : (j.error || `실패 (${res.status})`) });
+        return { slot, menus, total, ok, id: j.id, row: j.row,
+                 error: ok ? undefined : (j.error || `실패 (${res.status})`) };
       } catch (e: any) {
-        lines.push({ slot, menus, total, ok: false, error: e?.message || '네트워크 오류' });
+        return { slot, menus, total, ok: false, error: e?.message || '네트워크 오류' };
       }
-    }
+    }));
 
-    setDone(d => [{ key: SEQ++, name, lines, snap }, ...d]);
-    setBusy(false);
-    if (lines.some(l => l.ok)) onSaved();
-    if (lines.every(l => l.ok)) reset();
-    else setErr('일부 칸이 안 들어갔어요 — 아래에서 확인해주세요');
+    setDone(ds => ds.map(x => (x.key === key ? { ...x, pending: false, lines } : x)));
+    // 적어둔 이름에서 끌어온 사람이면 그 '할 일'은 끝났다 — 손으로 지우게 하지 않는다
+    if (pid && lines.some(l => l.ok)) void markPend(pid, true);
+    // 만들어진 줄을 그대로 넘긴다 — 아래 조리표가 주문 500건을 다시 받지 않고 바로 반영된다
+    const rows = lines.map(l => l.row).filter(Boolean);
+    if (rows.length) onSaved(rows);
+    if (lines.some(l => !l.ok)) {
+      setErr(`${name} — 안 들어간 칸이 있어요. 아래 '다시 올리기'를 눌러주세요`);
+    }
   }
 
   /** 잘못 넣었을 때 — 그 주문을 취소하고, 넣었던 내용을 위 칸에 그대로 다시 올린다.
@@ -393,6 +562,8 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       setErr(`${failed}건을 못 되돌렸어요 — 주문 탭에서 확인해주세요`);
     } else {
       setDone(ds => ds.map(x => (x.key === d.key ? { ...x, undone: true } : x)));
+      // 적어둔 이름에서 온 것이면 다시 '할 일'로 돌려놓는다 — 아직 안 끝난 것이니
+      if (d.snap.pendId) void markPend(d.snap.pendId, false);
       restore(d.snap);
       setInfo(`${d.name} — 취소했어요. 넣었던 내용을 위에 그대로 올려뒀으니 고친 뒤 엔터를 치면 다시 들어갑니다.`);
     }
@@ -400,11 +571,12 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   }
 
   // 넣은 것들의 조리갯수 (엑셀 '조리갯수' 시트 자리). 되돌린 건 빠진다.
+  // 지금 고른 조리일 것만 센다 — 날짜를 바꿔가며 치면 다른 날 팩수가 섞여 대조가 안 된다.
   const tally = SLOTS.map(s => {
     const counts: Record<string, number> = {};
     for (const m of MENU_TYPES) counts[m] = 0;
     for (const d of done) {
-      if (d.undone) continue;
+      if (d.undone || d.date !== deliveryDate) continue;
       for (const l of d.lines) {
         if (l.ok && l.slot.key === s.key) for (const m of MENU_TYPES) counts[m] += l.menus[m] || 0;
       }
@@ -422,7 +594,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     <div className="bg-white rounded-xl border border-amber-200 overflow-hidden no-print mb-4">
       <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
         <span className="font-bold text-stone-900 text-sm">
-          이름 한 번 치고 칸 체크하기
+          주문접수
           {grand > 0 && <span className="ml-2 font-normal text-amber-700">{grand}팩 넣음</span>}
         </span>
         <span className="text-stone-400 text-xs">{open ? '접기' : '열기'}</span>
@@ -431,11 +603,14 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
       {open && (
         <div className="px-3 pb-4 border-t border-stone-100 pt-3">
           <div className="flex flex-wrap items-center gap-3 mb-3">
+            {/* 화면 맨 위 날짜와 같은 칸이다. 여기서 바꾸면 위도 같이 바뀐다 */}
             <label className="flex items-center gap-2">
               <span className="text-xs font-medium text-stone-500">조리일</span>
-              <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+              <input type="date" value={deliveryDate}
+                onChange={e => { if (e.target.value) onDateChange(e.target.value); }}
                 className="rounded border border-stone-300 px-2 py-1 text-sm" />
               <span className="text-sm font-bold text-stone-700">({dowOf(deliveryDate)})</span>
+              <span className="text-[10px] text-stone-400">맨 위 날짜와 같은 칸</span>
             </label>
             <p className="text-[11px] text-stone-500 leading-snug">
               이름 → <b>엔터</b>로 집 고르기 → 칸에 팩수 → <b>엔터</b>면 저장. 칸 여러 개 같이 됩니다.
@@ -507,6 +682,12 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                 placeholder="아기 이름"
                 className={`${inp} flex-1 text-base font-bold ${hit ? 'border-emerald-400 bg-emerald-50/50' : ''}`}
               />
+              {/* 월·목을 같이 주문하셨을 때 — 목요일 자리에 이름만 적어둔다 */}
+              <button onClick={() => { setParkOpen(o => !o); setPark({ date: '', name: (hit?.babyName || q).trim(), note: '' }); }}
+                title="다른 날짜에 이름만 적어둡니다 — 그날 정리할 때 뜹니다"
+                className={`px-2 py-1.5 rounded border text-[11px] whitespace-nowrap ${parkOpen ? 'border-sky-400 bg-sky-50 text-sky-800' : 'border-stone-300 text-stone-600 hover:bg-sky-50'}`}>
+                + 다른 날
+              </button>
               {(hit || isNew) && (
                 <button onClick={reset} className="px-3 py-1.5 rounded border border-stone-300 text-xs text-stone-600">
                   지우기
@@ -585,6 +766,41 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               </div>
             )}
           </div>
+
+          {/* 다른 날 이름만 적어두기 — 주문이 아니라 그날 할 일이다 */}
+          {parkOpen && (
+            <div className="mb-2 rounded-lg border border-sky-300 bg-sky-50/60 p-2">
+              <p className="text-[11px] font-bold text-sky-900 mb-1.5">
+                다른 날 <b>이름만</b> 적어두기 — 주문으로 들어가지 않습니다. 그날 날짜를 고르면 오른쪽에 떠요.
+              </p>
+              <div className="flex flex-wrap gap-1 mb-1.5">
+                {[1, 2, 3, 4, 5, 6, 7].map(n => {
+                  const d = addDays(deliveryDate, n);
+                  const on = park.date === d;
+                  return (
+                    <button key={n} onClick={() => setPark(v => ({ ...v, date: d }))}
+                      className={`px-1.5 py-0.5 rounded text-[11px] border ${on ? 'bg-sky-600 text-white border-sky-600 font-bold' : 'bg-white border-stone-300 text-stone-600'}`}>
+                      {Number(d.slice(5, 7))}/{Number(d.slice(8, 10))} {dowOf(d)}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="grid grid-cols-[132px_1fr_1fr_auto] gap-1.5">
+                <input type="date" value={park.date} onChange={e => setPark(v => ({ ...v, date: e.target.value }))}
+                  className={`${inp} text-[12px]`} />
+                <input value={park.name} onChange={e => setPark(v => ({ ...v, name: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPark(); } }}
+                  placeholder="아기 이름" className={`${inp} font-bold`} />
+                <input value={park.note} onChange={e => setPark(v => ({ ...v, note: e.target.value.slice(0, 100) }))}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addPark(); } }}
+                  placeholder="메모 (선택) — 예: 월·목 같이 주문" className={`${inp} text-[12px]`} />
+                <button onClick={addPark} disabled={busy || !park.date || !park.name.trim()}
+                  className="px-3 rounded bg-sky-600 text-white text-[12px] font-bold disabled:bg-stone-200 disabled:text-stone-400">
+                  적어두기
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 처음 오는 손님 — 지난 주문이 없으니 여기서 받는다. 주문과 함께 고객으로도 저장된다 */}
           {isNew && !hit && (
@@ -678,11 +894,52 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
 
           {/* 오른쪽 — 치면서 바로 보는 곳. 붙여 두어서 스크롤 없이 확인된다 */}
           <div className="lg:sticky lg:top-3 space-y-2">
+            {/* 적어둔 이름 — 이 날짜에 미리 적어둔 '할 일'. 눌러서 그 자리에서 채운다 */}
+            {pend.length > 0 && (() => {
+              const left = pend.filter(p => !p.done_at);
+              return (
+                <div className="rounded-lg border border-sky-300 overflow-hidden">
+                  <div className="px-2.5 py-1 bg-sky-100 border-b border-sky-200 flex items-baseline justify-between">
+                    <span className="text-[13px] font-black text-sky-900">적어둔 이름</span>
+                    <span className="text-[11px] text-sky-800">
+                      {left.length ? `${left.length}명 남음` : '다 넣었어요'}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-sky-100 max-h-36 overflow-auto">
+                    {pend.map(p => (
+                      <div key={p.id} className={`px-2 py-1 flex items-center gap-1 ${p.done_at ? 'opacity-45' : ''}`}>
+                        <button onClick={() => usePend(p)} disabled={busy}
+                          title="이 이름을 위에 올립니다"
+                          className="flex-1 min-w-0 text-left disabled:opacity-40">
+                          <span className={`text-[13px] font-bold text-stone-900 ${p.done_at ? 'line-through' : ''}`}>
+                            {p.baby_name}
+                          </span>
+                          {p.note && <span className="ml-1 text-[11px] text-stone-500">{p.note}</span>}
+                        </button>
+                        {p.done_at
+                          ? <button onClick={() => markPend(p.id, false)} className="flex-shrink-0 text-[10px] text-stone-400 underline">되돌리기</button>
+                          : <button onClick={() => markPend(p.id, true)} title="주문은 다른 데서 넣었을 때" className="flex-shrink-0 text-[10px] px-1 py-0.5 rounded border border-stone-300 text-stone-500">완료</button>}
+                        <button onClick={() => removePend(p.id)} title="적어둔 것 지우기"
+                          className="flex-shrink-0 text-[11px] text-stone-300 hover:text-rose-600 px-0.5">×</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* 조리갯수 — 비어 있어도 자리를 지킨다. 칸이 움직이면 눈이 다시 찾아야 한다 */}
             <div className="rounded-lg border border-stone-300 overflow-hidden">
               <div className="px-2.5 py-1 bg-stone-100 border-b border-stone-200 flex items-baseline justify-between">
-                <span className="text-[13px] font-black text-stone-800">조리갯수</span>
-                <span className="text-[11px] text-stone-500">넣은 것 {done.length}명</span>
+                <span className="text-[13px] font-black text-stone-800">
+                  조리갯수
+                  <span className="ml-1 font-normal text-[11px] text-stone-500">
+                    {Number(deliveryDate.slice(5, 7))}/{Number(deliveryDate.slice(8, 10))} {dowOf(deliveryDate)}
+                  </span>
+                </span>
+                <span className="text-[11px] text-stone-500">
+                  넣은 것 {done.filter(d => !d.undone && d.date === deliveryDate).length}명
+                </span>
               </div>
               <table className="w-full text-[13px]">
                 <thead>
@@ -732,15 +989,30 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                     <div key={d.key} className={`px-2.5 py-1 text-[12px] leading-snug flex items-start gap-1 ${d.undone ? 'opacity-40 line-through' : ''}`}>
                       <div className="flex-1 min-w-0">
                         <span className="font-bold text-stone-900">{d.name}</span>
+                        {/* 다른 날짜에 넣은 줄은 날짜를 적어 둔다 — 조리갯수에는 안 들어간다 */}
+                        {d.date !== deliveryDate && (
+                          <span className="ml-1 text-[10px] text-sky-700 font-bold">
+                            {Number(d.date.slice(5, 7))}/{Number(d.date.slice(8, 10))} {dowOf(d.date)}
+                          </span>
+                        )}
                         {d.lines.map((l, i) => (
-                          <span key={i} className={`ml-1.5 ${l.ok ? 'text-stone-500' : 'text-rose-700 font-bold'}`}>
+                          <span key={i} className={`ml-1.5 ${l.pending ? 'text-stone-400' : l.ok ? 'text-stone-500' : 'text-rose-700 font-bold'}`}>
                             {l.slot.label} {MENU_TYPES.filter(m => l.menus[m]).map(m => `${menuLabel(m)}${l.menus[m]}`).join('·')}
-                            {!l.ok && ` — ${l.error}`}
+                            {l.pending && ' 넣는 중…'}
+                            {!l.pending && !l.ok && ` — ${l.error}`}
                           </span>
                         ))}
                       </div>
+                      {/* 안 들어간 줄 — 내용만 위에 다시 올린다(취소할 주문이 없다) */}
+                      {!d.pending && !d.undone && !d.lines.some(l => l.ok) && (
+                        <button onClick={() => restore(d.snap)}
+                          title="넣었던 내용을 위 칸에 다시 올립니다"
+                          className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-rose-300 text-rose-700 font-bold">
+                          다시 올리기
+                        </button>
+                      )}
                       {/* 잘못 넣었을 때 — 취소하고 내용을 위 칸에 그대로 올린다(고치는 버튼) */}
-                      {!d.undone && d.lines.some(l => l.ok && l.id) && (
+                      {!d.pending && !d.undone && d.lines.some(l => l.ok && l.id) && (
                         <button onClick={() => undo(d)} disabled={busy}
                           title="취소하고 넣었던 내용을 위 칸에 그대로 올립니다 — 고쳐서 다시 엔터"
                           className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300 disabled:opacity-40">

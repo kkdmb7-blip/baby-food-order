@@ -5,13 +5,16 @@ import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/s
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, menuLabel } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
-import { slicesOn, qtyOn } from '@/lib/orderItems';
+import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
-import KakaoOrderEntry from './KakaoOrderEntry';
 import CookingEntry from './CookingEntry';
 import GridEntry from './GridEntry';
 
-type Tab = '주문' | '카톡주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
+// '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
+// 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
+type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
+const TABS: Tab[] = ['주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
+const TAB_KEY = 'kkdmb-admin-tab';
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -24,6 +27,8 @@ const STATUS_CLS: Record<OrderStatus, string> = {
 const NEXT_STATUS: Record<OrderStatus, OrderStatus> = {
   접수: '준비중', 준비중: '배송중', 배송중: '배송완료', 배송완료: '접수', 취소: '접수'
 };
+
+const DOW_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 function shiftDay(date: string, days: number): string {
   const t = new Date(date + 'T00:00:00Z').getTime() + days * 86400000;
@@ -42,8 +47,24 @@ export default function AdminShell({
   selectedDate: string;
   weekStart: string;
 }) {
-  const [tab, setTab] = useState<Tab>('주문');
+  // 탭은 기억해 둔다. 날짜를 옮기거나 저장 뒤 화면이 새로 그려질 때 '주문' 탭으로 튕겨
+  // 다시 조리표 탭을 누르게 되는 일이 있었다. 조리표에서 치고 있으면 거기 머물러야 한다.
+  const [tab, setTabState] = useState<Tab>('주문');
+  useEffect(() => {
+    try {
+      const t = sessionStorage.getItem(TAB_KEY) as Tab | null;
+      if (t && TABS.includes(t)) setTabState(t);
+    } catch { /* 못 읽어도 '주문' 탭으로 시작하면 된다 */ }
+  }, []);
+  function setTab(t: Tab) {
+    setTabState(t);
+    try { sessionStorage.setItem(TAB_KEY, t); } catch { /* 기억만 못 하는 것 */ }
+  }
+
   const [orders, setOrders] = useState<Order[]>(initialOrders);
+  // 서버에서 새로 받은 주문으로 맞춘다. 전에는 처음 받은 것만 들고 있어서
+  // 날짜를 바꿔도(?date=) 화면의 조리표는 전 날짜 것이 남아 있었다.
+  useEffect(() => { setOrders(initialOrders); }, [initialOrders]);
   // 주문 찾기 — 문의 전화가 오면 날짜를 옮겨가며 눈으로 찾아야 했음
   const [search, setSearch] = useState('');
   const [searchResult, setSearchResult] = useState<Order[] | null>(null);
@@ -120,6 +141,26 @@ export default function AdminShell({
     }
   }
 
+  // 조리일 고치기 — 손님이 날짜를 잘못 적거나 아예 안 적는 일이 많다.
+  // 고치면 이 날짜 화면에서는 빠지므로(다른 날로 갔으니) 목록을 다시 받는다.
+  async function saveDate(o: Order, next: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(next) || next === o.delivery_date) return;
+    const was = o.delivery_date;
+    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, delivery_date: next } : x));
+    const r = await fetch(`/api/orders/${o.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delivery_date: next }),
+    }).catch(() => null);
+    const j = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok || j.ok === false) {
+      // 못 바꿨으면 되돌린다 — 바뀐 줄 알고 넘어가면 그날 조리표에서 빠진다
+      setOrders(prev => prev.map(x => x.id === o.id ? { ...x, delivery_date: was } : x));
+      alert(j.error || '조리일을 못 바꿨어요');
+      return;
+    }
+    router.refresh();
+  }
+
   async function togglePaid(o: Order) {
     const next = !o.paid;
     setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: next } : x));
@@ -170,7 +211,7 @@ export default function AdminShell({
     );
   }
 
-  const tabs: Tab[] = ['주문', '카톡주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
+  const tabs = TABS;
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -187,15 +228,19 @@ export default function AdminShell({
             (주문은 항상 "내일 이후" 조리분이라 오늘만 볼 수 있으면 확인이 안 됐음) */}
         <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-2">
           <span className="text-xs text-stone-500 font-bold">조리일</span>
-          <a href={`/admin?date=${shiftDay(selectedDate, -1)}`} aria-label="하루 전"
-            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</a>
+          {/* 전에는 <a href> 라 날짜를 옮길 때마다 페이지를 처음부터 다시 받았다(느리고 탭도 풀렸다).
+              이제 화면만 다시 그린다 — 주문 목록은 위 useEffect 가 새 값으로 맞춘다. */}
+          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, -1)}`)} aria-label="하루 전"
+            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">←</button>
           <input type="date" value={selectedDate}
             onChange={e => { if (e.target.value) router.push(`/admin?date=${e.target.value}`); }}
             className="px-2 py-1 border border-stone-200 rounded-lg text-sm font-bold bg-white" />
-          <a href={`/admin?date=${shiftDay(selectedDate, 1)}`} aria-label="하루 후"
-            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</a>
+          <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, 1)}`)} aria-label="하루 후"
+            className="px-2.5 py-1 rounded-lg border border-stone-200 bg-white text-sm">→</button>
+          <span className="text-sm font-bold text-stone-600">({DOW_KO[new Date(selectedDate + 'T00:00:00Z').getUTCDay()]})</span>
           {selectedDate !== today && (
-            <a href="/admin" className="text-xs text-amber-700 font-bold underline underline-offset-2">오늘</a>
+            <button onClick={() => router.push('/admin')}
+              className="text-xs text-amber-700 font-bold underline underline-offset-2">오늘</button>
           )}
         </div>
         <div className="max-w-5xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
@@ -330,6 +375,29 @@ export default function AdminShell({
                       {o.order_type !== '일반' && (
                         <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">{o.order_type}</span>
                       )}
+                      {/* 조리일 — 손님이 날짜를 잘못 적거나 안 적는 일이 많다. 여기서 바로 고친다.
+                          여러 날짜가 묶인 주문은 어느 쪽을 옮길지 알 수 없어 글자로만 보여준다. */}
+                      <div className="mt-1 flex items-center gap-1">
+                        <span className="text-[10px] text-stone-400">조리일</span>
+                        {orderDates(o as any).length > 1 ? (
+                          <span className="text-[11px] font-bold text-stone-600">
+                            {orderDates(o as any).join(', ')}
+                            <span className="ml-1 font-normal text-stone-400">(여러 날 묶음 — 취소하고 다시 넣어야 바뀝니다)</span>
+                          </span>
+                        ) : (
+                          <>
+                            <input type="date" defaultValue={o.delivery_date}
+                              key={o.id + o.delivery_date}
+                              onChange={e => saveDate(o, e.target.value)}
+                              title="손님이 날짜를 잘못 적었으면 여기서 고칩니다"
+                              className="px-1 py-0.5 border border-stone-200 rounded text-[11px] font-bold bg-white
+                                         hover:border-stone-300 focus:border-amber-400 outline-none" />
+                            <span className="text-[11px] font-bold text-stone-500">
+                              ({DOW_KO[new Date(o.delivery_date + 'T00:00:00Z').getUTCDay()]})
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <button
@@ -413,10 +481,7 @@ export default function AdminShell({
           </div>
         )}
 
-        {/* ── 탭: 통계 ────────────────────────────────────── */}
-        {tab === '카톡주문' && (
-          <KakaoOrderEntry today={today} onDone={() => router.refresh()} />
-        )}
+        {/* 카톡주문 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에 붙여넣으면 바로 읽어 채운다 */}
 
         {tab === '통계' && <StatsTab />}
 
@@ -426,9 +491,18 @@ export default function AdminShell({
         {tab === '조리표' && (
           <>
             {/* 조리표를 보면서 바로 줄을 넣을 수 있게. 프린트할 땐 안 나온다(no-print).
-                격자(GridEntry)는 단골을 줄줄이 칠 때, 폼(CookingEntry)은 처음 오는 손님이나
-                반찬 주문처럼 칸이 더 필요할 때. 둘 다 같은 /api/orders 로 들어간다. */}
-            <GridEntry date={selectedDate} onSaved={() => router.refresh()} />
+                주문접수(GridEntry)로 거의 다 넣고, 폼(CookingEntry)은 선결제·픽업·반찬처럼
+                칸이 더 필요할 때만. 둘 다 같은 /api/orders 로 들어간다.
+                날짜는 이 화면의 selectedDate 하나뿐이다 — 주문접수에서 날짜를 바꾸면
+                주소창(?date=)까지 같이 바뀌어서 넣은 주문이 바로 아래 조리표에 보인다. */}
+            {/* 저장할 때마다 서버에서 주문 500건을 다시 받으면 한 건 넣을 때마다 화면이 멈춘다.
+                만들어진 줄만 받아서 꽂는다 — 아래 조리표에 바로 보이고 기다릴 게 없다. */}
+            <GridEntry date={selectedDate}
+              onSaved={rows => {
+                if (rows?.length) setOrders(prev => [...(rows as Order[]), ...prev]);
+                else router.refresh();
+              }}
+              onDateChange={d => router.push(`/admin?date=${d}`)} />
             <CookingEntry date={selectedDate} onSaved={() => router.refresh()} />
             <CookingSheet orders={orders} today={selectedDate} />
           </>
@@ -518,7 +592,7 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
         <div className="flex gap-2 flex-wrap">
           <button onClick={printAll}
             className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
-            🖨 조리표 프린트
+            🖨 조리표
           </button>
           {/* 담는 쪽은 "누가 뭘 먹는지"가 아니라 "단계·용량별 몇 개"만 보면 된다.
               엑셀에서도 '조리갯수' 시트를 따로 뽑아 담는 대에서 쓰고 계셨다. */}
@@ -526,13 +600,9 @@ function CookingSheet({ orders, today }: { orders: Order[]; today: string }) {
             className="px-4 py-2 bg-white border-2 border-stone-400 text-stone-700 rounded-lg text-sm font-bold">
             📋 담는 수량 프린트
           </button>
-          {/* 프린트한 뒤에 들어온 줄이 있을 때만 — 없을 때 보이면 눌러보게 된다 */}
-          {(printInfo?.newOrders ?? 0) > 0 && (
-            <button onClick={() => window.open(`/admin/print/cooking?date=${today}&only=new`, '_blank')}
-              className="px-4 py-2 bg-white border-2 border-amber-500 text-amber-700 rounded-lg text-sm font-bold">
-              추가분만 프린트 ({printInfo!.newOrders}건)
-            </button>
-          )}
+          {/* '추가분만 프린트' 는 뺐다 — 쓰지 않는 기능이다.
+              프린트한 뒤 몇 건 들어왔는지는 아래 줄에 그대로 나오고,
+              추가분이 있으면 조리표를 다시 뽑으신다. */}
         </div>
 
         {/* 언제 뽑았고 그 뒤로 몇 건이 들어왔는지. 지금까지 이 줄들을 종이에 손으로 적으셨다. */}
