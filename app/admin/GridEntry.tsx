@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { MENU_TYPES, menuLabel, type StageType } from '@/lib/supabase';
-import { SLOTS, slotKey, fitSlot, type Slot } from '@/lib/slots';
+import { SLOTS, slotKey, fitSlot, spreadPacks, type Slot } from '@/lib/slots';
 import { slicesOn } from '@/lib/orderItems';
 import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
@@ -244,8 +244,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     const nq: Qty = {};
     const unknown: string[] = [];
     const moved: string[] = [];      // 용량을 그 단계의 칸으로 맞춘 것
-    const noQty: string[] = [];      // 칸은 찾았는데 팩수가 안 적힌 것
-    let noMenu = 0;
+    const autoFilled: string[] = []; // 메뉴를 안 적어 보내셔서 나눠 담은 것
     for (const s of p.sets) {
       if (!s.stage || !s.volume) {
         unknown.push(`${s.stage || '단계?'} ${s.volume ? s.volume + 'g' : '용량?'}`);
@@ -267,9 +266,13 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
         const n = s.menus[m] || 0;
         if (n) { row[m] = String(n); sum += n; }
       }
+      // 메뉴를 안 적어 보내셨으면 한우→닭→기타 순으로 나눠 담아 둔다.
+      // 팩수조차 없으면 종류별 1팩. 비워 두면 사장님이 매번 손으로 채워야 한다.
       if (!sum) {
-        if (s.qty) noMenu += s.qty;
-        else noQty.push(slot.label);
+        const spread = spreadPacks(s.qty);
+        for (const m of MENU_TYPES) if (spread[m]) row[m] = String(spread[m]);
+        const shown = MENU_TYPES.filter(m => spread[m]).map(m => `${menuLabel(m)}${spread[m]}`).join('·');
+        autoFilled.push(s.qty ? `${slot.label} ${s.qty}팩 → ${shown}` : `${slot.label} 팩수 없음 → ${shown}`);
       }
       nq[slot.key] = row;
     }
@@ -301,11 +304,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     notes.push(found ? `${found.babyName} — 지난 주문에서 찾았어요` : '처음 오는 손님으로 받았어요');
     if (dateMoved) notes.push(`조리일을 ${dateMoved}(${dowOf(dateMoved)})로 옮겼어요`);
     if (moved.length) notes.push(`용량을 그 단계 칸으로 맞췄어요: ${moved.join(', ')}`);
-    if (noQty.length) notes.push(`${noQty.join('·')} 칸 — 팩수를 넣어주세요`);
+    if (autoFilled.length) notes.push(`메뉴가 안 적혀 나눠 담았어요(고치실 수 있어요): ${autoFilled.join(', ')}`);
     if (p.isBanchan && !Object.keys(nq).length) {
       notes.push('반찬(유아식) 주문은 이 칸으로 못 넣어요 — 아래 "조리표에 줄 넣기"로 넣어주세요');
     }
-    if (noMenu) notes.push(`메뉴가 안 적힌 ${noMenu}팩 — 한우·닭·기타로 나눠 넣어주세요`);
     if (unknown.length) notes.push(`못 넣은 칸: ${unknown.join(', ')}`);
     if (miss.length) notes.push(`못 읽음: ${miss.join('·')}`);
     setPasteNote(notes.join('  ·  '));

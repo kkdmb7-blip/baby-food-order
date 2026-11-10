@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { MENU_TYPES, menuLabel, type Order, type Customer } from '@/lib/supabase';
-import { SLOTS, slotKey } from '@/lib/slots';
+import { SLOTS, slotKey, spreadPacks } from '@/lib/slots';
 import { slicesOn, orderDates } from '@/lib/orderItems';
 
 /*
@@ -95,6 +95,30 @@ export default function SheetEditor({ date, orders, customers, onClose, onChange
   const diff = nowAll - wasAll;
 
   const inp = 'w-full text-center rounded border border-stone-300 px-1 py-0.5 text-sm focus:border-amber-500 focus:outline-none';
+
+  // 메뉴를 안 적고 팩수만 들어온 칸 — 한우→닭→기타 순으로 나눠 담아 준다.
+  // 한 번 눌러 채우고 고칠 수 있게 두는 쪽이, 매번 손으로 치는 것보다 빠르고 덜 틀린다.
+  const needSpread = SLOTS.filter(s => {
+    const rows = bySlot.get(s.key) || [];
+    if (rows.length !== 1) return false;
+    const named = MENU_TYPES.reduce((a, m) => a + (rows[0].menus[m] || 0), 0);
+    return rows[0].qty > 0 && named === 0;
+  });
+
+  function fillSpread() {
+    const next: Qty = { ...qty };
+    const t = new Set(touched);
+    for (const s of needSpread) {
+      const rows = bySlot.get(s.key)!;
+      const spread = spreadPacks(rows[0].qty);
+      const row: Record<string, string> = {};
+      for (const m of MENU_TYPES) if (spread[m]) row[m] = String(spread[m]);
+      next[s.key] = row;
+      t.add(s.key);
+    }
+    setQty(next); setTouched(t);
+    setMsg(`${needSpread.map(s => s.label).join('·')} — 나눠 담았어요. 맞으면 저장을 눌러주세요`);
+  }
 
   async function save() {
     setBusy(true); setErr(null); setMsg(null);
@@ -255,6 +279,15 @@ export default function SheetEditor({ date, orders, customers, onClose, onChange
         <p className="mt-1.5 text-[11px] text-rose-700">
           '두 줄' 칸은 같은 칸에 주문이 두 건 들어가 있어요 — 주문 탭에서 한 건을 취소한 뒤 고쳐주세요.
         </p>
+      )}
+      {needSpread.length > 0 && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <button onClick={fillSpread} disabled={busy}
+            className="px-2.5 py-1 rounded border-2 border-rose-300 bg-white text-[11px] font-bold text-rose-700 disabled:opacity-40">
+            메뉴 안 적힌 {needSpread.reduce((a, s) => a + (bySlot.get(s.key)![0].qty), 0)}팩 나눠 담기
+          </button>
+          <span className="text-[10px] text-stone-500">한우 → 닭 → 기타 순으로 채웁니다 (4팩이면 2·1·1)</span>
+        </div>
       )}
       {others.length > 0 && (
         <p className="mt-1.5 text-[11px] text-stone-500">
