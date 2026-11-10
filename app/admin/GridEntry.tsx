@@ -30,13 +30,23 @@ import { MENU_TYPES, STAGES, STAGE_OPTIONS, menuLabel, type StageType } from '@/
     처음 오는 손님은 아래 '조리표에 줄 넣기'로 넣어야 한다.
 */
 
+type Addr = {
+  address: string; addressDetail: string | null; doorPassword: string | null;
+  postalCode: string | null; deliveryMethod: string | null; lastDate: string;
+};
+
 type Hit = {
   babyName: string; phone: string; address: string; addressDetail: string | null;
   doorPassword: string | null; stage: string | null; volume: number | null;
   lastMenus?: Record<string, number>;
+  addresses?: Addr[];
   postalCode: string | null; deliveryMethod: string | null; receiveMethod: string | null;
   lastDate: string; lastMonths: number; guessMonths: number; orders: number; orderType: string | null;
 };
+
+const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+const dowOf = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? DOW[new Date(d + 'T00:00:00Z').getUTCDay()] : '');
+const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
 type Slot = { stage: StageType; volume: number; key: string; label: string; isBig: boolean };
 
@@ -51,11 +61,12 @@ const SLOTS: Slot[] = STAGES.flatMap(s => {
 
 type Qty = Record<string, Record<string, string>>;   // slotKey → menu → 팩수
 
-/** 넣고 난 줄 — 아래로 쌓인다 */
+/** 넣고 난 줄 — 아래로 쌓인다. id 를 들고 있어야 잘못 친 걸 되돌릴 수 있다 */
 type Done = {
   key: number;
   name: string;
-  lines: { slot: Slot; menus: Record<string, number>; total: number; ok: boolean; error?: string }[];
+  undone?: boolean;
+  lines: { slot: Slot; menus: Record<string, number>; total: number; ok: boolean; error?: string; id?: string }[];
 };
 
 let SEQ = 1;
@@ -77,8 +88,28 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   // 옮겨다니는 게 결국 느린 쪽이라, 그 자리에서 받고 주문과 함께 고객으로 저장한다.
   const [isNew, setIsNew] = useState(false);
   const [nc, setNc] = useState({ phone: '', address: '', months: '', door: '' });
+
+  // 주소 — 하나뿐이면 고를 일이 없다. 둘 이상일 때만 고르고, 기본은 대표(가장 최근) 주소.
+  // 새 주소는 여기서 바로 적어 쓸 수 있고, 쓰고 나면 다음부터 목록에 뜬다(주문에 남으므로).
+  const [addrIdx, setAddrIdx] = useState(0);
+  const [addrAdding, setAddrAdding] = useState(false);
+  const [addrNew, setAddrNew] = useState({ address: '', door: '' });
   const ncPhone = nc.phone.replace(/\D/g, '');
   const ncValid = /^\d{10,11}$/.test(ncPhone) && nc.address.trim().length > 3 && Number(nc.months) > 0;
+
+  // 지난 주문에서 모은 주소들. 옛 응답에는 addresses 가 없을 수 있어 한 건짜리로 되살린다.
+  const addrList: Addr[] = hit
+    ? (hit.addresses?.length ? hit.addresses : [{
+        address: hit.address, addressDetail: hit.addressDetail, doorPassword: hit.doorPassword,
+        postalCode: hit.postalCode, deliveryMethod: hit.deliveryMethod, lastDate: hit.lastDate,
+      }])
+    : [];
+  const usingNewAddr = addrAdding && addrNew.address.trim().length > 3;
+  const chosenAddr: Addr | null = !hit ? null
+    : usingNewAddr
+      ? { address: addrNew.address.trim(), addressDetail: null, doorPassword: addrNew.door.trim() || null,
+          postalCode: null, deliveryMethod: null, lastDate: '' }
+      : (addrList[addrIdx] || addrList[0] || null);
 
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
@@ -105,6 +136,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
 
   function pick(h: Hit) {
     setHit(h); setQ(h.babyName); setHits([]); setListOpen(false); setIsNew(false);
+    setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
     // 지난번 시키던 칸에 지난번 팩수를 미리 넣어둔다 — 대개 그대로 이어가신다
     const slot = SLOTS.find(s => s.stage === h.stage && s.volume === Number(h.volume));
     if (slot && h.lastMenus) {
@@ -120,6 +152,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
   function reset() {
     setQ(''); setHit(null); setQty({}); setHits([]); setListOpen(false); setErr(null);
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
+    setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
@@ -140,20 +173,20 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     }
     setBusy(true); setErr(null);
 
-    // 단골이면 지난 주문에서, 처음이면 지금 치신 값에서
+    // 단골이면 지난 주문에서(고른 주소로), 처음이면 지금 치신 값에서
     const name = hit ? hit.babyName : q.trim();
-    const addr = hit
-      ? hit.address + (hit.addressDetail ? ' ' + hit.addressDetail : '')
-      : nc.address.trim();
+    const addr = hit ? (chosenAddr ? fullAddr(chosenAddr) : '') : nc.address.trim();
     const phone = (hit ? hit.phone : ncPhone).replace(/\D/g, '');
     const months = hit ? (hit.guessMonths || hit.lastMonths) : Number(nc.months);
-    const door = (hit ? hit.doorPassword : nc.door.trim()) || null;
-    const postal = hit ? hit.postalCode : null;
+    const door = (hit ? chosenAddr?.doorPassword : nc.door.trim()) || null;
+    const postal = hit ? chosenAddr?.postalCode ?? null : null;
     const orderType = hit?.orderType === '선결제' ? '선결제' : '일반';
-    // 우편번호가 없으면 서버가 이 값으로 권역을 판정한다 (팩당 500원이 걸린다)
+    // 우편번호가 없으면 서버가 이 값으로 권역을 판정한다 (팩당 500원이 걸린다).
+    // 주소마다 권역이 다를 수 있으므로 고른 주소의 값을 쓴다.
+    const dm = hit ? chosenAddr?.deliveryMethod : null;
     const zone =
-      hit && (hit.deliveryMethod === '직배송' || hit.deliveryMethod === '당일배송' || hit.deliveryMethod === '택배익일배송')
-        ? hit.deliveryMethod
+      dm === '직배송' || dm === '당일배송' || dm === '택배익일배송'
+        ? dm
         : (/강서구|양천구/.test(addr) ? '직배송' : '당일배송');
     const receive = hit?.receiveMethod === '픽업' ? '픽업' : '배송';
 
@@ -196,7 +229,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
         });
         const j = await res.json().catch(() => ({}));
         const ok = res.ok && j.ok !== false;
-        lines.push({ slot, menus, total, ok, error: ok ? undefined : (j.error || `실패 (${res.status})`) });
+        lines.push({ slot, menus, total, ok, id: j.id, error: ok ? undefined : (j.error || `실패 (${res.status})`) });
       } catch (e: any) {
         lines.push({ slot, menus, total, ok: false, error: e?.message || '네트워크 오류' });
       }
@@ -209,12 +242,37 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     else setErr('일부 칸이 안 들어갔어요 — 아래에서 확인해주세요');
   }
 
-  // 넣은 것들의 조리갯수 (엑셀 '조리갯수' 시트 자리)
+  /** 실수로 엔터를 쳤을 때 — 방금 넣은 것을 취소한다.
+      취소된 주문은 조리표·주소록에서 빠지므로 안 만들고 안 나간다. */
+  async function undo(d: Done) {
+    const ids = d.lines.filter(l => l.ok && l.id).map(l => l.id!);
+    if (!ids.length) return;
+    setBusy(true); setErr(null);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        const r = await fetch(`/api/orders/${id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: '취소' }),
+        });
+        if (!r.ok) failed++;
+      } catch { failed++; }
+    }
+    setBusy(false);
+    if (failed) setErr(`${failed}건을 못 되돌렸어요 — 주문 탭에서 확인해주세요`);
+    else setDone(ds => ds.map(x => (x.key === d.key ? { ...x, undone: true } : x)));
+    onSaved();
+  }
+
+  // 넣은 것들의 조리갯수 (엑셀 '조리갯수' 시트 자리). 되돌린 건 빠진다.
   const tally = SLOTS.map(s => {
     const counts: Record<string, number> = {};
     for (const m of MENU_TYPES) counts[m] = 0;
-    for (const d of done) for (const l of d.lines) {
-      if (l.ok && l.slot.key === s.key) for (const m of MENU_TYPES) counts[m] += l.menus[m] || 0;
+    for (const d of done) {
+      if (d.undone) continue;
+      for (const l of d.lines) {
+        if (l.ok && l.slot.key === s.key) for (const m of MENU_TYPES) counts[m] += l.menus[m] || 0;
+      }
     }
     return { slot: s, counts, sum: MENU_TYPES.reduce((a, m) => a + counts[m], 0) };
   });
@@ -242,6 +300,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               <span className="text-xs font-medium text-stone-500">조리일</span>
               <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
                 className="rounded border border-stone-300 px-2 py-1 text-sm" />
+              <span className="text-sm font-bold text-stone-700">({dowOf(deliveryDate)})</span>
             </label>
             <p className="text-[11px] text-stone-500 leading-snug">
               이름 → <b>엔터</b>로 집 고르기 → 칸에 팩수 → <b>엔터</b>면 저장. 칸 여러 개 같이 됩니다.
@@ -278,11 +337,46 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               )}
             </div>
             {hit && (
-              <p className="mt-1 text-[11px] text-stone-500 truncate">
-                {hit.address} · 지난 주문 {hit.lastDate}
-                {hit.stage ? ` · ${hit.stage.replace('단계', '')} ${hit.volume ?? ''}g` : ''}
-                {hit.orderType === '선결제' && <span className="ml-1 text-sky-700 font-bold">선결제</span>}
-              </p>
+              <div className="mt-1 text-[11px] text-stone-600 space-y-1">
+                <div className="flex items-center gap-1.5 flex-wrap text-stone-400">
+                  <span>지난 주문 {hit.lastDate}</span>
+                  {hit.stage && <span>· {hit.stage.replace('단계', '')} {hit.volume ?? ''}g</span>}
+                  {hit.orderType === '선결제' && <span className="text-sky-700 font-bold">선결제</span>}
+                </div>
+                {/* 주소가 하나면 그냥 쓴다. 둘 이상일 때만 고른다 — 맨 위가 대표(가장 최근) */}
+                <div className="flex items-center gap-1.5">
+                  <span className="flex-shrink-0">📍</span>
+                  {addrList.length > 1 && !usingNewAddr ? (
+                    <select value={addrIdx} onChange={e => setAddrIdx(Number(e.target.value))}
+                      className="flex-1 min-w-0 rounded border border-stone-300 px-1.5 py-1 text-[12px]">
+                      {addrList.map((a, i) => (
+                        <option key={i} value={i}>{fullAddr(a)}{i === 0 ? '  (대표)' : ''}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="flex-1 min-w-0 truncate">
+                      {usingNewAddr ? addrNew.address.trim() : (chosenAddr ? fullAddr(chosenAddr) : '주소 없음')}
+                      {usingNewAddr && <span className="ml-1 text-amber-700 font-bold">새 주소</span>}
+                    </span>
+                  )}
+                  <button onClick={() => { setAddrAdding(v => !v); setAddrNew({ address: '', door: '' }); }}
+                    className="flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-600 hover:bg-stone-50">
+                    {addrAdding ? '취소' : '+ 주소'}
+                  </button>
+                </div>
+                {addrAdding && (
+                  <div className="grid grid-cols-3 gap-1">
+                    <input value={addrNew.address} onChange={e => setAddrNew(v => ({ ...v, address: e.target.value }))}
+                      onKeyDown={onEnterConfirm} placeholder="새 주소 (구 이름 포함)"
+                      className={`${inp} col-span-2 text-[12px]`} />
+                    <input value={addrNew.door} onChange={e => setAddrNew(v => ({ ...v, door: e.target.value.slice(0, 20) }))}
+                      onKeyDown={onEnterConfirm} placeholder="현관비번" className={`${inp} text-[12px]`} />
+                    <p className="col-span-3 text-[10px] text-stone-500">
+                      이 주문에 쓰면 다음부터 위 목록에 뜹니다 — 따로 저장하실 필요 없어요.
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
             {listOpen && !hit && q.trim() && (
               <div className="absolute z-30 left-0 right-0 mt-0.5 bg-white border border-stone-200 rounded-lg shadow-lg max-h-56 overflow-auto">
@@ -348,10 +442,12 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
           <div className="rounded-lg border border-stone-300 overflow-hidden">
             <table className="w-full text-sm">
               <thead>
+                {/* 칸 이름과 숫자칸이 멀면 눈이 가로로 왔다 갔다 한다 — 폭을 고정해 붙여 둔다 */}
                 <tr className="bg-stone-50 text-[11px] text-stone-500">
-                  <th className="text-left font-medium px-2 py-1">칸</th>
-                  {MENU_TYPES.map(m => <th key={m} className="font-medium py-1 w-14">{menuLabel(m)}</th>)}
-                  <th className="font-medium py-1 w-10">합</th>
+                  <th className="text-left font-medium pl-2 pr-1 py-1 w-[88px]">칸</th>
+                  {MENU_TYPES.map(m => <th key={m} className="font-medium py-1 w-12">{menuLabel(m)}</th>)}
+                  <th className="font-medium py-1 w-9">합</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -361,9 +457,9 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                   return (
                     <tr key={s.key}
                         className={`${newStage ? 'border-t-4 border-t-stone-300' : 'border-t border-stone-100'} ${t ? 'bg-amber-50/50' : ''}`}>
-                      <td className="px-2 py-0.5 font-bold text-stone-700 whitespace-nowrap">
+                      <td className="pl-2 pr-1 py-0.5 font-bold text-stone-700 whitespace-nowrap text-[13px]">
                         {s.stage.replace('단계', '')}
-                        <span className={`ml-1 text-[12px] ${s.isBig ? 'text-red-600' : 'text-stone-500'}`}>{s.volume}g</span>
+                        <span className={`ml-1 text-[12px] ${s.isBig ? 'text-red-600' : 'text-stone-500'}`}>{s.volume}</span>
                       </td>
                       {MENU_TYPES.map(m => (
                         <td key={m} className="py-0.5 px-0.5">
@@ -377,6 +473,7 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                         </td>
                       ))}
                       <td className="text-center font-bold text-stone-700">{t || ''}</td>
+                      <td></td>
                     </tr>
                   );
                 })}
@@ -449,14 +546,25 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
                 </div>
                 <div className="divide-y divide-stone-100 max-h-44 overflow-auto">
                   {done.map(d => (
-                    <div key={d.key} className="px-2.5 py-1 text-[12px] leading-snug">
-                      <span className="font-bold text-stone-900">{d.name}</span>
-                      {d.lines.map((l, i) => (
-                        <span key={i} className={`ml-1.5 ${l.ok ? 'text-stone-500' : 'text-rose-700 font-bold'}`}>
-                          {l.slot.label} {MENU_TYPES.filter(m => l.menus[m]).map(m => `${menuLabel(m)}${l.menus[m]}`).join('·')}
-                          {!l.ok && ` — ${l.error}`}
-                        </span>
-                      ))}
+                    <div key={d.key} className={`px-2.5 py-1 text-[12px] leading-snug flex items-start gap-1 ${d.undone ? 'opacity-40 line-through' : ''}`}>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-bold text-stone-900">{d.name}</span>
+                        {d.lines.map((l, i) => (
+                          <span key={i} className={`ml-1.5 ${l.ok ? 'text-stone-500' : 'text-rose-700 font-bold'}`}>
+                            {l.slot.label} {MENU_TYPES.filter(m => l.menus[m]).map(m => `${menuLabel(m)}${l.menus[m]}`).join('·')}
+                            {!l.ok && ` — ${l.error}`}
+                          </span>
+                        ))}
+                      </div>
+                      {/* 실수로 엔터를 쳤을 때 — 여기서 바로 되돌린다 */}
+                      {!d.undone && d.lines.some(l => l.ok && l.id) && (
+                        <button onClick={() => undo(d)} disabled={busy}
+                          title="이 줄을 취소합니다"
+                          className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 disabled:opacity-40">
+                          되돌리기
+                        </button>
+                      )}
+                      {d.undone && <span className="flex-shrink-0 text-[10px] text-stone-400">취소됨</span>}
                     </div>
                   ))}
                 </div>

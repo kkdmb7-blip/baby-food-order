@@ -40,6 +40,12 @@ type Hit = {
   // 지난번에 메뉴별로 몇 팩 시키셨는지 — 대개 같은 양을 이어서 시키신다.
   // 이게 있으면 격자에서 이름만 고르고 엔터를 치면 끝난다(숫자도 안 쳐도 된다).
   lastMenus: Record<string, number>;
+  // 같은 집이 주소를 여러 군데 쓰기도 한다(집 + 할머니댁). 최근 쓴 순서대로 모은다.
+  // 첫 번째가 대표 주소다 — 하나뿐이면 고를 일이 없고, 둘 이상일 때만 화면에서 고른다.
+  addresses: {
+    address: string; addressDetail: string | null; doorPassword: string | null;
+    postalCode: string | null; deliveryMethod: string | null; lastDate: string;
+  }[];
   postalCode: string | null;
   deliveryMethod: string | null;
   receiveMethod: string | null;
@@ -91,8 +97,26 @@ export async function GET(req: NextRequest) {
     for (const o of data || []) {
       const phone = String(o.customer_phone || '');
       if (!phone) continue;
+      const addrRow = {
+        address: String(o.address || '').trim(),
+        addressDetail: o.address_detail ?? null,
+        doorPassword: o.door_password ?? null,
+        postalCode: o.postal_code ?? null,
+        deliveryMethod: o.delivery_method ?? null,
+        lastDate: String(o.delivery_date || ''),
+      };
+      const sameAddr = (a: typeof addrRow) =>
+        a.address === addrRow.address && (a.addressDetail || '') === (addrRow.addressDetail || '');
+
       const seen = byPhone.get(phone);
-      if (seen) { seen.orders++; continue; }
+      if (seen) {
+        seen.orders++;
+        // 최근 순으로 훑고 있으므로 뒤에 붙이면 최근 쓴 순서가 된다. 너무 많으면 고르기 어려워 6개까지.
+        if (addrRow.address && seen.addresses.length < 6 && !seen.addresses.some(sameAddr)) {
+          seen.addresses.push(addrRow);
+        }
+        continue;
+      }
       const lastDate = String(o.delivery_date || '');
       const lastMonths = Number(o.months) || 0;
       byPhone.set(phone, {
@@ -106,6 +130,7 @@ export async function GET(req: NextRequest) {
         volume: o.volume == null ? null : Number(o.volume),
         // items 는 구형(평면)·신형(중첩) 두 구조가 섞여 있어 menuTotal 로 흡수해서 읽는다
         lastMenus: Object.fromEntries(MENU_TYPES.map(m => [m, menuTotal(o as any, m)])),
+        addresses: addrRow.address ? [addrRow] : [],
         postalCode: o.postal_code ?? null,
         deliveryMethod: o.delivery_method ?? null,
         receiveMethod: o.receive_method ?? null,
