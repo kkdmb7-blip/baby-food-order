@@ -671,11 +671,16 @@ export default function OrderPage() {
       // 그 결과 수량·금액에는 포함되는데(Object.values 합산) 화면·조리표에는 표기가 빠지고
       // 조리표에서는 "메뉴 미지정"으로 잡혔음. 두 표기를 모두 받아준다.
       const TYPE_KOR: Record<string, string> = { hanwoo:'한우', chicken:'닭', p3:'기타단백질', other:'기타단백질' };
+      // 쌀을 넣는 이유: 메뉴 60건을 전수 확인했더니 재료 표기에 '쌀'이 적힌 것이
+      // 0건이었다. 죽·진밥인데도 그렇다. 그래서 쌀 알레르기를 등록한 손님에게
+      // 경고가 영원히 안 떴다 — matchAllergens가 찾을 글자가 없었기 때문이다.
+      // 사장님 확인: 230g 기준 밥이 중기 57g, 후기 58g, 완료기 75g.
+      // 전 단계·전 메뉴가 쌀 기반이므로 고정 재료로 넣는다(팩의 약 25%를 차지한다).
       const FIXED_SUFFIX: Record<string, string[]> = {
-        hanwoo: ['한우육수','양파','채소상탕'],
-        chicken: ['닭육수','양파','채소상탕'],
-        p3: ['양파','채소상탕'],
-        other: ['양파','채소상탕']
+        hanwoo: ['쌀','한우육수','양파','채소상탕'],
+        chicken: ['쌀','닭육수','양파','채소상탕'],
+        p3: ['쌀','양파','채소상탕'],
+        other: ['쌀','양파','채소상탕']
       };
       const MAIN_PROTEIN: Record<string, string[]> = {
         hanwoo: ['한우'], chicken: ['닭가슴살','닭']

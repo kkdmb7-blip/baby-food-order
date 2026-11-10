@@ -6,10 +6,14 @@ import { thisWeekMonday } from '@/lib/dates';
 // 표시 순서: [주단백질] → [야채들] → [고정 suffix]
 // 주방에서 뒤에 추가 입력한 재료도 무조건 이 순서로 재배치
 
+// 쌀은 app/order/page.tsx 의 FIXED_SUFFIX 와 같아야 한다 — 한쪽만 바꾸면
+// 주문폼 재료와 알레르기 경고가 어긋난다.
+// 메뉴 60건 전수 확인에서 재료 표기에 '쌀'이 0건이었고, 그 때문에 쌀 알레르기
+// 경고가 뜨지 않았다. 사장님 확인: 230g 기준 밥이 중기 57g·후기 58g·완료기 75g.
 const FIXED_SUFFIX: Record<string, string[]> = {
-  hanwoo: ['한우육수', '양파', '채소상탕'],
-  chicken: ['닭육수', '양파', '채소상탕'],
-  p3: ['양파', '채소상탕']
+  hanwoo: ['쌀', '한우육수', '양파', '채소상탕'],
+  chicken: ['쌀', '닭육수', '양파', '채소상탕'],
+  p3: ['쌀', '양파', '채소상탕']
 };
 
 const MAIN_PROTEIN: Record<string, string[]> = {
