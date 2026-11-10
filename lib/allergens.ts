@@ -45,7 +45,13 @@ export const ALLERGENS: Allergen[] = [
   { key: 'onion',    label: '양파', emoji: '🧅', keywords: ['양파'] },
   { key: 'mushroom', label: '버섯', emoji: '🍄', keywords: ['버섯', '표고', '느타리', '새송이', '팽이'] },
   { key: 'rice',     label: '쌀', emoji: '🍚', keywords: ['쌀', '백미', '현미', '찹쌀'] },
-  { key: 'sesame',   label: '참깨', emoji: '🌱', keywords: ['참깨', '들깨', '참기름', '들기름', '깨소금'] },
+  // 참깨와 들깨는 다른 식물이다 — 들깨는 꿀풀과(깻잎과 같은 과), 참깨는 참깨과다.
+  // 교차반응이 확립돼 있지 않은데 한 항목으로 묶으면 두 방향 모두 틀린다.
+  //   · 참깨 알레르기 아기가 '들기름' 때문에 걸려 못 먹는 것으로 나온다 (과한 제한)
+  //   · 들깨만 알레르기인 아기는 등록할 항목 자체가 없다 (빠진 구멍)
+  // 식약처 표시대상 19종에는 둘 다 없지만, 미국은 2023년부터 참깨를 주요 알레르겐으로 지정했다.
+  { key: 'sesame',   label: '참깨', emoji: '🌱', keywords: ['참깨', '참기름', '깨소금', '흑임자'] },
+  { key: 'perilla',  label: '들깨', emoji: '🌿', keywords: ['들깨', '들기름'] },
 ];
 
 // 흔히 먼저 등록하는 항목 (등록 UI 상단 노출용)
@@ -60,10 +66,14 @@ export const COMMON_KEYS = ['egg', 'milk', 'beef', 'chicken', 'soy', 'wheat', 'f
 // 그리고 식약처 표시대상 중 비중이 큰 대두·밀.
 // 나머지(쇠고기·닭고기·돼지고기·토마토·복숭아·당근·시금치·아황산류)는
 // 재료에 그대로 적혀 있으니 따로 경고하지 않는다.
+//
+// 참깨·들깨를 넣는 이유: 기름은 "재료에 적혀 있으니 보면 안다" 가 통하지 않는다.
+// 한두 방울이라 손님이 재료 목록에서 놓치기 쉽고, 들어가면 거의 모든 메뉴에 들어가서
+// 피할 방법이 없다. 참깨는 미국에서 주요 알레르겐으로 지정될 만큼 반응이 심한 쪽이다.
 export const SERIOUS_KEYS = [
   'milk', 'egg', 'shrimp', 'crab', 'shellfish', 'squid',
   'fish', 'mackerel', 'peanut', 'walnut', 'pinenut', 'buckwheat',
-  'soy', 'wheat',
+  'soy', 'wheat', 'sesame', 'perilla',
 ];
 
 const BY_KEY: Record<string, Allergen> = Object.fromEntries(ALLERGENS.map(a => [a.key, a]));
