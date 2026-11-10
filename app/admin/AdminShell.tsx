@@ -9,6 +9,8 @@ import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
 import SheetEditor from './SheetEditor';
+import CookingTable from './CookingTable';
+import { buildCookingSheet } from '@/lib/cookingSheet';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
@@ -595,30 +597,9 @@ function CookingSheet({ orders, today, customers, onChanged }: {
     loadPrintInfo();
   }
 
-  // ⚠️ 예전엔 주문의 stage/volume으로 묶어서, 복합주문(stage='mixed', volume=null)이
-  // 어느 그룹에도 안 잡혀 화면 조리표에서 통째로 빠졌음 — 인쇄용 조리표와 동일하게
-  // "그날 몫 세트" 단위로 묶는다.
-  type Row = { order: Order; menus: Record<string, number>; qty: number };
-  const totals: Record<MenuType, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
-  // 팩수 합계는 메뉴 합과 따로 센다 — 메뉴를 안 적은 몫(카톡에 "300g 3팩" 만 온 경우)이
-  // 있으면 둘이 다르다. 메뉴 합만 보여주면 그 팩은 어디에도 안 세어져 만드는 양이 모자란다.
-  let packTotal = 0;
-  const groupMap = new Map<string, { stage: string; volume: number; rows: Row[] }>();
-  for (const o of orders) {
-    for (const s of slicesOn(o as any, today)) {
-      for (const m of MENU_TYPES) totals[m] += s.menus[m] || 0;
-      packTotal += Number(s.qty) || 0;
-      const key = `${s.stage ?? '-'}|${s.volume ?? 0}`;
-      if (!groupMap.has(key)) groupMap.set(key, { stage: String(s.stage ?? '-'), volume: Number(s.volume ?? 0), rows: [] });
-      groupMap.get(key)!.rows.push({ order: o, menus: s.menus, qty: s.qty });
-    }
-  }
-  const STAGE_ORDER: string[] = [...STAGES];
-  const groups = [...groupMap.values()].sort((a, b) => {
-    const ai = STAGE_ORDER.indexOf(a.stage), bi = STAGE_ORDER.indexOf(b.stage);
-    if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
-    return a.volume - b.volume;
-  });
+  // 화면 조리표도 종이 조리표와 같은 표를 쓴다(CookingTable) — 전에는 따로 그려져서
+  // 담는 사람이 보는 숫자가 두 모양이었다. 계산은 lib/cookingSheet.ts 한 곳에서 한다.
+  const sheet = buildCookingSheet(orders as any, today, printInfo?.printedAt ?? null);
 
   return (
     <div>
@@ -626,7 +607,7 @@ function CookingSheet({ orders, today, customers, onChanged }: {
         <div className="flex gap-2 flex-wrap">
           <button onClick={printAll}
             className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-bold">
-            🖨 조리표
+            🖨 조리표 프린트
           </button>
           {/* 담는 쪽은 "누가 뭘 먹는지"가 아니라 "단계·용량별 몇 개"만 보면 된다.
               엑셀에서도 '조리갯수' 시트를 따로 뽑아 담는 대에서 쓰고 계셨다. */}
@@ -634,9 +615,6 @@ function CookingSheet({ orders, today, customers, onChanged }: {
             className="px-4 py-2 bg-white border-2 border-stone-400 text-stone-700 rounded-lg text-sm font-bold">
             📋 담는 수량 프린트
           </button>
-          {/* '추가분만 프린트' 는 뺐다 — 쓰지 않는 기능이다.
-              프린트한 뒤 몇 건 들어왔는지는 아래 줄에 그대로 나오고,
-              추가분이 있으면 조리표를 다시 뽑으신다. */}
         </div>
 
         {/* 언제 뽑았고 그 뒤로 몇 건이 들어왔는지. 지금까지 이 줄들을 종이에 손으로 적으셨다. */}
@@ -653,76 +631,48 @@ function CookingSheet({ orders, today, customers, onChanged }: {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-stone-200 p-5 space-y-5">
-        {groups.length === 0 && <div className="text-center text-stone-400 text-sm py-6">오늘 조리할 주문이 없어요</div>}
-        {groups.map(g => (
-          <div key={`${g.stage}-${g.volume}`}>
-            <div className="font-bold text-sm border-b-2 border-stone-900 pb-1 mb-2">
-              ■ {g.stage}{g.volume ? ` (${g.volume}g)` : ''} — {g.rows.length}명 / {g.rows.reduce((s, r) => s + r.qty, 0)}팩
-            </div>
-            <table className="w-full text-sm">
-              <tbody>
-                {g.rows.map((row, ri) => (
-                  <tr key={`${row.order.id}-${ri}`} className="border-b border-stone-100">
-                    <td className="py-1.5 font-bold w-24">
-                      {row.order.baby_name}
-                      {/* 프린트한 뒤에 들어온 줄 — 손에 든 종이에는 없는 사람이다 */}
-                      {printInfo?.printedAt && row.order.created_at > printInfo.printedAt && (
-                        <span className="ml-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-px align-middle">추가</span>
-                      )}
-                    </td>
-                    <td className="py-1.5">
-                      {MENU_TYPES.filter(m => (row.menus[m] || 0) > 0).map(m => `${menuLabel(m)} ${row.menus[m]}팩`).join(' · ')}
-                    </td>
-                    <td className="py-1.5 text-right text-stone-500 text-xs w-12">{row.qty}팩</td>
-                    {/* 손님이 바꿔 달라고 하실 때 — 여기서 바로 고친다(프린트에는 안 나온다) */}
-                    <td className="py-1.5 pl-1 w-12 no-print">
-                      <button onClick={() => setEditPhone(p => p === row.order.customer_phone ? null : row.order.customer_phone)}
-                        className="text-[10px] px-1.5 py-0.5 rounded border border-stone-300 text-stone-500 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300">
-                        고치기
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {/* 이 묶음에 고치는 중인 사람이 있으면 바로 아래에 펼친다 */}
-            {editPhone && g.rows.some(r => r.order.customer_phone === editPhone) && (
-              <div className="no-print">
-                <SheetEditor
-                  date={today}
-                  orders={orders.filter(o => o.customer_phone === editPhone)}
-                  customers={customers}
-                  onClose={() => setEditPhone(null)}
-                  onChanged={onChanged}
-                />
-              </div>
-            )}
-          </div>
-        ))}
-
-        <div className="border-t-2 border-stone-900 pt-3">
-          <div className="font-bold text-sm mb-2">■ 합계</div>
-          <div className="flex gap-6 text-sm flex-wrap">
-            {MENU_TYPES.map(m => (
-              <div key={m}><span className="text-stone-500">{m}</span> <strong>{totals[m]}팩</strong></div>
-            ))}
-            {packTotal - Object.values(totals).reduce((a, b) => a + b, 0) > 0 && (
-              <div className="text-rose-700">
-                <span>메뉴 미정</span>{' '}
-                <strong>{packTotal - Object.values(totals).reduce((a, b) => a + b, 0)}팩</strong>
-              </div>
-            )}
-            <div><span className="text-stone-500">전체</span> <strong>{packTotal}팩</strong></div>
-          </div>
+      {/* 종이에 나가는 것과 같은 표. 이름을 누르면 그 사람 것을 고친다. */}
+      <div className="bg-white rounded-xl border border-stone-200 p-4 overflow-x-auto">
+        <div className="flex items-baseline gap-2 flex-wrap mb-2 text-[13px]">
+          <span className="text-base font-black text-stone-900">
+            조리 {Number(today.slice(5, 7))}/{Number(today.slice(8, 10))}({DOW_KO[new Date(today + 'T00:00:00Z').getUTCDay()]})
+          </span>
+          <span className="font-bold text-stone-700">
+            {sheet.people}명 · {sheet.totalPacks}팩{sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}`}
+          </span>
+          {MENU_TYPES.map(m => (
+            <span key={m} className="text-stone-600">{menuLabel(m)} <strong>{sheet.menuTotals[m]}</strong></span>
+          ))}
+          {sheet.unspecTotal > 0 && (
+            <span className="text-rose-700 font-bold">미지정 {sheet.unspecTotal}팩</span>
+          )}
+          <span className="text-stone-400">
+            <span className="text-red-600 font-bold">빨강</span>=큰용량 · 이름을 누르면 고칠 수 있어요
+          </span>
         </div>
+
+        {sheet.people === 0
+          ? <div className="text-center text-stone-400 text-sm py-6">이 날짜에 조리할 주문이 없어요</div>
+          : <CookingTable sheet={sheet} onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
+                          printedAt={printInfo?.printedAt ?? null} />}
+
+        {/* 고치는 중인 사람 — 표 아래에 펼친다 */}
+        {editPhone && (
+          <SheetEditor
+            date={today}
+            orders={orders.filter(o => o.customer_phone === editPhone)}
+            customers={customers}
+            onClose={() => setEditPhone(null)}
+            onChanged={onChanged}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-// ── 주소록 ─────────────────────────────────────────────────────────
-// ── 배송 구역별 묶음 (두발히어로 기사 전달용) ──────────────────────
+// ── 주소록 ────────────────────────
+// ── 배송 구역별 묶음 (두발히어로 기사 전달용) ──────────
 function DeliveryGroups({ orders, today }: { orders: Order[]; today: string }) {
   const active = orders.filter(o => o.status !== '취소');
   const kindOf = (o: Order) => o.delivery_method || '당일배송';

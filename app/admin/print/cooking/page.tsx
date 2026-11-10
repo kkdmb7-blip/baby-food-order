@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
-import { supabaseService, STAGES, STAGE_OPTIONS, MENU_TYPES, menuLabel, type Order } from '@/lib/supabase';
+import { supabaseService, MENU_TYPES, type Order } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
-import { orderDates, slicesOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
+import { orderDates, shiftDate } from '@/lib/orderItems';
+import { buildCookingSheet } from '@/lib/cookingSheet';
+import CookingTable from '../../CookingTable';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -10,25 +12,13 @@ export const dynamic = 'force-dynamic';
 
 const DOW_KOR = ['일', '월', '화', '수', '목', '금', '토'];
 
-// 단계마다 용량이 2가지 — 큰 쪽(310/300)은 빨간색으로 구분 (기존 엑셀 조리표와 동일)
-const BIG_VOLUME: Record<string, number> = Object.fromEntries(
-  STAGES.map(s => [s, Math.max(...STAGE_OPTIONS[s].map(o => o.volume))])
-);
-const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
-  STAGES.map(s => [s, Math.min(...STAGE_OPTIONS[s].map(o => o.volume))])
-);
+/*
+  종이 조리표.
 
-type PersonRow = {
-  orderId: string;
-  name: string;
-  pickup: boolean; // 픽업(방문수령) — 조리는 하지만 배송차에 실으면 안 됨
-  unspec: number; // 메뉴가 지정 안 된 팩수 (이름에 붙이면 이름칸이 터짐)
-  volume: number;
-  isBig: boolean;
-  menus: Record<string, number>;
-  allergy: boolean;
-  multi: boolean; // 같은 사람이 다른 단계도 주문했는지 (포장 시 합쳐야 함)
-};
+  표 자체는 CookingTable 로 옮겼다 — 관리자 화면의 조리표와 같은 모양을 쓰기 위한 것이다.
+  전에는 화면과 종이가 서로 다른 코드로 그려져서, 담는 사람이 보는 숫자가 두 모양이었다.
+  여기 남는 것은 종이에만 필요한 것들: 조회, 추가분 거르기, 그날 메뉴, 머리말, 인쇄 설정.
+*/
 
 export default async function CookingPrint({ searchParams }: { searchParams: { date?: string; only?: string } }) {
   if (!isAdminAuthed()) redirect('/admin/login');
@@ -68,91 +58,8 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
     }));
   } catch { /* 메뉴를 못 불러와도 조리표 자체는 나와야 함 */ }
 
-  // ⚠️ 조리는 "중기 다 챙기고 → 후기 다 챙기고" 순서로 진행하므로, 사람을 한 줄에 놓고
-  // 단계를 가로로 늘어놓으면 빈 칸 사이를 계속 왔다갔다 해야 함.
-  // 그래서 단계별로 사람을 따로 모아 블록을 만든다(기존 엑셀도 블록마다 한 단계씩 쓰고 있었음).
-  const dispName = disambiguateNames(orders as any);
-  const byStage = new Map<string, PersonRow[]>();
-  const banchan: { name: string; qty: number }[] = [];
-  for (const o of orders) {
-    for (const s of slicesOn(o as any, date)) {
-      if (s.stage === '반찬세트') { banchan.push({ name: o.baby_name, qty: s.qty }); continue; }
-      const stage = String(s.stage || '');
-      if (!STAGES.includes(stage as any)) continue;
-      const menus: Record<string, number> = {};
-      let has = false;
-      for (const m of MENU_TYPES) { menus[m] = s.menus[m] || 0; if (menus[m]) has = true; }
-      const unspec = Math.max(0, s.qty - MENU_TYPES.reduce((a, m) => a + menus[m], 0));
-      if (!has && !unspec) continue;
-      if (!byStage.has(stage)) byStage.set(stage, []);
-      byStage.get(stage)!.push({
-        orderId: o.id,
-        name: dispName.get(o.id) || o.baby_name,
-        pickup: (o as any).receive_method === '픽업',
-        unspec,
-        volume: Number(s.volume) || 0,
-        isBig: Number(s.volume) === BIG_VOLUME[stage],
-        menus,
-        allergy: (o.allergies || []).length > 0,
-        multi: false,
-      });
-    }
-  }
-
-  // ⚠️ 한 사람이 중기1+중기2, 중기+완료기처럼 여러 단계를 같이 시키는 경우가 있음.
-  // 단계별 블록으로 나눠 놓으면 같은 사람이 여러 블록에 흩어져서, 표시가 없으면
-  // 포장할 때 각각 다른 손님으로 보고 따로 담게 됨 — 합쳐야 한다는 표시를 남긴다.
-  const stagesByOrder = new Map<string, string[]>();
-  for (const [stage, list] of byStage) {
-    for (const p of list) {
-      const arr = stagesByOrder.get(p.orderId) || [];
-      if (!arr.includes(stage)) arr.push(stage);
-      stagesByOrder.set(p.orderId, arr);
-    }
-  }
-  const multiOrders = [...stagesByOrder.entries()].filter(([, st]) => st.length > 1);
-  const multiIds = new Set(multiOrders.map(([id]) => id));
-  for (const list of byStage.values()) {
-    for (const p of list) p.multi = multiIds.has(p.orderId);
-  }
-  const nameOf = (id: string) => dispName.get(id) || orders.find(o => o.id === id)?.baby_name || '';
-  // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있음
-  for (const list of byStage.values()) {
-    list.sort((a, b) => a.volume - b.volume || a.name.localeCompare(b.name));
-  }
-
-  // ⚠️ 한 단계에 사람이 몰리면(후기 24명 같은 날) 세로로 한 줄씩 늘어져서 A4 한 장을 넘어가고,
-  // 블록이 통째로 다음 장으로 밀린다. 일정 인원마다 같은 단계를 여러 칸으로 나눠 옆으로 흐르게 한다.
-  // 합계는 마지막 칸에만 붙여서 "그 단계 전체 합"이 한 번만 보이게 함.
-  const CHUNK = 12;
-  const sections = STAGES.filter(s => (byStage.get(s) || []).length > 0).flatMap(stage => {
-    const list = byStage.get(stage)!;
-    const tot: Record<string, { small: number; big: number }> = {};
-    for (const m of MENU_TYPES) tot[m] = { small: 0, big: 0 };
-    for (const p of list) for (const m of MENU_TYPES) {
-      if (p.isBig) tot[m].big += p.menus[m]; else tot[m].small += p.menus[m];
-    }
-    const parts: { key: string; stage: string; list: PersonRow[]; tot: typeof tot; total: number; part: number; parts: number }[] = [];
-    const n = Math.ceil(list.length / CHUNK);
-    for (let i = 0; i < n; i++) {
-      parts.push({
-        key: `${stage}#${i}`, stage, list: list.slice(i * CHUNK, (i + 1) * CHUNK),
-        tot, total: list.length, part: i + 1, parts: n,
-      });
-    }
-    return parts;
-  });
-
-  // 같은 단계가 여러 칸으로 나뉘어도 합계는 한 번만 세야 함(칸마다 tot이 같은 객체)
-  const totalPacks = sections.filter(s => s.part === 1).reduce((sum, sec) =>
-    sum + MENU_TYPES.reduce((a, m) => a + sec.tot[m].small + sec.tot[m].big, 0), 0);
-  const banchanTotal = banchan.reduce((s, b) => s + b.qty, 0);
-  const allergyRows = orders.filter(o => (o.allergies || []).length > 0);
-  const memoRows = orders.filter(o => o.memo);
+  const sheet = buildCookingSheet(orders as any, date);
   const dow = DOW_KOR[new Date(date + 'T00:00:00Z').getUTCDay()];
-
-  const cell = (v: number, red: boolean) =>
-    v ? <span className={red ? 'text-red-600 font-black' : 'font-black'}>{v}</span> : <span className="text-stone-200">·</span>;
 
   return (
     <div className="bg-white min-h-screen p-4 text-black print:p-0">
@@ -166,20 +73,23 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
             조리 {date} ({dow})
             {canFilterNew && <span className="ml-1.5 text-red-600">추가분</span>}
           </span>
-          <span className="font-bold">{orders.length}명 · {totalPacks}팩{banchanTotal > 0 && ` · 반찬 ${banchanTotal}`}</span>
+          <span className="font-bold">
+            {sheet.people}명 · {sheet.totalPacks}팩{sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}`}
+          </span>
           {canFilterNew && (
             <span className="text-[13px] font-bold">
               {new Date(printedAt!).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' })} 이후 들어온 것만
             </span>
           )}
           {onlyNew && !printedAt && (
-            <span className="text-[13px] font-bold text-red-600">
-              전체 프린트 기록이 없어 전부 나옵니다
-            </span>
+            <span className="text-[13px] font-bold text-red-600">전체 프린트 기록이 없어 전부 나옵니다</span>
           )}
           <span className="text-[13px] text-stone-500">
             한우/닭/기타 · <span className="text-red-600 font-bold">빨강=큰용량</span>
           </span>
+          {sheet.unspecTotal > 0 && (
+            <span className="text-[13px] font-bold text-red-600">미지정 {sheet.unspecTotal}팩</span>
+          )}
         </div>
         <PrintBar date={date} kind="cooking" />
       </div>
@@ -197,152 +107,18 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         </div>
       )}
 
-      {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 됨 */}
-      <div className="flex gap-3 items-start flex-wrap">
-        {sections.map(sec => (
-          <table key={sec.key} className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 244 }}>
-            <colgroup>
-              <col style={{ width: 130 }} />
-              {MENU_TYPES.map(m => <col key={m} style={{ width: 38 }} />)}
-            </colgroup>
-            <thead>
-              <tr>
-                <th colSpan={4} className="border border-black px-2 py-1 text-[17px] text-left">
-                  {sec.stage}{sec.parts > 1 && <span className="text-[13px] font-normal"> ({sec.part}/{sec.parts})</span>}
-                  <span className="ml-1.5 font-normal text-[13px] text-stone-600">
-                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.total}명
-                  </span>
-                </th>
-              </tr>
-              <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[130px] text-[15px]">이 름</th>
-                {MENU_TYPES.map(m => (
-                  <th key={m} className="border border-black px-1 py-1 w-[38px] text-[14px]">
-                    {menuLabel(m)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sec.list.map((p, i) => {
-                const prev = sec.list[i - 1];
-                const volChanged = prev && prev.isBig !== p.isBig;
-                return (
-                  <tr key={i} className={volChanged ? 'border-t-2 border-t-black' : ''}>
-                    <td className="border border-black px-2 py-[7px] font-bold leading-tight break-words">
-                      {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
-                      {p.name}{p.allergy && <span className="text-red-600">*</span>}
-                      {p.pickup && <span className="ml-1 text-[12px] font-black text-emerald-700">픽업</span>}
-                      {/* 메뉴가 안 정해진 팩 — 이름 옆에 붙이면 이름칸이 터져서 아랫줄에 작게 */}
-                      {p.unspec > 0 && (
-                        <span className="block text-[12px] font-bold text-red-600">미지정 {p.unspec}</span>
-                      )}
-                    </td>
-                    {MENU_TYPES.map(m => (
-                      <td key={m} className="border border-black text-center py-[7px]">
-                        {cell(p.menus[m], p.isBig)}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-              {/* 단계별 합계 — 이만큼 만들면 됨.
-                  같은 단계가 여러 칸으로 나뉜 경우 마지막 칸에만 붙인다(합은 단계 전체 기준이라
-                  칸마다 찍으면 그 칸 합으로 오해해서 그만큼만 만들 위험이 있음). */}
-              {sec.part === sec.parts && (<>
-              <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
-                  {SMALL_VOLUME[sec.stage]}g
-                </td>
-                {MENU_TYPES.map(m => (
-                  <td key={m} className="border-2 border-black text-center py-1.5 font-black">
-                    {sec.tot[m].small || <span className="text-stone-300">·</span>}
-                  </td>
-                ))}
-              </tr>
-              <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px] text-red-600">
-                  {BIG_VOLUME[sec.stage]}g
-                </td>
-                {MENU_TYPES.map(m => (
-                  <td key={m} className="border-2 border-black text-center py-1.5 font-black text-red-600">
-                    {sec.tot[m].big || <span className="text-stone-300">·</span>}
-                  </td>
-                ))}
-              </tr>
-              </>)}
-            </tbody>
-          </table>
-        ))}
+      <CookingTable sheet={sheet} />
 
-        {banchan.length > 0 && (
-          <table className="table-fixed border-collapse text-[18px] leading-tight break-inside-avoid" style={{ width: 168 }}>
-            <colgroup>
-              <col style={{ width: 130 }} />
-              <col style={{ width: 38 }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-left">
-                  반찬 세트<span className="ml-1.5 font-normal text-[13px] text-stone-600">{banchan.length}명</span>
-                </th>
-              </tr>
-              <tr className="bg-stone-200">
-                <th className="border border-black px-2 py-1 w-[130px] text-[15px]">이 름</th>
-                <th className="border border-black px-1 py-1 w-[38px] text-[14px]">세트</th>
-              </tr>
-            </thead>
-            <tbody>
-              {banchan.map((b, i) => (
-                <tr key={i}>
-                  <td className="border border-black px-2 py-[9px] font-bold break-words">{b.name}</td>
-                  <td className="border border-black text-center py-[7px] font-black">{b.qty}</td>
-                </tr>
-              ))}
-              <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">합계</td>
-                <td className="border-2 border-black text-center py-1.5 font-black">{banchanTotal}</td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* 여러 단계를 같이 시킨 사람 — 블록이 나뉘어 있어서 포장할 때 합쳐야 함 */}
-      {multiOrders.length > 0 && (
-        <div className="mt-3 border-2 border-blue-700 px-2.5 py-1.5 text-[14px]">
-          <span className="font-black text-blue-700">+ 여러 단계 함께 주문 — 포장할 때 한 봉투로 합쳐주세요</span>
-          <span className="ml-2">
-            {multiOrders.map(([id, st], i) => (
-              <span key={i} className="mr-3">
-                <span className="font-black">{nameOf(id)}</span> {st.join(' + ')}
-              </span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {/* 알레르기 — 재료를 빼드리는 게 아니라(불가) 교차오염 주의용 */}
-      {allergyRows.length > 0 && (
-        <div className="mt-2 border-2 border-black px-2.5 py-1.5 text-[14px]">
-          <span className="font-black">알레르기 주의</span>
-          <span className="text-[12px] text-stone-600 ml-1">(재료 제거 불가 — 조리도구·교차오염 주의)</span>
-          <span className="ml-2">
-            {allergyRows.map((o, i) => (
-              <span key={i} className="mr-3">
-                <span className="font-black text-red-600">{o.baby_name}</span> {(o.allergies || []).join('·')}
-              </span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {memoRows.length > 0 && (
-        <div className="mt-2 border border-black px-2.5 py-1.5 text-[14px]">
-          <span className="font-black">메모</span>
-          <span className="ml-1.5">
-            {memoRows.map((o, i) => <span key={i} className="mr-3">{o.baby_name}: {o.memo}</span>)}
-          </span>
+      {/* 메뉴별 전체 합계 — 담는 대에서 마지막으로 맞춰보는 숫자 */}
+      {orders.length > 0 && (
+        <div className="mt-2 flex gap-4 flex-wrap text-[14px] border-t border-black pt-1.5">
+          {MENU_TYPES.map(m => (
+            <span key={m}><span className="text-stone-600">{m}</span> <strong>{sheet.menuTotals[m]}</strong></span>
+          ))}
+          {sheet.unspecTotal > 0 && (
+            <span className="text-red-600"><span>미지정</span> <strong>{sheet.unspecTotal}</strong></span>
+          )}
+          <span><span className="text-stone-600">전체</span> <strong>{sheet.totalPacks}팩</strong></span>
         </div>
       )}
 
