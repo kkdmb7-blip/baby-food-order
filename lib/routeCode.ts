@@ -33,6 +33,61 @@ export function addrKey(address: string): string {
   return '';
 }
 
+/*
+  ── 직배송 동네 판정 ────────────────────────────────────────────
+  팩당 500원이 걸린다. 강서·양천은 사장님이 직접 돌아서 기본가, 나머지는 당일배송·택배로
+  나가서 팩당 500원이 붙는다.
+
+  ⚠️ 전에는 주소 글자에 "강서구|양천구" 가 있는지만 봤다. 그런데 손님이 보내는 주소에는
+     구가 빠지는 일이 흔하다 — "서울 등촌로 195", "화곡동22". 그러면 같은 강서구인데도
+     당일배송으로 잡혀서 팩당 500원이 더 붙고, 직배송 주소록에서도 빠졌다(실제로 그랬다).
+
+  그래서 위 배송 순번표(사장님이 직접 매긴 2,400여 주소, 전부 강서·양천)를 같이 본다.
+  그 표에 있는 도로명·동이면 직접 도는 동네다. 다른 구·다른 시가 적혀 있으면 아니다
+  — "중앙로" 처럼 어디에나 있는 도로명 때문에 엉뚱한 곳이 기본가로 잡히면 안 되기 때문이다.
+*/
+const roadRoot = (s: string) => s.match(/^([가-힣]+(?:[0-9]+)?(?:가)?(?:대로|로))/)?.[1] || '';
+const dongRoot = (s: string) => s.match(/^([가-힣]+[0-9]*동)/)?.[1] || '';
+
+/** 주소록 키에서 도로명·동 뿌리만 모은다 ("등촌로51가길 35" → "등촌로", "화곡1동" → 화곡1동·화곡동) */
+const DIRECT_ROOTS: Set<string> = (() => {
+  const out = new Set<string>();
+  for (const k of Object.keys(byAddr)) {
+    const head = k.split(' ')[0];
+    const road = roadRoot(head);
+    if (road) { out.add(road); continue; }
+    const dong = dongRoot(head);
+    if (dong) { out.add(dong); out.add(dong.replace(/[0-9]+(?=동$)/, '')); }
+  }
+  return out;
+})();
+
+/** 다른 구·다른 시가 적혀 있나 (강서·양천, 서울은 제외) */
+function elsewhere(addr: string): boolean {
+  const gus = addr.match(/[가-힣]{1,3}구(?![가-힣])/g) || [];
+  if (gus.length && !gus.some(g => g === '강서구' || g === '양천구')) return true;
+  const sis = (addr.match(/[가-힣]{2,4}시(?![가-힣])/g) || [])
+    .filter(s => !/^서울(특별)?시$/.test(s));
+  return sis.length > 0;
+}
+
+/** 사장님이 직접 도는 동네인가 (기본가) — 아니면 당일배송·택배(팩당 +500원) */
+export function looksDirectDelivery(address: string): boolean {
+  const a = String(address || '').replace(/\s+/g, ' ').trim();
+  if (!a) return false;
+  if (/강서구|양천구/.test(a)) return true;
+  if (elsewhere(a)) return false;
+  if (routeCodeOf(a) !== null) return true;
+  const road = a.match(/([가-힣]+(?:[0-9]+)?(?:가)?(?:대로|로))(?![가-힣])/)?.[1];
+  if (road && DIRECT_ROOTS.has(road)) return true;
+  const dong = a.match(/([가-힣]+[0-9]*동)(?![로길])/)?.[1];
+  if (dong) {
+    const d = normDong(dong);
+    if (DIRECT_ROOTS.has(d) || DIRECT_ROOTS.has(d.replace(/[0-9]+(?=동$)/, ''))) return true;
+  }
+  return false;
+}
+
 /** 주소로 배송 순번을 찾음. 확실하지 않으면 null (억지로 맞추지 않음) */
 export function routeCodeOf(address: string): number | null {
   const addr = String(address || '');

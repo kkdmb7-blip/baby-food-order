@@ -6,7 +6,7 @@ import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, menuLabel } from '@/l
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
-import { routeCodeOf, addrKey } from '@/lib/routeCode';
+import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
@@ -749,7 +749,9 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
   // ⚠️ 여기 조건이 인쇄물(app/admin/print/labels)과 어긋나면 화면과 종이가 달라지므로 같이 고칠 것.
   const orders = allOrders.filter(o =>
     (o as any).receive_method !== '픽업' && // 픽업은 손님이 찾아오므로 배송 주소록에서 제외
-    (o.delivery_method === '직배송' || /강서구|양천구/.test(`${o.address || ''} ${o.address_detail || ''}`))
+    o.delivery_method !== '택배익일배송' &&
+    // 구를 빼고 적어 보내는 주소("서울 등촌로 195")도 잡아야 한다 — 배송 순번표로 확인
+    (o.delivery_method === '직배송' || looksDirectDelivery(`${o.address || ''} ${o.address_detail || ''}`))
   );
   const excluded = allOrders.length - orders.length; // 두발·택배 등 직접 안 도는 건
 

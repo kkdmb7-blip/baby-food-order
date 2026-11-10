@@ -3,7 +3,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, MENU_TYPES, type Order } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
 import { orderDates, shiftDate } from '@/lib/orderItems';
-import { buildCookingSheet } from '@/lib/cookingSheet';
+import { buildCookingSheet, shortIngredients } from '@/lib/cookingSheet';
 import CookingTable from '../../CookingTable';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
@@ -94,16 +94,20 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         <PrintBar date={date} kind="cooking" />
       </div>
 
-      {/* 오늘 메뉴 — 어떤 재료로 만드는지 조리표 안에서 바로 확인 */}
+      {/* 오늘 메뉴 — 늘 들어가는 것(한우.닭.육수.채소상탕.양파)은 빼고 다른 것만 적는다.
+          '기타' 는 이름만으로 아는 자리라 꼬리표를 붙이지 않는다. */}
       {dayMenus.length > 0 && (
         <div className="mb-2 flex gap-2 flex-wrap text-[13px]">
-          {dayMenus.map((m, i) => (
-            <div key={i} className="border border-black px-2 py-1">
-              <span className="font-black">{m.type}</span>
-              <span className="font-bold ml-1">{m.name}</span>
-              {m.ingredients && <span className="text-stone-600 ml-1">{m.ingredients}</span>}
-            </div>
-          ))}
+          {dayMenus.map((m, i) => {
+            const extra = shortIngredients(m.ingredients);
+            return (
+              <div key={i} className="border border-black px-2 py-1">
+                {m.type !== '기타' && <span className="font-black">{m.type}</span>}
+                <span className={`font-bold ${m.type !== '기타' ? 'ml-1' : ''}`}>{m.name}</span>
+                {extra && <span className="text-stone-600 ml-1">{extra}</span>}
+              </div>
+            );
+          })}
         </div>
       )}
 

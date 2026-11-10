@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MENU_TYPES, menuLabel, BANCHAN_DOW, type StageType } from '@/lib/supabase';
 import { SLOTS, slotKey, fitSlot, spreadPacks } from '@/lib/slots';
 import { slicesOn } from '@/lib/orderItems';
+import { looksDirectDelivery } from '@/lib/routeCode';
 import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
 /*
@@ -198,11 +199,15 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   // 권역 짐작 — 고른 주소로 지난번에 나간 방법, 없으면 강서·양천이면 직배송.
   // 사장님이 직접 고르셨으면(opts.zone) 그 값이 우선이다. 팩당 500원이 걸린다.
   const addrNow = hit ? (chosenAddr ? fullAddr(chosenAddr) : '') : nc.address.trim();
+  // ⚠️ 주소 글자에 '강서구|양천구' 가 있는지만 보면, 구를 빼고 적어 보내는 주소
+  //    ("서울 등촌로 195", "화곡동22")가 당일배송으로 잡혀 팩당 500원이 더 붙는다.
+  //    사장님 배송 순번표로 동네를 확인한다(looksDirectDelivery).
   const zoneGuess: '직배송' | '당일배송' | '택배익일배송' =
-    chosenAddr?.deliveryMethod === '직배송' || chosenAddr?.deliveryMethod === '당일배송'
-      || chosenAddr?.deliveryMethod === '택배익일배송'
-      ? chosenAddr.deliveryMethod
-      : (/강서구|양천구/.test(addrNow) ? '직배송' : '당일배송');
+    chosenAddr?.deliveryMethod === '택배익일배송'
+      ? '택배익일배송'
+      : (chosenAddr?.deliveryMethod === '직배송' || looksDirectDelivery(addrNow))
+        ? '직배송'
+        : '당일배송';
 
   /* 이유식 접수 / 반찬 접수 — 받는 모양이 아예 다르다(반찬은 단계·용량·메뉴가 없다).
      월·화·목·금은 이유식, 수요일은 반찬이 기본이다. 공휴일 때문에 요일이 바뀌는 주가 있어서
@@ -1083,10 +1088,9 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                     </span>
                     <span className="text-[11px] text-stone-500">{dayOrders.length}명</span>
                   </div>
-                  <p className="text-[10px] text-stone-400 leading-tight">
-                    아래 조리표·담는 수량과 같은 숫자입니다
-                    {mineAll > 0 && <span className="text-amber-700"> · 그중 방금 넣은 것 +{mineAll}팩</span>}
-                  </p>
+                  {mineAll > 0 && (
+                    <p className="text-[10px] text-amber-700 leading-tight">그중 방금 넣은 것 +{mineAll}팩</p>
+                  )}
                 </div>
                 <table className="w-full text-[13px]">
                   <thead>

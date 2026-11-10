@@ -23,6 +23,23 @@ export const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
   STAGES.map(s => [s, Math.min(...STAGE_OPTIONS[s].map(o => o.volume))])
 );
 
+/*
+  조리표 위에 적는 '오늘 메뉴' 를 간결하게 만든다.
+
+  재료 목록에는 늘 들어가는 것들이 그대로 붙어 있다 — 한우/닭(그 메뉴의 이름이니 중복),
+  닭육수·채소상탕(육수), 양파. 조리실에서는 그게 아니라 '오늘 뭐가 다른지' 만 보면 된다.
+  그래서 항상 들어가는 것은 지우고 남는 재료만 적는다.
+*/
+const ALWAYS_IN = /^(한우|소고기|쇠고기|한우안심|닭|닭고기|닭안심|닭가슴살|닭육수|육수|채소상탕|상탕|채수|채소육수|양파|물|쌀|쌀가루)$/;
+
+export function shortIngredients(raw: string): string {
+  return String(raw || '')
+    .split(/[,·/]|\s+/)
+    .map(t => t.replace(/[()]/g, '').trim())
+    .filter(t => t && !ALWAYS_IN.test(t))
+    .join(' · ');
+}
+
 export type PersonRow = {
   orderId: string;
   phone: string;       // 화면에서 '고치기' 를 열 때 쓴다 (한 사람 = 한 연락처)
@@ -33,7 +50,8 @@ export type PersonRow = {
   isBig: boolean;
   menus: Record<string, number>;
   allergy: boolean;
-  multi: boolean;      // 같은 사람이 다른 단계도 주문했는지 (포장 시 합쳐야 한다)
+  multi: boolean;      // 같은 사람의 줄이 또 있는지 (포장 시 합쳐야 한다)
+  others: string[];    // 그 사람의 다른 줄들 — "+완료기 300g" 처럼 어디 있는지 적어준다
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
 };
 
@@ -54,9 +72,10 @@ export type CookingSheet = {
   menuTotals: Record<string, number>;
   unspecTotal: number;
   sections: Section[];
-  banchan: { name: string; qty: number; phone: string }[];
+  banchan: { name: string; qty: number; phone: string; others: string[] }[];
   banchanTotal: number;
-  multi: { name: string; stages: string[] }[];
+  /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다 */
+  multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
   allergies: { name: string; items: string[] }[];
   memos: { name: string; memo: string }[];
 };
@@ -84,7 +103,7 @@ export function buildCookingSheet(
   for (const o of orders) {
     for (const s of slicesOn(o as any, date)) {
       if (s.stage === '반찬세트') {
-        banchan.push({ name: o.baby_name, qty: s.qty, phone: o.customer_phone });
+        banchan.push({ name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [] });
         continue;
       }
       const stage = String(s.stage || '');
@@ -106,24 +125,53 @@ export function buildCookingSheet(
         menus,
         allergy: (o.allergies || []).length > 0,
         multi: false,
+        others: [],
         isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
       });
     }
   }
 
-  // ⚠️ 한 사람이 중기1+중기2, 중기+완료기처럼 여러 단계를 같이 시키는 경우가 있다.
-  // 단계별 블록으로 나눠 놓으면 같은 사람이 여러 블록에 흩어져서, 표시가 없으면
-  // 포장할 때 각각 다른 손님으로 보고 따로 담게 된다 — 합쳐야 한다는 표시를 남긴다.
-  const stagesByOrder = new Map<string, string[]>();
+  /* ⚠️ 한 사람이 후기+완료기, 중기2 230+300 처럼 여러 줄을 시키는 경우가 있다.
+        단계별 블록으로 나눠 놓으면 같은 사람이 여러 블록에 흩어져서, 표시가 없으면
+        포장할 때 각각 다른 손님으로 보고 따로 담게 된다.
+
+        ⚠️ 전에는 이걸 '한 주문(orderId) 안에 단계가 둘 이상' 으로 찾았다. 주문접수가
+        칸마다 주문 한 건을 만들게 된 뒤로는 같은 사람의 후기와 완료기가 서로 다른
+        주문이라, 이 표시가 아예 뜨지 않았다. 사람(연락처) 단위로 찾는다.
+        같은 단계 다른 용량(230+300)도 두 줄이므로 같이 잡는다 — 담을 때는 똑같이 합쳐야 한다. */
+  const label = (stage: string, volume: number) => `${stage} ${volume}g`;
+  const byPerson = new Map<string, { name: string; parts: { label: string; qty: number }[] }>();
+  const addPart = (phone: string, name: string, lbl: string, qty: number) => {
+    const e = byPerson.get(phone) || { name, parts: [] };
+    e.parts.push({ label: lbl, qty });
+    byPerson.set(phone, e);
+  };
   for (const [stage, list] of byStage) {
     for (const p of list) {
-      const arr = stagesByOrder.get(p.orderId) || [];
-      if (!arr.includes(stage)) arr.push(stage);
-      stagesByOrder.set(p.orderId, arr);
+      addPart(p.phone, p.name, label(stage, p.volume),
+        MENU_TYPES.reduce((a, m) => a + p.menus[m], 0) + p.unspec);
     }
   }
-  const multiIds = new Set([...stagesByOrder.entries()].filter(([, st]) => st.length > 1).map(([id]) => id));
-  for (const list of byStage.values()) for (const p of list) p.multi = multiIds.has(p.orderId);
+  for (const b of banchan) addPart(b.phone, b.name, '반찬 세트', b.qty);
+
+  // 각 줄에 "그 사람의 다른 줄"을 적어준다 — 어디에 또 있는지 알면 찾아다니지 않는다
+  const othersFor = (phone: string, mine: string) => {
+    const parts = byPerson.get(phone)?.parts || [];
+    const out: string[] = [];
+    let skipped = false;
+    for (const t of parts) {
+      if (!skipped && t.label === mine) { skipped = true; continue; }
+      out.push(t.label);
+    }
+    return out;
+  };
+  for (const [stage, list] of byStage) {
+    for (const p of list) {
+      p.others = othersFor(p.phone, label(stage, p.volume));
+      p.multi = p.others.length > 0;
+    }
+  }
+  for (const b of banchan) b.others = othersFor(b.phone, '반찬 세트');
 
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있다
   for (const list of byStage.values()) {
@@ -143,9 +191,6 @@ export function buildCookingSheet(
       tot, total: list.length, part: i + 1, parts: n,
     }));
   });
-
-  const nameOf = (id: string) =>
-    dispName.get(id) || orders.find(o => o.id === id)?.baby_name || '';
 
   // 같은 단계가 여러 칸으로 나뉘어도 합계는 한 번만 센다(칸마다 tot 이 같은 객체다)
   const menuTotals: Record<string, number> = {};
@@ -168,9 +213,12 @@ export function buildCookingSheet(
     sections,
     banchan,
     banchanTotal: banchan.reduce((s, b) => s + b.qty, 0),
-    multi: [...stagesByOrder.entries()]
-      .filter(([, st]) => st.length > 1)
-      .map(([id, st]) => ({ name: nameOf(id), stages: st })),
+    multi: [...byPerson.values()]
+      .filter(e => e.parts.length > 1)
+      .map(e => ({
+        name: e.name, parts: e.parts,
+        total: e.parts.reduce((a, t) => a + t.qty, 0),
+      })),
     allergies: orders
       .filter(o => (o.allergies || []).length > 0)
       .map(o => ({ name: dispName.get(o.id) || o.baby_name, items: o.allergies || [] })),

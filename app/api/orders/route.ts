@@ -8,6 +8,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { kstToday } from '@/lib/dates';
 import { notify, notifyError } from '@/lib/notify';
 import { menuKindsFor } from '@/lib/menuDays';
+import { looksDirectDelivery } from '@/lib/routeCode';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -189,11 +190,25 @@ export async function POST(req: NextRequest) {
       serverTier = zrow && String(zrow.sido || '').includes('서울')
         && ['강서구', '양천구'].some(g => String(zrow.gu || '').includes(g))
         ? '직배송' : '기타';
+    } else if (delivery_method === '택배익일배송') {
+      // 택배로 보내달라고 고르신 건은 동네와 무관하게 택배비가 든다
+      serverTier = '기타';
     } else {
-      serverTier = tierOf(delivery_method);
+      // ⚠️ 우편번호가 없으면 전에는 delivery_method 글자만 봤다. 그 값은 "주소에 강서구·양천구가
+      //    적혀 있나"로 정해지는데, 손님이 구를 빼고 적는 일이 흔하다("서울 등촌로 195", "화곡동22").
+      //    그래서 같은 강서구인데도 팩당 500원이 붙고 직배송 주소록에서도 빠졌다(실제로 3건 있었다).
+      //    사장님이 직접 매긴 배송 순번표(강서·양천 2,400여 주소)로 동네를 확인한다.
+      serverTier = (delivery_method === '직배송' || looksDirectDelivery(address)) ? '직배송' : '기타';
     }
     // 픽업은 배송을 안 나가니 지역 배송비 인상분을 붙이지 않는다 — 기본가로 계산
     if (receive_method === '픽업') serverTier = '직배송';
+
+    // 저장되는 배송 방법도 판정에 맞춘다 — 배송 탭·배송 주소록·라벨이 이 값으로 가른다.
+    // (고르신 택배와 픽업은 그대로 둔다)
+    const savedDeliveryMethod =
+      receive_method === '픽업' || delivery_method === '택배익일배송'
+        ? delivery_method
+        : serverTier === '직배송' ? '직배송' : '당일배송';
 
     // 복합 주문(mixed)은 아이템별 소계, 단일은 서버 재계산 — 둘 다 serverTier 적용
     let total_price: number;
@@ -302,7 +317,8 @@ export async function POST(req: NextRequest) {
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
-        postal_code, zone_group, delivery_method, receive_method, referred_by_phone: referredByStored,
+        postal_code, zone_group, delivery_method: savedDeliveryMethod, receive_method,
+        referred_by_phone: referredByStored,
         points_earned: pointsEarned, acquisition_source, shipping_fee
       })
       // 만든 줄을 그대로 돌려준다 — 관리자 입력판이 이 줄을 화면에 바로 꽂아서

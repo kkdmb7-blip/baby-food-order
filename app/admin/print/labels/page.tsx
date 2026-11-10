@@ -4,7 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
 import { orderDates, qtyOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
-import { routeCodeOf, addrKey } from '@/lib/routeCode';
+import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -16,12 +16,15 @@ const DOW_KOR = ['일', '월', '화', '수', '목', '금', '토'];
 // 그 밖의 지역은 당일배송(두발히어로)이나 택배로 나가므로 들고 나갈 주소록에 있으면 방해가 된다.
 // ⚠️ delivery_method('직배송')는 우편번호로 서버가 붙이는 값이라 보통 이것만 봐도 되지만,
 //    우편번호가 없던 예전 주문은 값이 비거나 '당일배송'으로 잡혀 있어서 주소도 같이 본다.
-const DIRECT_GU = /강서구|양천구/;
 function isDrivenByUs(o: Order): boolean {
   // 픽업(방문수령)은 손님이 찾아오므로 배송 주소록에 있으면 안 됨 (조리표에는 그대로 나옴)
   if ((o as any).receive_method === '픽업') return false;
   if (o.delivery_method === '직배송') return true;
-  return DIRECT_GU.test(`${o.address || ''} ${o.address_detail || ''}`);
+  if (o.delivery_method === '택배익일배송') return false;
+  // ⚠️ 전에는 주소 글자에 '강서구|양천구' 가 있는지만 봤다. 구를 빼고 적어 보내는 주소
+  //    ("서울 등촌로 195", "화곡동22")가 주소록에서 통째로 빠졌다 — 사장님이 직접 도는 집인데도.
+  //    배송 순번표(강서·양천 2,400여 주소)로 동네를 확인한다.
+  return looksDirectDelivery(`${o.address || ''} ${o.address_detail || ''}`);
 }
 
 // 동네 묶음 — 동 단위로 세분화. 손님이 "강서구화곡동"처럼 붙여 쓰는 경우가 있어서
