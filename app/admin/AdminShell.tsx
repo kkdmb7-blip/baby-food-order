@@ -653,7 +653,9 @@ function CookingSheet({ orders, today, customers, onChanged }: {
 
         {sheet.people === 0
           ? <div className="text-center text-stone-400 text-sm py-6">이 날짜에 조리할 주문이 없어요</div>
-          : <CookingTable sheet={sheet} onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
+          : <CookingTable sheet={sheet}
+                          onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
+                          onSaved={onChanged}
                           printedAt={printInfo?.printedAt ?? null} />}
 
         {/* 고치는 중인 사람 — 표 아래에 펼친다 */}

@@ -1,6 +1,7 @@
 'use client';
+import { useState } from 'react';
 import { MENU_TYPES, menuLabel } from '@/lib/supabase';
-import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet } from '@/lib/cookingSheet';
+import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet, type PersonRow } from '@/lib/cookingSheet';
 
 /*
   조리표 한 장 — 화면과 종이가 같은 모양을 쓴다.
@@ -17,19 +18,77 @@ import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet } from '@/lib/cookingSheet'
     '미지정'   = 팩수는 있는데 메뉴가 안 정해진 몫
 */
 
-export default function CookingTable({ sheet, onPick, printedAt }: {
+export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
   sheet: CookingSheet;
-  /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다 */
+  /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
   onPick?: (phone: string) => void;
+  /** 화면에서만 — 숫자를 칸에서 바로 고친다. 저장되면 부른다 */
+  onSaved?: () => void;
   /** 프린트한 시각. 그 뒤에 들어온 줄에 '추가' 를 붙인다 */
   printedAt?: string | null;
 }) {
+  /* 숫자를 칸에서 바로 고치기 (화면에서만).
+     이름을 눌러 여는 판은 그대로 둔다 — 단계를 새로 추가하거나 선결제 잔여를 보려면 그쪽이 낫다.
+     여기서는 이미 있는 줄의 팩수만 바꾼다. 서버가 금액·배송비·적립·선결제 잔여를 다시 맞춘다. */
+  const [draft, setDraft] = useState<Record<string, Record<string, string>>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // 한 주문이 그날 두 줄로 들어간 옛 복합주문은 칸에서 못 고친다(어느 줄인지 서버가 가릴 수 없다)
+  const rowCount = new Map<string, number>();
+  for (const sec of sheet.sections) {
+    if (sec.part !== 1) continue;
+    for (const p of sheet.sections.filter(s => s.stage === sec.stage).flatMap(s => s.list)) {
+      rowCount.set(p.orderId, (rowCount.get(p.orderId) || 0) + 1);
+    }
+  }
+  const editable = (p: PersonRow) => !!onSaved && (rowCount.get(p.orderId) || 0) <= 1;
+
+  const valueOf = (p: PersonRow, m: string) =>
+    draft[p.orderId]?.[m] ?? (p.menus[m] ? String(p.menus[m]) : '');
+
+  async function saveRow(p: PersonRow) {
+    const d = draft[p.orderId];
+    if (!d) return;
+    const menus: Record<string, number> = {};
+    let sum = 0;
+    for (const m of MENU_TYPES) {
+      const n = Number(d[m] ?? p.menus[m] ?? 0) || 0;
+      menus[m] = n; sum += n;
+    }
+    // 바뀐 게 없으면 보내지 않는다
+    if (MENU_TYPES.every(m => menus[m] === (p.menus[m] || 0))) {
+      setDraft(({ [p.orderId]: _, ...rest }) => rest);
+      return;
+    }
+    if (sum <= 0) { setErr(`${p.name} — 0팩으로는 못 고쳐요. 취소는 이름을 눌러 하세요`); return; }
+    setSaving(p.orderId); setErr(null);
+    try {
+      const r = await fetch('/api/admin/order-edit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.orderId, date: sheet.date, menus }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || `실패 (${r.status})`);
+      setDraft(({ [p.orderId]: _, ...rest }) => rest);
+      onSaved?.();
+    } catch (e: any) {
+      setErr(`${p.name} — ${e?.message || '못 고쳤어요'}`);
+    }
+    setSaving(null);
+  }
+
   const cell = (v: number, red: boolean) =>
     v ? <span className={red ? 'text-red-600 font-black' : 'font-black'}>{v}</span>
       : <span className="text-stone-200">·</span>;
 
   return (
     <>
+      {onSaved && err && (
+        <p className="mb-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+          {err} <button onClick={() => setErr(null)} className="underline ml-1">닫기</button>
+        </p>
+      )}
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 된다 */}
       {/* 네 단계가 한 줄에 들어가야 한다 — 칸이 넓어 완료기가 아래로 내려가고 있었다.
           230px x 4 + 틈 24px = 944px (화면 max-w-5xl 안쪽 992px, A4 가로 1062px 둘 다 들어간다) */}
@@ -90,8 +149,22 @@ export default function CookingTable({ sheet, onPick, printedAt }: {
                       ) : nameNode}
                     </td>
                     {MENU_TYPES.map(m => (
-                      <td key={m} className="border border-black text-center py-[7px]">
-                        {cell(p.menus[m], p.isBig)}
+                      <td key={m} className={`border border-black text-center ${editable(p) ? 'p-0' : 'py-[7px]'}`}>
+                        {editable(p) ? (
+                          // 종이와 같은 모양으로 보이되 누르면 바로 고쳐진다
+                          <input inputMode="numeric" disabled={saving === p.orderId}
+                            value={valueOf(p, m)}
+                            onChange={e => {
+                              const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+                              setDraft(d => ({ ...d, [p.orderId]: { ...(d[p.orderId] || {}), [m]: v } }));
+                            }}
+                            onBlur={() => saveRow(p)}
+                            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                            className={`w-full text-center bg-transparent outline-none font-black py-[7px]
+                                        focus:bg-amber-100 disabled:opacity-40
+                                        ${p.isBig ? 'text-red-600' : ''}
+                                        ${draft[p.orderId]?.[m] !== undefined ? 'bg-amber-50' : ''}`} />
+                        ) : cell(p.menus[m], p.isBig)}
                       </td>
                     ))}
                   </tr>

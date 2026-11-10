@@ -70,6 +70,42 @@ const addDays = (d: string, n: number) =>
     : d;
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
+/**
+ * 팩수 칸 — 숫자를 치거나 화살표로 올리고 내린다.
+ * 키보드로 치는 게 가장 빠르지만, 한두 팩 더하거나 빼는 건 마우스가 편하다.
+ */
+function QtyCell({ value, onChange, onEnter, disabled, big }: {
+  value: string;
+  onChange: (v: string) => void;
+  onEnter: (e: React.KeyboardEvent) => void;
+  disabled?: boolean;
+  big?: boolean;
+}) {
+  const n = Number(value) || 0;
+  const step = (d: number) => onChange(d > 0 ? String(Math.min(99, n + 1)) : (n > 1 ? String(n - 1) : ''));
+  const arrow = 'leading-none text-[9px] text-stone-400 hover:text-amber-700 hover:bg-amber-50 px-0.5 disabled:opacity-30';
+  return (
+    <div className="flex items-stretch">
+      <input inputMode="numeric" disabled={disabled} value={value}
+        onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 2))}
+        onKeyDown={e => {
+          // 위/아래 키로도 올리고 내린다
+          if (e.key === 'ArrowUp') { e.preventDefault(); step(1); return; }
+          if (e.key === 'ArrowDown') { e.preventDefault(); step(-1); return; }
+          onEnter(e);
+        }}
+        className={`flex-1 min-w-0 rounded-l border border-r-0 border-stone-300 px-1 py-1 text-center
+                    text-sm focus:border-amber-500 focus:outline-none ${big ? 'text-base font-black' : ''}`} />
+      <div className="flex flex-col justify-center border border-l-0 border-stone-300 rounded-r bg-stone-50">
+        <button type="button" onClick={() => step(1)} disabled={disabled} tabIndex={-1}
+          title="한 팩 올리기" className={arrow}>▲</button>
+        <button type="button" onClick={() => step(-1)} disabled={disabled} tabIndex={-1}
+          title="한 팩 내리기" className={arrow}>▼</button>
+      </div>
+    </div>
+  );
+}
+
 /** 그 날짜가 든 주의 월~금 (요일 체크판의 다섯 칸) */
 function weekDays(d: string): string[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return [];
@@ -994,13 +1030,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-emerald-900">반찬 세트</span>
-                <input inputMode="numeric" disabled={busy}
-                  value={banchan}
-                  onChange={e => setBanchan(e.target.value.replace(/\D/g, '').slice(0, 2))}
-                  onKeyDown={onEnterConfirm}
-                  placeholder="0"
-                  className="w-20 rounded border-2 border-emerald-300 px-2 py-1.5 text-center text-xl font-black
-                             focus:border-emerald-500 focus:outline-none" />
+                <div className="w-24">
+                  <QtyCell disabled={busy} big value={banchan}
+                    onChange={setBanchan} onEnter={onEnterConfirm} />
+                </div>
                 <span className="text-sm font-bold text-emerald-900">세트</span>
                 <span className="text-[11px] text-stone-500">
                   이유식과 단가 체계가 다릅니다 · 메뉴는 나누지 않습니다
@@ -1034,13 +1067,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                       </td>
                       {MENU_TYPES.map(m => (
                         <td key={m} className="py-0.5 px-0.5">
-                          <input inputMode="numeric" disabled={busy}
+                          <QtyCell disabled={busy}
                             value={qty[s.key]?.[m] || ''}
-                            onChange={e => setQty(v => ({
-                              ...v, [s.key]: { ...(v[s.key] || {}), [m]: e.target.value.replace(/\D/g, '').slice(0, 2) },
-                            }))}
-                            onKeyDown={onEnterConfirm}
-                            className={`${inp} w-full text-center`} />
+                            onChange={v => setQty(x => ({ ...x, [s.key]: { ...(x[s.key] || {}), [m]: v } }))}
+                            onEnter={onEnterConfirm} />
                         </td>
                       ))}
                       <td className="text-center font-bold text-stone-700">{t || ''}</td>
