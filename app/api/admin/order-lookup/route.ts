@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService } from '@/lib/supabase';
+import { supabaseService, MENU_TYPES } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
+import { menuTotal } from '@/lib/orderItems';
 
 /*
   GET /api/admin/order-lookup?q=<아기이름 또는 번호 끝자리> — 조리표에 줄을 넣을 때 쓰는 손님 찾기
@@ -36,6 +37,9 @@ type Hit = {
   doorPassword: string | null;
   stage: string | null;
   volume: number | null;
+  // 지난번에 메뉴별로 몇 팩 시키셨는지 — 대개 같은 양을 이어서 시키신다.
+  // 이게 있으면 격자에서 이름만 고르고 엔터를 치면 끝난다(숫자도 안 쳐도 된다).
+  lastMenus: Record<string, number>;
   postalCode: string | null;
   deliveryMethod: string | null;
   receiveMethod: string | null;
@@ -73,7 +77,7 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await sb
       .from('baby_food_orders')
-      .select('baby_name, customer_phone, address, address_detail, door_password, months, stage, volume, postal_code, delivery_method, receive_method, delivery_date, order_type, status')
+      .select('baby_name, customer_phone, address, address_detail, door_password, months, stage, volume, items, postal_code, delivery_method, receive_method, delivery_date, order_type, status')
       .or(filter)
       .neq('status', '취소')
       .order('delivery_date', { ascending: false })
@@ -100,6 +104,8 @@ export async function GET(req: NextRequest) {
         stage: o.stage ?? null,
         // 복합주문은 volume 이 null 이다 — 그대로 null 로 넘기고 화면에서 고르게 한다
         volume: o.volume == null ? null : Number(o.volume),
+        // items 는 구형(평면)·신형(중첩) 두 구조가 섞여 있어 menuTotal 로 흡수해서 읽는다
+        lastMenus: Object.fromEntries(MENU_TYPES.map(m => [m, menuTotal(o as any, m)])),
         postalCode: o.postal_code ?? null,
         deliveryMethod: o.delivery_method ?? null,
         receiveMethod: o.receive_method ?? null,
