@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { MENU_TYPES, STAGES, STAGE_OPTIONS, menuLabel, type StageType } from '@/lib/supabase';
+import { parseKakaoOrder, missingFields, FIELD_LABEL, type ParsedKakaoOrder } from '@/lib/parseKakaoOrder';
 
 /*
   한 사람씩, 이름 한 번 치고 칸만 체크하는 입력판.
@@ -111,6 +112,12 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
           postalCode: null, deliveryMethod: null, lastDate: '' }
       : (addrList[addrIdx] || addrList[0] || null);
 
+  // 카톡 주문서 붙여넣기 — 읽을 수 있는 만큼만 읽어 아래 칸을 채운다.
+  // 멋대로 저장하지 않는다. 사장님이 보고 고친 뒤 엔터를 쳐야 들어간다.
+  const [paste, setPaste] = useState('');
+  const [parsed, setParsed] = useState<ParsedKakaoOrder | null>(null);
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
+
   const [done, setDone] = useState<Done[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -134,9 +141,10 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     return () => { alive = false; clearTimeout(t); };
   }, [q, hit, listOpen]);
 
-  function pick(h: Hit) {
+  function pick(h: Hit, prefill = true) {
     setHit(h); setQ(h.babyName); setHits([]); setListOpen(false); setIsNew(false);
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
+    if (!prefill) return;   // 카톡에서 읽은 팩수를 덮어쓰면 안 된다
     // 지난번 시키던 칸에 지난번 팩수를 미리 넣어둔다 — 대개 그대로 이어가신다
     const slot = SLOTS.find(s => s.stage === h.stage && s.volume === Number(h.volume));
     if (slot && h.lastMenus) {
@@ -149,8 +157,80 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
     }
   }
 
+  function applyPaste(text: string) {
+    setPaste(text);
+    setPasteNote(null);
+    const t = text.trim();
+    setParsed(t ? parseKakaoOrder(t, deliveryDate || date) : null);
+  }
+
+  /**
+   * 읽은 걸 아래 칸으로 옮긴다. 저장은 안 한다 — 보시고 엔터를 쳐야 들어간다.
+   * 못 읽은 건 비워 두고 무엇을 못 읽었는지 적는다. 멋대로 채우면 틀린 걸 모르고 넘어간다.
+   */
+  async function fillFromParsed() {
+    const p = parsed;
+    if (!p) return;
+    setErr(null);
+    if (p.delivery_date) setDeliveryDate(p.delivery_date);
+
+    // 단계 묶음 → 여덟 칸
+    const nq: Qty = {};
+    const unknown: string[] = [];
+    let noMenu = 0;
+    for (const s of p.sets) {
+      const key = `${s.stage}|${s.volume}`;
+      if (!s.stage || !s.volume || !SLOTS.some(x => x.key === key)) {
+        unknown.push(`${s.stage || '단계?'} ${s.volume ? s.volume + 'g' : '용량?'}`);
+        continue;
+      }
+      const row: Record<string, string> = {};
+      let sum = 0;
+      for (const m of MENU_TYPES) {
+        const n = s.menus[m] || 0;
+        if (n) { row[m] = String(n); sum += n; }
+      }
+      if (!sum) noMenu += s.qty;
+      nq[key] = row;
+    }
+
+    // 손님 찾기 — 번호가 가장 확실하다
+    const term = p.customer_phone || p.baby_name;
+    let found: Hit | null = null;
+    if (term) {
+      try {
+        const d = await fetch(`/api/admin/order-lookup?q=${encodeURIComponent(term)}`).then(r => r.json());
+        const list: Hit[] = d.ok ? (d.hits || []) : [];
+        found = p.customer_phone
+          ? (list.find(h => h.phone.replace(/\D/g, '') === p.customer_phone) || null)
+          : (list.length === 1 ? list[0] : null);
+      } catch { /* 못 찾으면 처음 오는 손님으로 받는다 */ }
+    }
+
+    if (found) {
+      pick(found, false);
+    } else {
+      setHit(null); setQ(p.baby_name); setHits([]); setListOpen(false);
+      setIsNew(true);
+      setNc({ phone: p.customer_phone, address: p.address, months: p.months, door: p.door_password });
+    }
+    setQty(nq);
+
+    const miss = missingFields(p).map(k => FIELD_LABEL[k]);
+    const notes: string[] = [];
+    notes.push(found ? `${found.babyName} — 지난 주문에서 찾았어요` : '처음 오는 손님으로 받았어요');
+    if (p.isBanchan && !Object.keys(nq).length) {
+      notes.push('반찬(유아식) 주문은 이 칸으로 못 넣어요 — 아래 "조리표에 줄 넣기"로 넣어주세요');
+    }
+    if (noMenu) notes.push(`메뉴가 안 적힌 ${noMenu}팩 — 한우·닭·기타로 나눠 넣어주세요`);
+    if (unknown.length) notes.push(`못 넣은 칸: ${unknown.join(', ')}`);
+    if (miss.length) notes.push(`못 읽음: ${miss.join('·')}`);
+    setPasteNote(notes.join('  ·  '));
+  }
+
   function reset() {
     setQ(''); setHit(null); setQty({}); setHits([]); setListOpen(false); setErr(null);
+    setPaste(''); setParsed(null); setPasteNote(null);
     setIsNew(false); setNc({ phone: '', address: '', months: '', door: '' });
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
     setTimeout(() => nameRef.current?.focus(), 0);
@@ -312,6 +392,48 @@ export default function GridEntry({ date, onSaved }: { date: string; onSaved: ()
               엔터를 칠 때마다 눈이 아래로 내려갔다 와야 한다 */}
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px] items-start">
           <div>
+
+          {/* ⓪ 카톡 주문서 — 읽을 수 있는 만큼만 읽어 아래 칸을 채운다. 저장은 사장님이 엔터로 */}
+          <div className="mb-2">
+            <textarea
+              value={paste}
+              onChange={e => applyPaste(e.target.value)}
+              rows={paste ? 3 : 2}
+              placeholder="카톡 주문서를 여기에 붙여넣으세요 — 읽은 만큼 아래 칸에 채워드립니다"
+              className="w-full rounded border border-stone-300 px-2 py-1.5 text-[12px] leading-snug focus:border-amber-500 focus:outline-none"
+            />
+            {parsed && (
+              <div className="mt-1 flex items-start gap-1.5">
+                <div className="flex-1 min-w-0 text-[11px] text-stone-600 leading-snug">
+                  <b className="text-stone-900">{parsed.baby_name || '이름 못 읽음'}</b>
+                  {parsed.months && ` · ${parsed.months}개월`}
+                  {parsed.delivery_date && ` · ${parsed.delivery_date}(${dowOf(parsed.delivery_date)})`}
+                  {parsed.sets.length > 0 && (
+                    <span className="ml-1 text-stone-500">
+                      · {parsed.sets.map(s => {
+                        const mm = MENU_TYPES.filter(m => s.menus[m]).map(m => `${menuLabel(m)}${s.menus[m]}`).join('·');
+                        return `${s.stage.replace('단계', '')} ${s.volume}g ${mm || `${s.qty}팩(메뉴 없음)`}`;
+                      }).join('  +  ')}
+                    </span>
+                  )}
+                  {parsed.isBanchan && <span className="ml-1 text-amber-700 font-bold">반찬</span>}
+                </div>
+                <button onClick={fillFromParsed} disabled={busy}
+                  className="flex-shrink-0 px-2.5 py-1 rounded bg-stone-800 text-white text-[11px] font-bold disabled:opacity-40">
+                  아래에 채우기
+                </button>
+                <button onClick={() => { setPaste(''); setParsed(null); setPasteNote(null); }}
+                  className="flex-shrink-0 px-2 py-1 rounded border border-stone-300 text-[11px] text-stone-500">
+                  지우기
+                </button>
+              </div>
+            )}
+            {pasteNote && (
+              <p className="mt-1 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1 leading-snug">
+                {pasteNote}
+              </p>
+            )}
+          </div>
 
           {/* ① 이름 */}
           <div className="relative mb-2">
