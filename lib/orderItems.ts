@@ -101,20 +101,55 @@ export function menuTotal(o: OrderLike, menu: MenuType | string): number {
 }
 
 /**
- * 같은 날 같은 이름이 둘 이상이면 연락처 뒷 4자리를 붙여 구분한다.
- * 엑셀에서는 "김수아2", "박시현2"처럼 손으로 숫자를 붙여 구분해오셨는데, 앱은 이름만
- * 저장해서 조리표·주소록에 같은 이름이 두 줄 뜨면 누가 누군지 알 수 없었음.
+ * 조리표·주소록에 보일 이름 — 저장된 이름을 그대로 쓴다. 아무것도 붙이지 않는다.
+ *
+ * 왜 붙이면 안 되는가
+ *   이 이름은 카카오 채널에 저장해 둔 이름과 같아야 한다. 주문이 카톡으로 오니까,
+ *   종이에 적힌 이름이 카톡 이름과 다르면 누구 주문인지 맞춰볼 수가 없다.
+ *   구분은 이미 끝나 있다 — 사장님이 카톡에 '찬희', '찬희2', '찬희3' 으로
+ *   저장해 두셨고, 같은 아기가 주소가 둘일 때도 거기서 번호를 매기신다.
+ *
+ *   전에는 같은 이름이 두 줄이면 앱이 연락처 뒷 4자리를 붙였다. 그러면
+ *   '찬희2(7788)' 이 되어 카톡 이름과 어긋나고, 뒷자리는 사장님이 외우는 숫자도
+ *   아니라서 주문 내용에서 번호를 찾아봐야 했다. 붙이는 쪽이 일을 늘렸다.
+ *
+ *   한 번 저장한 이름은 사장님이 직접 고치기 전까지 그대로 간다.
+ *
+ * 대신 같은 이름이 서로 다른 집에서 들어오면 collidingNames 로 알려준다.
+ * 고치는 건 사장님이 — 카톡에 적힌 대로.
  */
-export function disambiguateNames<T extends { baby_name: string; customer_phone: string }>(
+export function disambiguateNames<T extends { baby_name: string }>(
   orders: T[]
 ): Map<string, string> {
-  const count = new Map<string, number>();
-  for (const o of orders) count.set(o.baby_name, (count.get(o.baby_name) || 0) + 1);
   const out = new Map<string, string>();
+  for (const o of orders) out.set((o as any).id, o.baby_name);
+  return out;
+}
+
+/**
+ * 이름은 같은데 집이 다른 줄들 — 카톡 이름대로 고쳐야 할 것들.
+ * 앱이 멋대로 고치지 않고 "여기 겹칩니다" 만 알린다.
+ *
+ * 같은 집(연락처가 같음)이 여러 줄인 건 겹친 게 아니다 — 중기와 완료기를
+ * 같이 시키거나, 한 집이 두 군데로 받는 경우다. 그건 알릴 일이 아니다.
+ */
+export function collidingNames<T extends {
+  baby_name: string;
+  customer_phone: string;
+  address?: string | null;
+}>(orders: T[]): { name: string; homes: { phone: string; address: string }[] }[] {
+  const byName = new Map<string, Map<string, string>>();   // 이름 → (연락처 → 주소)
   for (const o of orders) {
-    const dup = (count.get(o.baby_name) || 0) > 1;
-    const tail = String(o.customer_phone || '').slice(-4);
-    out.set((o as any).id, dup && tail ? `${o.baby_name}(${tail})` : o.baby_name);
+    const name = o.baby_name;
+    const phone = String(o.customer_phone || '').replace(/\D/g, '');
+    if (!byName.has(name)) byName.set(name, new Map());
+    if (!byName.get(name)!.has(phone)) byName.get(name)!.set(phone, String(o.address || ''));
+  }
+  const out: { name: string; homes: { phone: string; address: string }[] }[] = [];
+  for (const [name, homes] of byName) {
+    if (homes.size > 1) {
+      out.push({ name, homes: [...homes].map(([phone, address]) => ({ phone, address })) });
+    }
   }
   return out;
 }

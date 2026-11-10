@@ -28,7 +28,13 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
       .lte('delivery_date', shiftDate(today, 28))
       .order('created_at', { ascending: false })
       .limit(500),
-    sb.from('baby_food_customers').select('*').order('baby_name'),
+    // ⚠️ 전에는 고객을 전부 불러왔다. 그런데 PostgREST 는 1000행에서 조용히 자르기 때문에,
+    // 손님이 쌓이면(엑셀 주소록 기준 이미 3,795명) 그 뒤는 없는 사람이 된다 — 에러도 안 난다.
+    // 선결제·정기 손님이 1000번째 뒤에 있으면 화면에서 통째로 사라진다.
+    // 화면에 늘 필요한 건 선결제·정기뿐이고, 나머지는 검색으로 찾는다(/api/customers?q=).
+    sb.from('baby_food_customers').select('*')
+      .or('prepaid_balance.gt.0,is_regular.eq.true')
+      .order('baby_name').limit(1000),
     sb.from('baby_food_weekly_menus').select('*').eq('week_start', weekStart)
   ]);
 

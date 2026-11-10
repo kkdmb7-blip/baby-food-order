@@ -23,6 +23,17 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ ok: true, memo });
   }
 
+  // 아기 이름 고치기 — 조리표에 찍히는 이름은 카카오 채널에 저장해 둔 이름과 같아야 한다.
+  // 동명이인이면 사장님이 카톡에 '찬희2', '찬희3' 으로 저장해 두시므로, 앱에서도
+  // 그대로 고칠 수 있어야 한다. 앱이 꼬리표를 붙여 맞추면 카톡과 오히려 어긋난다.
+  if (status === undefined && typeof body.baby_name === 'string') {
+    const baby_name = String(body.baby_name).trim().slice(0, 20);
+    if (!baby_name) return NextResponse.json({ error: '이름이 비었어요' }, { status: 400 });
+    const { error } = await sb.from('baby_food_orders').update({ baby_name }).eq('id', id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, baby_name });
+  }
+
   if (!STATUSES.includes(status)) return NextResponse.json({ error: 'invalid status' }, { status: 400 });
 
   const { data: order } = await sb

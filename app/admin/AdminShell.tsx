@@ -102,6 +102,24 @@ export default function AdminShell({
     }).catch(() => {});
   }
 
+  // 아기 이름 고치기 — 조리표에 찍히는 이름이 카카오 채널에 저장해 둔 이름과 같아야
+  // 주문이 누구 것인지 맞춰볼 수 있다. 동명이인은 카톡에 '찬희2'로 저장해 두시므로
+  // 앱 이름도 그렇게 고칠 수 있어야 한다. 앱이 꼬리표를 붙여 맞추면 오히려 어긋난다.
+  async function saveName(o: Order, name: string) {
+    const next = name.trim().slice(0, 20);
+    if (!next || next === o.baby_name) return;
+    setOrders(prev => prev.map(x => x.id === o.id ? { ...x, baby_name: next } : x));
+    const r = await fetch(`/api/orders/${o.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baby_name: next }),
+    }).catch(() => null);
+    // 실패하면 되돌린다 — 고쳐진 줄 알고 넘어가면 조리표에 옛 이름이 찍힌다
+    if (!r || !r.ok) {
+      setOrders(prev => prev.map(x => x.id === o.id ? { ...x, baby_name: o.baby_name } : x));
+      alert('이름을 못 고쳤어요. 다시 해주세요.');
+    }
+  }
+
   async function togglePaid(o: Order) {
     const next = !o.paid;
     setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: next } : x));
@@ -296,7 +314,18 @@ export default function AdminShell({
                       })}
                       className="mt-1 w-4 h-4 accent-stone-800" />
                     <div>
-                      <span className="font-bold text-stone-900 mr-2">{o.baby_name}</span>
+                      {/* 눌러서 바로 고친다 — 카톡 이름과 맞추려면 '찬희2' 처럼 직접 적으셔야 한다 */}
+                      <input
+                        key={o.id + o.baby_name}
+                        defaultValue={o.baby_name}
+                        onBlur={e => saveName(o, e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                        maxLength={20}
+                        title="눌러서 고칠 수 있어요 (카톡 이름과 같게)"
+                        className="font-bold text-stone-900 mr-1 bg-transparent border border-transparent rounded px-1 -ml-1
+                                   hover:border-stone-200 focus:border-amber-400 focus:bg-white outline-none"
+                        style={{ width: `${Math.max(3, o.baby_name.length + 1)}ch` }}
+                      />
                       <span className="text-xs text-stone-500">{o.months}개월</span>
                       {o.order_type !== '일반' && (
                         <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">{o.order_type}</span>
@@ -796,9 +825,78 @@ function MenuManager({ menus, weekStart, onSave }: { menus: WeeklyMenu[]; weekSt
 }
 
 // ── 고객 관리 ──────────────────────────────────────────────────────
+// ⚠️ 전에는 선결제·정기 손님만 보여줬다(prepaid_balance > 0 || is_regular). 그래서 일반 손님은
+// 목록에 아예 없었고, 이름을 고칠 방법도 없었다. 조리표 이름은 카카오 채널에 저장해 둔 이름과
+// 같아야 맞춰볼 수 있는데(동명이인은 카톡에 '찬희2'로 저장) 고칠 데가 없었던 것.
+// 전체를 다 그리면 느려지니, 선결제·정기는 늘 보여주고 나머지는 검색했을 때만 나온다.
 function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpdate: (c: Customer[]) => void }) {
   const [msg, setMsg] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
   const prepaid = customers.filter(c => c.prepaid_balance > 0 || c.is_regular);
+
+  // 손님은 계속 쌓이므로 화면에 다 들고 있지 않는다 — 찾는 건 서버가 한다.
+  // (전부 받아다 걸렀더니 1000명 뒤의 손님은 검색해도 안 나왔다)
+  const [found, setFound] = useState<Customer[]>([]);
+  const [finding, setFinding] = useState(false);
+  const term = q.trim();
+
+  useEffect(() => {
+    if (!term) { setFound([]); return; }
+    let alive = true;
+    const t = setTimeout(async () => {
+      setFinding(true);
+      try {
+        const d = await fetch(`/api/customers?q=${encodeURIComponent(term)}`).then(r => r.json());
+        if (alive) setFound(d.customers || []);
+      } catch { if (alive) setFound([]); }
+      if (alive) setFinding(false);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [term]);
+
+  async function saveName(c: Customer, name: string) {
+    const next = name.trim().slice(0, 20);
+    if (!next || next === c.baby_name) return;
+    setSavingId(c.id);
+    try {
+      const r = await fetch('/api/customers', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: c.id, baby_name: next }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        setMsg(`못 고쳤어요: ${d.error || r.status}`);
+      } else {
+        onUpdate(customers.map(x => x.id === c.id ? { ...x, baby_name: next } : x));
+        setFound(prev => prev.map(x => x.id === c.id ? { ...x, baby_name: next } : x));
+        setMsg(
+          d.ordersError
+            ? `이름은 ${next}(으)로 바뀌었는데 주문 쪽이 안 바뀌었어요 — ${d.ordersError}`
+            : `${d.was} → ${next} · 주문 ${d.ordersUpdated}건도 같이 바뀌었어요`
+        );
+      }
+    } catch (e: any) {
+      setMsg(`못 고쳤어요: ${e?.message || '네트워크 오류'}`);
+    }
+    setSavingId(null);
+    setTimeout(() => setMsg(null), 6000);
+  }
+
+  const nameInput = (c: Customer) => (
+    <input
+      key={c.id + c.baby_name}
+      defaultValue={c.baby_name}
+      disabled={savingId === c.id}
+      onBlur={e => saveName(c, e.target.value)}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      maxLength={20}
+      title="눌러서 고칠 수 있어요 (카톡에 저장한 이름과 같게)"
+      className="font-bold text-stone-900 bg-transparent border border-transparent rounded px-1 -ml-1
+                 hover:border-stone-200 focus:border-amber-400 focus:bg-white outline-none disabled:opacity-50"
+      style={{ width: `${Math.max(4, (c.baby_name || '').length + 2)}ch` }}
+    />
+  );
 
   async function charge(id: string, units: typeof PREPAID_UNITS[number]) {
     const r = await fetch(`/api/customers/${id}/prepaid`, {
@@ -819,14 +917,48 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   return (
     <div>
       {msg && <div className="mb-3 text-sm text-center text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg py-2">{msg}</div>}
-      {prepaid.length === 0 && <Empty text="등록된 고객이 없어요" />}
+
+      {/* 이름 고치기 — 카톡 이름과 맞추는 자리 */}
+      <div className="mb-4 bg-white rounded-xl border border-stone-200 p-4">
+        <p className="text-xs text-stone-500 mb-2 leading-relaxed">
+          아기 이름을 <b>눌러서 바로 고칠 수</b> 있어요. 고치면 <b>그 집 주문 이름도 같이 바뀝니다</b> — 조리표·주소록에 그대로 찍혀요.
+          동명이인은 카톡에 저장해 두신 대로 <b>찬희2·찬희3</b> 처럼 적으시면 됩니다.
+        </p>
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="이름 또는 번호로 찾기"
+          className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none" />
+        {term && (
+          <div className="mt-2">
+            <p className="text-[11px] text-stone-400 mb-1">{finding ? '찾는 중…' : `${found.length}명`}</p>
+            <div className="max-h-80 overflow-auto divide-y divide-stone-100 border border-stone-200 rounded-lg">
+              {!finding && found.length === 0 && <p className="px-3 py-3 text-sm text-stone-400">그런 손님이 없어요</p>}
+              {found.map(c => (
+                <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    {nameInput(c)}
+                    <span className="ml-2 text-xs text-stone-500">{formatPhone(c.phone)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {c.is_regular && <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
+                    {c.prepaid_balance > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">잔여 {c.prepaid_balance}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {found.length >= 80 && <p className="mt-1 text-[11px] text-stone-400">80명까지만 보여드려요 — 더 좁혀서 찾아주세요</p>}
+          </div>
+        )}
+      </div>
+
+      <h3 className="text-sm font-bold text-stone-700 mb-2">선결제 · 정기 손님</h3>
+      {prepaid.length === 0 && <Empty text="선결제·정기 손님이 없어요" />}
       <div className="space-y-3">
         {prepaid.map(c => (
           <div key={c.id} className="bg-white rounded-xl border border-stone-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <div>
-                <span className="font-bold text-stone-900 mr-2">{c.baby_name}</span>
-                <span className="text-xs text-stone-500">{formatPhone(c.phone)}</span>
+                {nameInput(c)}
+                <span className="ml-2 text-xs text-stone-500">{formatPhone(c.phone)}</span>
                 {c.is_regular && <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
               </div>
               <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
