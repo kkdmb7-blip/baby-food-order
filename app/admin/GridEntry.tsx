@@ -1264,7 +1264,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                   <tr className="bg-sky-50 text-[10px] text-sky-900">
                     <th className="text-left font-medium pl-1.5 py-1 w-[62px]">이름</th>
                     {week.map(d => (
-                      <th key={d} className={`font-bold py-1 w-[26px] ${d === deliveryDate ? 'bg-sky-200' : ''}`}>
+                      <th key={d} className={`font-bold py-1 w-[34px] text-[12px] ${d === deliveryDate ? 'bg-sky-200' : ''}`}>
                         {Number(d.slice(8, 10))}{dowOf(d)}
                       </th>
                     ))}
@@ -1290,7 +1290,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                           <td key={d} className={`py-0.5 text-center ${d === deliveryDate ? 'bg-sky-50' : ''}`}>
                             <button onClick={() => toggleCell(r.name, r.phone, d)}
                               title={done ? '주문이 들어갔어요 (눌러서 지우기)' : cell ? '적어둔 것 (눌러서 지우기)' : '여기에 적어두기'}
-                              className={`w-[19px] h-[19px] rounded border text-[11px] font-black leading-none ${
+                              className={`w-[24px] h-[24px] rounded border text-[13px] font-black leading-none ${
                                 done ? 'bg-stone-200 border-stone-300 text-stone-500'
                                 : cell ? 'bg-sky-600 border-sky-600 text-white'
                                 : 'bg-white border-stone-300 text-transparent hover:border-sky-400'}`}>
