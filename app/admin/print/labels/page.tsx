@@ -118,6 +118,8 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
 
       <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
         <div className="flex items-baseline gap-2 text-[12px]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="" width={30} height={30} className="w-[30px] h-[30px] object-contain self-center" />
           <span className="text-base font-black">배송 {date} ({dow})</span>
           <span className="font-bold">강서·양천 {orders.length}건</span>
           {pickupCount > 0 && <span className="text-stone-500">픽업 {pickupCount}건 제외</span>}

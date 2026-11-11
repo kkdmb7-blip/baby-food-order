@@ -228,7 +228,11 @@ export default function AdminShell({
       {/* 헤더 */}
       <header className="bg-white border-b border-stone-200 sticky top-0 z-20 no-print">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="font-bold text-stone-900">이유식 관리 <span className="text-sm text-stone-400 font-normal">{today}</span></h1>
+          <h1 className="font-bold text-stone-900 flex items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="" width={30} height={30} className="w-[30px] h-[30px] object-contain" />
+            이유식 관리 <span className="text-sm text-stone-400 font-normal">{today}</span>
+          </h1>
           <button onClick={logout} className="text-xs text-stone-500 px-3 py-1.5 border border-stone-200 rounded-lg">
             로그아웃
           </button>

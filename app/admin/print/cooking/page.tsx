@@ -69,6 +69,8 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
 
       <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
         <div className="flex items-baseline gap-2 flex-wrap text-[14px]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="" width={34} height={34} className="w-[34px] h-[34px] object-contain self-center" />
           <span className="text-xl font-black">
             조리 {date} ({dow})
             {canFilterNew && <span className="ml-1.5 text-red-600">추가분</span>}
