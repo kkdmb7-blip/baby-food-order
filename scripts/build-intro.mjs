@@ -25,6 +25,12 @@ log.push(`이미지 ${n}장 추출 → public/intro/ (${Math.round(saved / 1024)
 
 // ── 2. 자사몰용 복구 ──
 const edits = [
+  // 수상 기사 링크는 자사몰에만 단다 — 스마트스토어는 외부 링크를 직거래 유도로 본다.
+  ['수상 · 국민일보 기사 링크 (자사몰만)',
+`    <span style="font-size:12px;color:var(--fg-soft);">국민일보 주최 · 2023년 2월 보도</span>`,
+`    <a href="https://www.kmib.co.kr/article/20230209500503" target="_blank" rel="noopener"
+       style="font-size:12px;color:var(--fg-soft);text-decoration:underline;text-underline-offset:3px;">국민일보 주최 · 2023년 2월 보도 &rsaquo;</a>`],
+
   ['상단바 · 주문 동선 추가',
 `<strong>체험팩 1팩 무료</strong> · 배송비 3,000원만 · 한 가정 1회 · 강서구 10년 수제 이유식`,
 `<strong>체험팩 1팩 무료</strong> · 배송비 3,000원만 · 한 가정 1회 · 강서구 10년 수제 이유식`],
