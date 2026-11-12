@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { SB_URL, SB_ANON_KEY } from '@/lib/publicEnv';
 import { supabaseAnon } from '@/lib/supabase';
 import { thisWeekMonday } from '@/lib/dates';
 
@@ -69,8 +70,8 @@ export async function GET(req: Request) {
 
   // 2) kkakung_history 에서 자동 매핑
   try {
-    const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const SB_URL = 'https://ymghmfkqctckxxysxkvy.supabase.co';
+    // 주소·열쇠는 lib/publicEnv 한 곳에서 온다 (전에는 여기 그대로 박혀 있었다)
+    const ANON_KEY = SB_ANON_KEY;
     const r = await fetch(
       `${SB_URL}/rest/v1/kkakung_history?id=eq.${encodeURIComponent(requestedWeek)}&select=id,yusik`,
       { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` } }

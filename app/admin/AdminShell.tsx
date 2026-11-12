@@ -1088,13 +1088,18 @@ function ReviewManager() {
   const [reviews, setReviews] = useState<AdminReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  /* ⚠️ 전에는 조회가 실패해도 빈 배열 그대로 두고 넘어가서, 화면에는
+        "아직 등록된 후기가 없어요" 로 보였다. 장애를 '없음' 으로 착각하게 된다.
+        실패는 실패라고 적고 다시 받을 수 있게 한다. */
+  const [failed, setFailed] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
       const d = await fetch('/api/reviews?all=1').then(r => r.json());
-      if (d.ok) setReviews(d.reviews);
-    } catch {}
+      if (d.ok) { setReviews(d.reviews || []); setFailed(false); }
+      else setFailed(true);
+    } catch { setFailed(true); }
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
@@ -1111,6 +1116,20 @@ function ReviewManager() {
   }
 
   if (loading) return <div className="text-center py-10 text-stone-400 text-sm">불러오는 중…</div>;
+
+  // 못 불러온 것과 하나도 없는 것은 다른 상태다 — 섞어서 보여주면 안 된다
+  if (failed) return (
+    <div className="space-y-3">
+      <AskForReviews />
+      <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-5 text-center">
+        <div className="text-sm font-bold text-rose-700 mb-1">후기를 불러오지 못했어요</div>
+        <div className="text-[12px] text-rose-600 mb-3">등록된 후기가 없는 것과는 다릅니다 — 잠시 후 다시 눌러주세요.</div>
+        <button onClick={load} className="rounded-lg border border-rose-300 bg-white px-4 py-1.5 text-sm font-bold text-rose-700">
+          다시 불러오기
+        </button>
+      </div>
+    </div>
+  );
 
   const shown = reviews.filter(r => r.is_approved).length;
   return (
