@@ -59,6 +59,18 @@ const edits = [
 `      (07760) 서울특별시 강서구 강서로12길 22, 1층 102호<br>
       전화 02-2696-1228 · 이메일 kkdmb@naver.com`],
 ];
+// 식단표·재료 탭은 자사몰에서만 DB 로 그린다.
+// 원본에 @@NAME_START … @@NAME_END 로 구간을 표시해 두었고, 그 구간을 통째로
+// 한 줄 슬롯으로 바꾼다. app/page.tsx 가 그 자리에 그 주 식단을 넣어 그린다.
+// 스마트스토어는 원본을 그대로 쓰니 정적 표가 남는다 (그쪽은 월초에 붙여넣는 수밖에 없다).
+const slots = ['MENU_CALENDAR', 'INGREDIENTS'];
+for (const key of slots) {
+  const re = new RegExp(`[ \\t]*<!-- @@${key}_START[\\s\\S]*?<!-- @@${key}_END -->\\n?`);
+  if (!re.test(s)) { fails.push(`${key} 구간 표시를 원본에서 못 찾음`); continue; }
+  s = s.replace(re, `    <!--@${key}-->\n`);
+  log.push(`OK  ${key} → live 슬롯 (자사몰만)`);
+}
+
 for (const [name, from, to] of edits) {
   const c = s.split(from).length - 1;
   if (c !== 1) { fails.push(`${name} — ${c}군데`); continue; }
@@ -108,4 +120,7 @@ out.push(`  /intro/ 참조: ${cnt('/intro/')}건`);
 out.push(`  /order 링크: ${cnt('href="/order"')}건`);
 out.push(`  카카오채널: ${cnt('카카오채널')}건`);
 out.push(`  전화·이메일: ${cnt('02-2696-1228')} · ${cnt('kkdmb@naver.com')}건`);
+// 슬롯이 각각 1개여야 app/page.tsx 가 식단을 꽂을 자리를 찾는다
+for (const key of slots) out.push(`  <!--@${key}-->: ${cnt(`<!--@${key}-->`)}건 (1이어야 함)`);
+out.push(`  남은 @@구간 표시: ${cnt('@@')}건 (0이어야 함)`);
 writeFileSync('build-intro.txt', out.join('\n') + '\n', 'utf8');
