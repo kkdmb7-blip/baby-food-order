@@ -78,6 +78,13 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
     setSaving(null);
   }
 
+  /* 여러 단계를 시킨 사람의 이름 칸 색. 같은 사람 = 같은 색, 옆 사람과는 다른 색이어야 해서
+     여덟 가지를 돌려 쓴다. 사장님: "옅은 색으로" — 가장 연한 단계(-100)를 쓴다. 글씨가 살아야 한다.
+     인쇄할 때 브라우저가 배경색을 지우는 것은 globals.css 의 print-color-adjust: exact 가 막는다. */
+  const GROUP_BG = ['bg-amber-100', 'bg-sky-100', 'bg-emerald-100', 'bg-rose-100',
+                    'bg-violet-100', 'bg-lime-100', 'bg-orange-100', 'bg-cyan-100'];
+  const groupBg = (c?: number) => (c === undefined ? '' : GROUP_BG[c % GROUP_BG.length]);
+
   const cell = (v: number, red: boolean) =>
     v ? <span className={red ? 'text-red-600 font-black' : 'font-black'}>{v}</span>
       : <span className="text-stone-200">·</span>;
@@ -97,10 +104,11 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
              박스에서 width 를, 표에서 w-full 을 빼 박스가 표 크기를 따라가게 한다.
              사장님: 주문이 20~30개씩 들어오면 세로가 모자라니 이름·칸을 줄이고, A4 오른쪽에
              남는 여백에 '비고' 칸을 두어 다른 칸이 있다는 표시를 거기 하라고 하셨다.
-             블록 = 이름 56 + 배송 22 + 숫자 22x3 + 비고 22 = 166(+테두리 2) = 168px.
+             블록 = 이름 78 + 배송 22 + 숫자 22x3 = 166(+테두리 2) = 168px.
              '배송' 칸은 사장님이 "이름 바로 옆에 빈칸 하나씩, 픽업인지 택배인지" 라고 하셔서
-             넣었다 — 직배송은 기본이라 비우고 픽업·택배·당일만 적는다. 그만큼 이름칸을 줄였다
-             (실제 이름은 두세 자라 56px 에 들어간다).
+             넣었다 — 직배송은 기본이라 비우고 픽·택·당 한 글자만 적는다.
+             여러 단계를 시킨 사람은 비고 '+N' 대신 이름 칸 배경색으로 묶는다(사장님 요청).
+             같은 사람은 블록이 달라도 같은 색이다. 비고 자리 22px 은 이름 칸에 돌려줬다.
              20명씩 끊으면 65명(5·10·20·30)이 여섯 블록 — 168x6 + 틈 40 = 1048px 로 A4 가로
              (여백 빼고 1062px)에 들어간다. 화면(992px)에서는 여섯째가 다음 줄로 내려가는데,
              종이가 기준이라 그대로 둔다. 처음에 202px·22명으로 했더니 블록이 여섯이라 둘째 줄로
@@ -112,14 +120,13 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
           <div key={sec.key} className="rounded-lg overflow-hidden break-inside-avoid">
           <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
-              <col style={{ width: 56 }} />
+              <col style={{ width: 78 }} />
               <col style={{ width: 22 }} />
               {MENU_TYPES.map(m => <col key={m} style={{ width: 22 }} />)}
-              <col style={{ width: 22 }} />
             </colgroup>
             <thead>
               <tr>
-                <th colSpan={MENU_TYPES.length + 3} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                <th colSpan={MENU_TYPES.length + 2} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
                   {sec.stage.replace('단계', '')}{sec.parts > 1 && <span className="text-[10px] font-normal"> {sec.part}/{sec.parts}</span>}
                   <span className="ml-1 font-normal text-[10px] text-stone-600">
                     {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span> · {sec.total}명
@@ -132,8 +139,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 {MENU_TYPES.map(m => (
                   <th key={m} className="border border-black px-0 py-[2px] text-[10px]">{menuLabel(m)}</th>
                 ))}
-                {/* 비고 — 이 사람 줄이 다른 칸에도 있으면 '+N' */}
-                <th className="border border-black px-0 py-[2px] text-[10px]">비고</th>
               </tr>
             </thead>
             <tbody>
@@ -153,7 +158,8 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 return (
                   <tr key={`${p.orderId}-${i}`}>
                     {/* 이름은 가운데 — 칸이 좁아 왼쪽에 붙이면 긴 이름과 짧은 이름이 들쭉날쭉해진다 */}
-                    <td className="border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center">
+                    {/* 여러 단계를 시킨 사람은 배경색 — 같은 사람은 다른 블록에서도 같은 색이다 */}
+                    <td className={`border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center ${groupBg(p.color)}`}>
                       {onPick ? (
                         <button onClick={() => onPick(p.phone)} title="눌러서 고치기"
                           className="w-full text-center hover:text-amber-700 hover:underline">
@@ -181,12 +187,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                         ) : cell(p.menus[m], p.isBig)}
                       </td>
                     ))}
-                    {/* 비고 — 다른 칸에 이 사람 줄이 N개 더 있다. 담을 때 한 봉투로 모아야 한다.
-                        전에는 그 N개를 이름 밑에 전부 적어서 줄이 두세 줄로 부풀고 표가 파란 글씨로
-                        덮였다. 무엇인지는 아래 '합쳐 담기' 상자 한 곳에서 본다. */}
-                    <td className="border border-black text-center py-[2px] text-[12px] font-black text-blue-700">
-                      {p.others.length > 0 ? `+${p.others.length}` : ''}
-                    </td>
                   </tr>
                 );
               })}
@@ -203,7 +203,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                       {sec.tot[m].small || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
-                  <td className="border-2 border-black" />
                 </tr>
                 <tr className="bg-stone-100">
                   <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px] text-red-600">
@@ -214,7 +213,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                       {sec.tot[m].big || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
-                  <td className="border-2 border-black" />
                 </tr>
               </>)}
             </tbody>
@@ -226,14 +224,13 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
           <div className="rounded-lg overflow-hidden break-inside-avoid">
           <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
-              <col style={{ width: 56 }} />
+              <col style={{ width: 78 }} />
               <col style={{ width: 22 }} />
               <col style={{ width: 26 }} />
-              <col style={{ width: 22 }} />
             </colgroup>
             <thead>
               <tr>
-                <th colSpan={4} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                <th colSpan={3} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
                   반찬 세트<span className="ml-1 font-normal text-[10px] text-stone-600">{sheet.banchan.length}명</span>
                 </th>
               </tr>
@@ -241,7 +238,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
                 <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
                 <th className="border border-black px-0 py-[2px] text-[10px]">수</th>
-                <th className="border border-black px-0 py-[2px] text-[10px]">비고</th>
               </tr>
             </thead>
             <tbody>
@@ -249,7 +245,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}</>;
                 return (
                 <tr key={i}>
-                  <td className="border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center">
+                  <td className={`border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center ${groupBg(b.color)}`}>
                     {onPick ? (
                       <button onClick={() => onPick(b.phone)} title="눌러서 고치기"
                         className="w-full text-center hover:text-amber-700 hover:underline">{bn}</button>
@@ -258,9 +254,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                   <td className={`border border-black text-center py-[2px] text-[12px] font-black ${b.ship === '픽' ? 'text-emerald-700' : b.ship === '택' ? 'text-stone-900' : 'text-sky-700'}`}>{b.ship}</td>
                   {/* 낱개는 세트가 아니라 개수다 — 이름 옆 '낱개' 꼬리표로 구분한다 */}
                   <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>
-                  <td className="border border-black text-center py-[2px] text-[12px] font-black text-blue-700">
-                    {b.others.length > 0 ? `+${b.others.length}` : ''}
-                  </td>
                 </tr>
                 );
               })}
@@ -274,7 +267,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                     <span className="block text-[10px] text-amber-700 leading-none">{sheet.banchanSingleTotal}개</span>
                   )}
                 </td>
-                <td className="border-2 border-black" />
               </tr>
             </tbody>
           </table>
@@ -315,7 +307,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
       </div>
 
       {/* '합쳐 담기' 상자는 뺐다 (사장님: "이 칸은 없애도 돼"). 다른 칸에 줄이 더 있다는 건
-          비고 '+N' 으로 충분하고, 어느 칸인지는 사장님이 직접 보신다. */}
+          이름 칸 배경색(같은 사람 = 같은 색)으로 보이고, 어느 칸인지는 사장님이 직접 보신다. */}
 
       {/* 알레르기 표시(이름 옆 '*', 아래 '알레르기 주의' 줄)는 뺐다.
           사장님: "알레르기는 상관없다고, 엄마가 알아서 빼야 한다고. 우린 앞으로 알레르기는 관여 안 해." */}

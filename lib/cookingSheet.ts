@@ -55,10 +55,13 @@ export type PersonRow = {
   multi: boolean;      // 같은 사람의 줄이 또 있는지 (포장 시 합쳐야 한다)
   /* 그 사람의 다른 줄들.
      ⚠️ 전에는 이걸 줄마다 통째로 적었다. 한 사람이 세 단계를 시키면 세 줄이 서로를
-        다 적어서(각 줄에 "+ 중기2 230g + 중기2 300g + 후기 300g") 표가 파란 글씨로
-        덮였다. 사장님이 "여러 단계를 주문하니까 너무 복잡해 보인다" 고 하신 게 이것이다.
-        줄 오른쪽 '비고' 칸에는 '+N' 만 두고, 무엇인지는 아래 '합쳐 담기' 상자 한 곳에 모은다. */
+        다 적어서 표가 파란 글씨로 덮였다. 그다음엔 비고 칸에 '+N' 만 뒀는데,
+        사장님이 "비고는 지우고 같은 사람이 다른 단계로 주문하면 이름 배경색으로, 여러 색을 써서"
+        라고 하셔서 이제는 color 로 표시한다. others 는 '줄이 더 있나' 판정에만 쓴다. */
   others: string[];
+  /** 줄이 둘 이상인 사람에게 주는 색 번호(0부터). 같은 사람은 블록이 달라도 같은 번호.
+   *  한 줄뿐인 사람은 undefined. 화면이 이 번호로 이름 칸 배경색을 고른다. */
+  color?: number;
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
 };
 
@@ -80,7 +83,7 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number>; single?: boolean; ship: string }[];
+  banchan: { name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
@@ -222,6 +225,16 @@ export function buildCookingSheet(
     }
   }
   for (const b of banchan) b.others = othersFor(b.phone, b.name, banchanLabel(b));
+
+  /* 줄이 둘 이상인 사람마다 색 번호를 준다. 이름 ㄱㄴ순으로 매겨서 같은 날 같은 주문이면
+     늘 같은 색이 나온다(새로고침마다 바뀌면 종이와 화면이 어긋난다). 색 자체는 화면이 고른다. */
+  const colorOf = new Map<string, number>();
+  [...byPerson.entries()]
+    .filter(([, e]) => e.parts.length > 1)
+    .sort(([, a], [, b]) => a.name.localeCompare(b.name, 'ko'))
+    .forEach(([k], i) => colorOf.set(k, i));
+  for (const list of byStage.values()) for (const p of list) p.color = colorOf.get(personKey(p.phone, p.name));
+  for (const b of banchan) b.color = colorOf.get(personKey(b.phone, b.name));
 
   /* 이름 ㄱㄴ순. 용량(230/300)으로 나누지 않고 섞는다.
      사장님: "나중에 찾기 편하게 나는 ㄱㄴ순으로 이름을 정렬했었고, 230과 300은 상관없이
