@@ -275,11 +275,12 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         </div>
       )}
 
-      {/* 알레르기 — 재료를 빼드리는 게 아니라(불가) 교차오염 주의용 */}
+      {/* 알레르기 — 하루 분량을 한 솥에 만들어서 특정 재료만 뺄 수는 없다.
+          그래서 이 줄은 '빼라' 가 아니라 '이 아이에게 그 재료가 가면 안 된다' 는 표시다.
+          (교차오염 주의 같은 당연한 문구는 뺐다 — 조리실에서 보는 종이다) */}
       {sheet.allergies.length > 0 && (
         <div className="mt-2 border-2 border-black px-2.5 py-1.5 text-[14px]">
           <span className="font-black">알레르기 주의</span>
-          <span className="text-[12px] text-stone-600 ml-1">(재료 제거 불가 — 조리도구·교차오염 주의)</span>
           <span className="ml-2">
             {sheet.allergies.map((a, i) => (
               <span key={i} className="mr-3"><span className="font-black text-red-600">{a.name}</span> {a.items.join('·')}</span>
