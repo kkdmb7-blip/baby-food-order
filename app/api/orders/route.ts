@@ -12,6 +12,7 @@ import { notify, notifyError } from '@/lib/notify';
 import { menuKindsFor } from '@/lib/menuDays';
 import { looksDirectDelivery } from '@/lib/routeCode';
 import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
+import { recordPrepaid } from '@/lib/prepaidLedger';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -262,6 +263,7 @@ export async function POST(req: NextRequest) {
 
     // 선결제 고객이면 잔여 차감
     let customer_id: string | null = null;
+    let prepaidAfter: number | null = null;   // 장부에 남길 차감 뒤 잔액
     if (order_type === '선결제') {
       const { data: cust } = await sb
         .from('baby_food_customers')
@@ -294,6 +296,7 @@ export async function POST(req: NextRequest) {
         return bad('처리 중 잔액이 변경됐어요 — 다시 시도해주세요 (중복 제출 방지)');
       }
       customer_id = cust.id;
+      prepaidAfter = cust.prepaid_balance - total_qty;
     }
 
     // G. 포인트 사용/적립 — 일반·정기 주문만 (선결제 제외). 고객 1회 조회
@@ -359,7 +362,22 @@ export async function POST(req: NextRequest) {
         아기: baby_name, 연락처: customer_phone, 조리일: delivery_date,
         수량: total_qty, 금액: net_price,
       });
+      // ⚠️ 선결제 팩은 이미 뺐다 — 주문이 안 들어갔으면 돌려놔야 한다(전에는 빠진 채 남았다)
+      if (customer_id && prepaidAfter !== null) {
+        await sb.from('baby_food_customers')
+          .update({ prepaid_balance: prepaidAfter + total_qty })
+          .eq('id', customer_id).eq('prepaid_balance', prepaidAfter);
+      }
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
+    }
+
+    // 선결제 장부 — 이 주문에 몇 팩을 썼고 남은 게 몇 팩인지
+    if (customer_id && prepaidAfter !== null) {
+      await recordPrepaid(sb, {
+        customerId: customer_id, phone: customer_phone, babyName: baby_name,
+        kind: '사용', packs: -total_qty, balanceAfter: prepaidAfter, orderId: data.id,
+        memo: `조리일 ${delivery_date}`,
+      });
     }
 
     // 고객 포인트 갱신 (차감 + 적립) — 실패 무시

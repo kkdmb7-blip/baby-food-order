@@ -987,19 +987,31 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     />
   );
 
+  // 충전 중엔 단추를 잠근다 — 두 번 눌려 두 번 충전되는 걸 막는다
+  const [chargingId, setChargingId] = useState<string | null>(null);
+  const [openLedger, setOpenLedger] = useState<string | null>(null);
+
   async function charge(id: string, units: typeof PREPAID_UNITS[number]) {
-    const r = await fetch(`/api/customers/${id}/prepaid`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ units })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      onUpdate(customers.map(c => c.id === id ? { ...c, prepaid_balance: d.new_balance } : c));
-      setMsg(`${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
-    } else {
-      setMsg(`오류: ${d.error}`);
+    if (chargingId) return;
+    setChargingId(id);
+    try {
+      const r = await fetch(`/api/customers/${id}/prepaid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ units })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) {
+        onUpdate(customers.map(c => c.id === id ? { ...c, prepaid_balance: d.new_balance } : c));
+        setMsg(`${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
+        if (openLedger === id) { setOpenLedger(null); setTimeout(() => setOpenLedger(id), 0); }
+      } else {
+        setMsg(`오류: ${d.error || r.status}`);
+      }
+    } catch (e: any) {
+      setMsg(`오류: ${e?.message || '네트워크 오류'}`);
     }
+    setChargingId(null);
     setTimeout(() => setMsg(null), 3000);
   }
 
@@ -1066,15 +1078,78 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             )}
             <div className="flex gap-2">
               {PREPAID_UNITS.map(u => (
-                <button key={u} onClick={() => charge(c.id, u)}
-                  className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50">
+                <button key={u} onClick={() => charge(c.id, u)} disabled={chargingId === c.id}
+                  className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
                   +{u}팩
                 </button>
               ))}
+              <button onClick={() => setOpenLedger(openLedger === c.id ? null : c.id)}
+                className="ml-auto px-3 py-1.5 border border-stone-200 text-stone-600 rounded-lg text-xs font-bold hover:bg-stone-50">
+                {openLedger === c.id ? '기록 닫기' : '기록 보기'}
+              </button>
             </div>
+            {openLedger === c.id && <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} />}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── 선결제 기록 ───────────────────────────────────────────────────
+// 충전·사용·취소환불·조리표 수정이 한 줄씩 쌓인다(baby_food_prepaid_ledger).
+// 마지막 줄의 '남은 팩' 이 위의 잔여와 같아야 정상 — 다르면 빨갛게 알린다.
+type LedgerRow = { created_at: string; kind: string; packs: number; balance_after: number; amount_won: number | null; memo: string | null };
+
+function PrepaidLedger({ customerId, balance }: { customerId: string; balance: number }) {
+  const [rows, setRows] = useState<LedgerRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/customers/${customerId}/prepaid`).then(r => r.json())
+      .then(d => { if (!alive) return; if (d.ok) setRows(d.rows); else setErr(d.error || '불러오지 못했어요'); })
+      .catch(e => { if (alive) setErr(e?.message || '불러오지 못했어요'); });
+    return () => { alive = false; };
+  }, [customerId]);
+
+  if (err) return <p className="mt-3 text-xs text-red-600">기록을 불러오지 못했어요: {err}</p>;
+  if (!rows) return <p className="mt-3 text-xs text-stone-400">기록 불러오는 중…</p>;
+  if (rows.length === 0) return <p className="mt-3 text-xs text-stone-400">아직 기록이 없어요</p>;
+  const mismatch = rows[0].balance_after !== balance;
+  const fmt = (s: string) => {
+    const d = new Date(s);
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  return (
+    <div className="mt-3 border-t border-stone-100 pt-2">
+      {mismatch && (
+        <p className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          기록상 남은 팩({rows[0].balance_after})과 잔여({balance})가 달라요 — 확인이 필요해요
+        </p>
+      )}
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-stone-400">
+            <th className="text-left font-normal py-1">날짜</th>
+            <th className="text-left font-normal">구분</th>
+            <th className="text-right font-normal">팩</th>
+            <th className="text-right font-normal">남은 팩</th>
+            <th className="text-left font-normal pl-3">내용</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-t border-stone-50">
+              <td className="py-1 text-stone-500 whitespace-nowrap">{fmt(r.created_at)}</td>
+              <td className="text-stone-700">{r.kind}</td>
+              <td className={`text-right font-bold ${r.packs > 0 ? 'text-emerald-700' : 'text-stone-700'}`}>{r.packs > 0 ? `+${r.packs}` : r.packs}</td>
+              <td className="text-right text-stone-700">{r.balance_after}</td>
+              <td className="pl-3 text-stone-500">{r.memo}{r.amount_won ? ` · ${r.amount_won.toLocaleString()}원` : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length >= 100 && <p className="mt-1 text-[11px] text-stone-400">최근 100줄만 보여드려요</p>}
     </div>
   );
 }

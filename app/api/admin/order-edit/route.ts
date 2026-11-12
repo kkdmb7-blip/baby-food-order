@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { recordPrepaid } from '@/lib/prepaidLedger';
 import {
   supabaseService, MENU_TYPES, STAGE_OPTIONS, getPrice, shippingFeeFor, tierOf,
   type StageType, type PriceTier,
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest) {
 
   // ── 1) 선결제 잔여 맞추기 (CAS, 모자라면 중단)
   let prepaidMoved = 0;
+  let prepaidCust: { id: string; after: number } | null = null;
   if (o.order_type === '선결제' && qtyDelta !== 0) {
     const { data: cust } = await sb
       .from('baby_food_customers').select('id, prepaid_balance')
@@ -116,6 +118,7 @@ export async function POST(req: NextRequest) {
       return bad('잔여가 그 사이 바뀌었어요 — 새로고침 후 다시 고쳐주세요', 409);
     }
     prepaidMoved = qtyDelta;
+    prepaidCust = { id: cust.id, after: Math.max(0, base - qtyDelta) };
   }
 
   // ── 2) 주문 줄 고치기. items 안쪽 팩수·메뉴도 같이 고쳐야 조리표가 바뀐다.
@@ -145,6 +148,15 @@ export async function POST(req: NextRequest) {
       }
     }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+
+  // 선결제 장부 — 주문이 실제로 고쳐진 뒤에만 남긴다(실패해서 되돌린 건 오간 팩이 없다)
+  if (prepaidCust) {
+    await recordPrepaid(sb, {
+      customerId: prepaidCust.id, phone: o.customer_phone, babyName: o.baby_name,
+      kind: '수정', packs: -prepaidMoved, balanceAfter: prepaidCust.after, orderId: id,
+      memo: `조리표에서 ${oldQty}→${newQty}팩`,
+    });
   }
 
   // ── 3) 적립 포인트 차이 맞추기 (실패해도 주문은 이미 고쳐졌다 — 로그만)

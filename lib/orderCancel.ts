@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { recordPrepaid } from './prepaidLedger';
 
 type CancelableOrder = {
+  id?: string;
+  baby_name?: string;
   order_type: string;
   total_qty: number;
   points_used: number | null;
@@ -26,7 +29,15 @@ export async function applyCancelReversal(sb: SupabaseClient, order: CancelableO
         const { data: updated } = await sb
           .from('baby_food_customers').update({ prepaid_balance: next })
           .eq('id', cust.id).eq('prepaid_balance', base).select('id');
-        if (updated && updated.length > 0) break;
+        if (updated && updated.length > 0) {
+          // 장부 — 취소면 팩이 돌아오고(환불), 취소를 되돌리면 다시 빠진다(사용)
+          await recordPrepaid(sb, {
+            customerId: cust.id, phone: order.customer_phone, babyName: order.baby_name,
+            kind: sign > 0 ? '환불' : '사용', packs: next - base, balanceAfter: next,
+            orderId: order.id ?? null, memo: sign > 0 ? '주문 취소' : '취소한 주문을 되살림',
+          });
+          break;
+        }
         cust = (await sb.from('baby_food_customers').select('id, prepaid_balance').eq('id', cust.id).maybeSingle()).data;
       }
     } else if ((order.points_used || 0) > 0 || (order.points_earned || 0) > 0) {
