@@ -90,15 +90,22 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         </p>
       )}
       {/* 단계별 블록 — 한 블록을 다 챙기고 다음 블록으로 넘어가면 된다 */}
-      {/* 네 단계가 한 줄에 들어가야 한다 — 칸이 넓어 완료기가 아래로 내려가고 있었다.
-          230px x 4 + 틈 24px = 944px (화면 max-w-5xl 안쪽 992px, A4 가로 1062px 둘 다 들어간다) */}
+      {/* ⚠️ 겉 박스에 width 를 박아 두었더니 테두리가 잘려 보였다.
+             합계 줄이 border-2(2px)라 border-collapse 에서 표가 colgroup 합보다 2px 넓어지는데,
+             박스는 230px 로 고정이라 overflow-hidden 이 그 2px 을 잘라냈다.
+             오른쪽 세로선이 아예 없는 것처럼 보였던 게 이것이다.
+             박스에서 width 를, 표에서 w-full 을 빼 박스가 표 크기를 따라가게 한다.
+             네 단계는 한 줄에 들어가야 한다(완료기가 아래로 내려가면 안 된다) —
+             222px x 4 + 틈 24px = 912px 로 화면(max-w-5xl 안쪽 1024px)과 A4 가로 둘 다 들어간다.
+             ⚠️ 숫자칸을 32px 로 줄였더니 머리글 '한우' 가 '한/우' 로 쪼개졌다.
+                두 글자가 한 줄에 들어가려면 36px 이 필요하다. 줄일 거면 이름칸에서 줄인다. */}
       <div className="flex gap-2 items-start flex-wrap">
         {sheet.sections.map(sec => (
           // 모서리를 둥글게 — border-collapse 표는 radius 가 안 먹어서 겉을 감싸 잘라낸다
-          <div key={sec.key} className="rounded-lg overflow-hidden break-inside-avoid" style={{ width: 230 }}>
-          <table className="table-fixed border-collapse text-[18px] leading-tight w-full">
+          <div key={sec.key} className="rounded-lg overflow-hidden break-inside-avoid">
+          <table className="table-fixed border-collapse text-[17px] leading-tight">
             <colgroup>
-              <col style={{ width: 122 }} />
+              <col style={{ width: 112 }} />
               {MENU_TYPES.map(m => <col key={m} style={{ width: 36 }} />)}
             </colgroup>
             <thead>
@@ -201,11 +208,11 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         ))}
 
         {sheet.banchan.length > 0 && (
-          <div className="rounded-lg overflow-hidden break-inside-avoid" style={{ width: 160 }}>
-          <table className="table-fixed border-collapse text-[18px] leading-tight w-full">
+          <div className="rounded-lg overflow-hidden break-inside-avoid">
+          <table className="table-fixed border-collapse text-[17px] leading-tight">
             <colgroup>
-              <col style={{ width: 122 }} />
-              <col style={{ width: 36 }} />
+              <col style={{ width: 112 }} />
+              <col style={{ width: 40 }} />
             </colgroup>
             <thead>
               <tr>
@@ -266,9 +273,9 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         {/* 반찬 종류별로 몇 개를 만들지 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다.
             손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다. */}
         {sheet.banchanByItem.length > 0 && (
-          <div className="rounded-lg overflow-hidden break-inside-avoid" style={{ width: 300 }}>
-            <table className="table-fixed border-collapse text-[17px] leading-tight w-full">
-              <colgroup><col /><col style={{ width: 44 }} /></colgroup>
+          <div className="rounded-lg overflow-hidden break-inside-avoid">
+            <table className="table-fixed border-collapse text-[17px] leading-tight">
+              <colgroup><col style={{ width: 216 }} /><col style={{ width: 44 }} /></colgroup>
               <thead>
                 <tr>
                   <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-center">
