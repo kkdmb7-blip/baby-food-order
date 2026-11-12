@@ -95,65 +95,60 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
              박스는 230px 로 고정이라 overflow-hidden 이 그 2px 을 잘라냈다.
              오른쪽 세로선이 아예 없는 것처럼 보였던 게 이것이다.
              박스에서 width 를, 표에서 w-full 을 빼 박스가 표 크기를 따라가게 한다.
-             네 단계는 한 줄에 들어가야 한다(완료기가 아래로 내려가면 안 된다) —
-             222px x 4 + 틈 24px = 912px 로 화면(max-w-5xl 안쪽 1024px)과 A4 가로 둘 다 들어간다.
-             ⚠️ 숫자칸을 32px 로 줄였더니 머리글 '한우' 가 '한/우' 로 쪼개졌다.
-                두 글자가 한 줄에 들어가려면 36px 이 필요하다. 줄일 거면 이름칸에서 줄인다. */}
+             사장님: 주문이 20~30개씩 들어오면 세로가 모자라니 이름·칸을 줄이고, A4 오른쪽에
+             남는 여백에 '비고' 칸을 두어 다른 칸이 있다는 표시를 거기 하라고 하셨다.
+             블록 = 이름 70 + 숫자 24x3 + 비고 24 = 166(+테두리 2) = 168px.
+             20명씩 끊으면 65명(5·10·20·30)이 여섯 블록 — 168x6 + 틈 40 = 1048px 로 A4 가로
+             (여백 빼고 1062px)에 들어간다. 화면(992px)에서는 여섯째가 다음 줄로 내려가는데,
+             종이가 기준이라 그대로 둔다. 처음에 202px·22명으로 했더니 블록이 여섯이라 둘째 줄로
+             내려가고 세로도 넘쳐 3장이 나왔다 — 실제 PDF 로 재고 고친 값이다.
+             ⚠️ 머리글 '한우' 두 글자는 11px 글씨에 좌우 여백 0 이어야 24px 에 들어간다. */}
       <div className="flex gap-2 items-start flex-wrap">
         {sheet.sections.map(sec => (
           // 모서리를 둥글게 — border-collapse 표는 radius 가 안 먹어서 겉을 감싸 잘라낸다
           <div key={sec.key} className="rounded-lg overflow-hidden break-inside-avoid">
-          <table className="table-fixed border-collapse text-[17px] leading-tight">
+          <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
-              <col style={{ width: 112 }} />
-              {MENU_TYPES.map(m => <col key={m} style={{ width: 36 }} />)}
+              <col style={{ width: 70 }} />
+              {MENU_TYPES.map(m => <col key={m} style={{ width: 24 }} />)}
+              <col style={{ width: 24 }} />
             </colgroup>
             <thead>
               <tr>
-                <th colSpan={MENU_TYPES.length + 1} className="border border-black px-2 py-1 text-[17px] text-center">
-                  {sec.stage}{sec.parts > 1 && <span className="text-[13px] font-normal"> ({sec.part}/{sec.parts})</span>}
-                  <span className="ml-1.5 font-normal text-[13px] text-stone-600">
-                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span>g · {sec.total}명
+                <th colSpan={MENU_TYPES.length + 2} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                  {sec.stage.replace('단계', '')}{sec.parts > 1 && <span className="text-[10px] font-normal"> {sec.part}/{sec.parts}</span>}
+                  <span className="ml-1 font-normal text-[10px] text-stone-600">
+                    {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span> · {sec.total}명
                   </span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-1 py-1 text-[15px]">이 름</th>
+                <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
                 {MENU_TYPES.map(m => (
-                  <th key={m} className="border border-black px-0.5 py-1 text-[14px]">{menuLabel(m)}</th>
+                  <th key={m} className="border border-black px-0 py-[2px] text-[11px]">{menuLabel(m)}</th>
                 ))}
+                {/* 비고 — 이 사람 줄이 다른 칸에도 있으면 '+N'. 무엇인지는 아래 '합쳐 담기' 에 */}
+                <th className="border border-black px-0 py-[2px] text-[11px]">비고</th>
               </tr>
             </thead>
             <tbody>
               {sec.list.map((p, i) => {
                 const prev = sec.list[i - 1];
                 const volChanged = prev && prev.isBig !== p.isBig;
+                // 이름 칸은 한 줄로 고정한다 — 줄 높이가 늘 같아야 22명이 들어간다는 계산이 선다.
+                // 픽업·추가·미지정은 작은 꼬리표로 옆에 붙인다.
                 const nameNode = (
                   <>
-                    {p.multi && <span className="text-blue-700 font-black mr-0.5">+</span>}
                     {p.name}{p.allergy && <span className="text-red-600">*</span>}
-                    {p.pickup && <span className="ml-1 text-[12px] font-black text-emerald-700">픽업</span>}
-                    {printedAt && p.isNew && <span className="ml-1 text-[11px] font-black text-amber-700">추가</span>}
-                    {/* 이 사람 줄이 또 있다는 신호만 — 무엇인지는 아래 '합쳐 담기' 한 곳에 모았다.
-                        줄마다 다 적었더니 세 단계 시킨 사람은 세 줄이 서로를 다 적어서
-                        표가 파란 글씨로 덮였다. 다만 같은 번호에 아이가 둘이면(형제)
-                        이름은 줄에도 보여야 한다 — 남의 것으로 헷갈리면 안 된다. */}
-                    {p.others.length > 0 && (
-                      <span className="block text-[12px] font-black text-blue-700 leading-tight">
-                        다른 칸 {p.others.length}
-                        {p.otherNames.length > 0 && (
-                          <span className="ml-1 text-amber-700">{p.otherNames.join('·')}</span>
-                        )}
-                      </span>
-                    )}
-                    {/* 메뉴가 안 정해진 팩 — 이름 옆에 붙이면 이름칸이 터져서 아랫줄에 작게 */}
-                    {p.unspec > 0 && <span className="block text-[12px] font-bold text-red-600">미지정 {p.unspec}</span>}
+                    {p.pickup && <span className="ml-0.5 text-[10px] font-black text-emerald-700">픽업</span>}
+                    {printedAt && p.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}
+                    {p.unspec > 0 && <span className="ml-0.5 text-[10px] font-bold text-red-600">미지정{p.unspec}</span>}
                   </>
                 );
                 return (
                   <tr key={`${p.orderId}-${i}`} className={volChanged ? 'border-t-2 border-t-black' : ''}>
                     {/* 이름은 가운데 — 칸이 좁아 왼쪽에 붙이면 긴 이름과 짧은 이름이 들쭉날쭉해진다 */}
-                    <td className="border border-black px-1 py-[7px] font-bold leading-tight break-words text-center">
+                    <td className="border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center">
                       {onPick ? (
                         <button onClick={() => onPick(p.phone)} title="눌러서 고치기"
                           className="w-full text-center hover:text-amber-700 hover:underline">
@@ -162,7 +157,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                       ) : nameNode}
                     </td>
                     {MENU_TYPES.map(m => (
-                      <td key={m} className={`border border-black text-center ${editable(p) ? 'p-0' : 'py-[7px]'}`}>
+                      <td key={m} className={`border border-black text-center ${editable(p) ? 'p-0' : 'py-[2px]'}`}>
                         {editable(p) ? (
                           // 종이와 같은 모양으로 보이되 누르면 바로 고쳐진다
                           <input inputMode="numeric" disabled={saving === p.orderId}
@@ -173,13 +168,19 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                             }}
                             onBlur={() => saveRow(p)}
                             onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                            className={`w-full text-center bg-transparent outline-none font-black py-[7px]
+                            className={`w-full text-center bg-transparent outline-none font-black py-[2px] text-[14px]
                                         focus:bg-amber-100 disabled:opacity-40
                                         ${p.isBig ? 'text-red-600' : ''}
                                         ${draft[p.orderId]?.[m] !== undefined ? 'bg-amber-50' : ''}`} />
                         ) : cell(p.menus[m], p.isBig)}
                       </td>
                     ))}
+                    {/* 비고 — 다른 칸에 이 사람 줄이 N개 더 있다. 담을 때 한 봉투로 모아야 한다.
+                        전에는 그 N개를 이름 밑에 전부 적어서 줄이 두세 줄로 부풀고 표가 파란 글씨로
+                        덮였다. 무엇인지는 아래 '합쳐 담기' 상자 한 곳에서 본다. */}
+                    <td className="border border-black text-center py-[2px] text-[12px] font-black text-blue-700">
+                      {p.others.length > 0 ? `+${p.others.length}` : ''}
+                    </td>
                   </tr>
                 );
               })}
@@ -188,24 +189,26 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                   칸마다 찍으면 그 칸 합으로 오해해서 그만큼만 만들 위험이 있다). */}
               {sec.part === sec.parts && (<>
                 <tr className="bg-stone-100">
-                  <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
+                  <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">
                     {SMALL_VOLUME[sec.stage]}g
                   </td>
                   {MENU_TYPES.map(m => (
-                    <td key={m} className="border-2 border-black text-center py-1.5 font-black">
+                    <td key={m} className="border-2 border-black text-center py-[2px] font-black">
                       {sec.tot[m].small || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
+                  <td className="border-2 border-black" />
                 </tr>
                 <tr className="bg-stone-100">
-                  <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px] text-red-600">
+                  <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px] text-red-600">
                     {BIG_VOLUME[sec.stage]}g
                   </td>
                   {MENU_TYPES.map(m => (
-                    <td key={m} className="border-2 border-black text-center py-1.5 font-black text-red-600">
+                    <td key={m} className="border-2 border-black text-center py-[2px] font-black text-red-600">
                       {sec.tot[m].big || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
+                  <td className="border-2 border-black" />
                 </tr>
               </>)}
             </tbody>
@@ -215,64 +218,54 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
 
         {sheet.banchan.length > 0 && (
           <div className="rounded-lg overflow-hidden break-inside-avoid">
-          <table className="table-fixed border-collapse text-[17px] leading-tight">
+          <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
-              <col style={{ width: 112 }} />
-              <col style={{ width: 40 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 28 }} />
+              <col style={{ width: 24 }} />
             </colgroup>
             <thead>
               <tr>
-                <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-center">
-                  반찬 세트<span className="ml-1.5 font-normal text-[13px] text-stone-600">{sheet.banchan.length}명</span>
+                <th colSpan={3} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                  반찬 세트<span className="ml-1 font-normal text-[10px] text-stone-600">{sheet.banchan.length}명</span>
                 </th>
               </tr>
               <tr className="bg-stone-200">
-                <th className="border border-black px-1 py-1 text-[15px]">이 름</th>
-                <th className="border border-black px-0.5 py-1 text-[14px]">수</th>
+                <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
+                <th className="border border-black px-0 py-[2px] text-[11px]">수</th>
+                <th className="border border-black px-0 py-[2px] text-[11px]">비고</th>
               </tr>
             </thead>
             <tbody>
               {sheet.banchan.map((b, i) => {
-                const bn = (
-                  <>
-                    {b.others.length > 0 && <span className="text-blue-700 font-black mr-0.5">+</span>}
-                    {b.name}
-                    {b.others.length > 0 && (
-                      <span className="block text-[12px] font-black text-blue-700 leading-tight">
-                        다른 칸 {b.others.length}
-                        {b.otherNames.length > 0 && (
-                          <span className="ml-1 text-amber-700">{b.otherNames.join('·')}</span>
-                        )}
-                      </span>
-                    )}
-                  </>
-                );
+                const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}</>;
                 return (
                 <tr key={i}>
-                  <td className="border border-black px-1 py-[9px] font-bold break-words text-center">
+                  <td className="border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center">
                     {onPick ? (
                       <button onClick={() => onPick(b.phone)} title="눌러서 고치기"
                         className="w-full text-center hover:text-amber-700 hover:underline">{bn}</button>
                     ) : bn}
                   </td>
-                  {/* 낱개는 세트가 아니라 개수다 — 담을 때 세트로 착각하면 안 된다 */}
-                  <td className="border border-black text-center py-[7px] font-black">
-                    {b.qty}
-                    {b.single && <span className="block text-[11px] font-bold text-amber-700 leading-none">낱개</span>}
+                  {/* 낱개는 세트가 아니라 개수다 — 이름 옆 '낱개' 꼬리표로 구분한다 */}
+                  <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>
+                  <td className="border border-black text-center py-[2px] text-[12px] font-black text-blue-700">
+                    {b.others.length > 0 ? `+${b.others.length}` : ''}
                   </td>
                 </tr>
                 );
               })}
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
+                <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">
                   세트{sheet.banchanSingleTotal > 0 && <span className="text-amber-700"> · 낱개</span>}
                 </td>
-                <td className="border-2 border-black text-center py-1.5 font-black">
+                <td className="border-2 border-black text-center py-[2px] font-black">
                   {sheet.banchanTotal}
                   {sheet.banchanSingleTotal > 0 && (
-                    <span className="block text-[12px] text-amber-700 leading-none">{sheet.banchanSingleTotal}개</span>
+                    <span className="block text-[10px] text-amber-700 leading-none">{sheet.banchanSingleTotal}개</span>
                   )}
                 </td>
+                <td className="border-2 border-black" />
               </tr>
             </tbody>
           </table>
@@ -283,26 +276,26 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
             손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다. */}
         {sheet.banchanByItem.length > 0 && (
           <div className="rounded-lg overflow-hidden break-inside-avoid">
-            <table className="table-fixed border-collapse text-[17px] leading-tight">
-              <colgroup><col style={{ width: 216 }} /><col style={{ width: 44 }} /></colgroup>
+            <table className="table-fixed border-collapse text-[14px] leading-tight">
+              <colgroup><col style={{ width: 170 }} /><col style={{ width: 34 }} /></colgroup>
               <thead>
                 <tr>
-                  <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-center">
+                  <th colSpan={2} className="border border-black px-1 py-[2px] text-[13px] text-center">
                     반찬 종류별
-                    <span className="ml-1.5 font-normal text-[13px] text-stone-600">이만큼 만듭니다</span>
+                    <span className="ml-1 font-normal text-[10px] text-stone-600">이만큼 만듭니다</span>
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sheet.banchanByItem.map(it => (
                   <tr key={it.name}>
-                    <td className="border border-black px-2 py-[6px] font-bold leading-tight break-words text-[15px]">{it.name}</td>
-                    <td className="border border-black text-center py-[6px] font-black">{it.qty}</td>
+                    <td className="border border-black px-1 py-[2px] font-bold leading-tight break-words text-[12px]">{it.name}</td>
+                    <td className="border border-black text-center py-[2px] font-black">{it.qty}</td>
                   </tr>
                 ))}
                 <tr className="bg-stone-100">
-                  <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">합계</td>
-                  <td className="border-2 border-black text-center py-1.5 font-black">
+                  <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
+                  <td className="border-2 border-black text-center py-[2px] font-black">
                     {sheet.banchanByItem.reduce((a, b) => a + b.qty, 0)}
                   </td>
                 </tr>
@@ -315,47 +308,43 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
       {/* 합쳐 담는 사람 — 블록이 나뉘어 있어서, 담을 때는 이 줄대로 한 봉투에 모은다.
           여기 숫자는 위 블록에 이미 들어 있는 것이다. 조리 수량에 더하면 두 배가 된다. */}
       {sheet.multi.length > 0 && (
-        <div className="mt-3 border-2 border-blue-700 px-2.5 py-2 text-[14px]">
-          <div className="font-black text-blue-700 mb-1">
+        /* 실제 PDF 로 재 보니(77명) 이 상자가 97px 이라 A4 를 넘겨 두 장이 됐다.
+           한 줄에 제목과 사람을 같이 흘리고, 글씨를 줄이고, 설명은 한 마디만 남긴다. */
+        <div className="mt-1.5 border-2 border-blue-700 px-1.5 py-0.5 text-[11px] leading-snug">
+          <span className="font-black text-blue-700 mr-2">
             + 합쳐 담기 {sheet.multi.length}명
-            <span className="ml-1.5 font-normal text-[12px] text-stone-600">
-              한 봉투로 모으세요 · 이 숫자는 위 블록에 이미 들어 있습니다(조리 수량에 더하지 마세요)
+            <span className="ml-1 font-normal text-[10px] text-stone-600">한 봉투로 · 위 수량에 이미 포함</span>
+          </span>
+          {sheet.multi.map((m, i) => (
+            <span key={i} className="inline-block mr-3 whitespace-nowrap">
+              <span className="font-black">{m.name}</span>
+              <span className="ml-0.5 text-stone-700">{m.parts.map(t => `${t.label}×${t.qty}`).join('+')}</span>
+              <span className="ml-0.5 font-black">={m.total}</span>
             </span>
-          </div>
-          <div className="flex flex-wrap gap-x-5 gap-y-0.5">
-            {sheet.multi.map((m, i) => (
-              <span key={i}>
-                <span className="font-black">{m.name}</span>
-                {/* 같은 번호에 아이가 둘이면(형제) 한 봉투지만 아이가 다르다는 걸 알아야 한다 */}
-                {m.mixed && <span className="ml-1 text-[11px] font-black text-amber-700">형제</span>}
-                <span className="ml-1">{m.parts.map(t => `${t.label} ${t.qty}팩`).join(' + ')}</span>
-                <span className="ml-1 font-black">= {m.total}팩</span>
-              </span>
-            ))}
-          </div>
+          ))}
         </div>
       )}
 
       {/* 알레르기 — 하루 분량을 한 솥에 만들어서 특정 재료만 뺄 수는 없다.
           그래서 이 줄은 '빼라' 가 아니라 '이 아이에게 그 재료가 가면 안 된다' 는 표시다.
           (교차오염 주의 같은 당연한 문구는 뺐다 — 조리실에서 보는 종이다) */}
-      {sheet.allergies.length > 0 && (
-        <div className="mt-2 border-2 border-black px-2.5 py-1.5 text-[14px]">
-          <span className="font-black">알레르기 주의</span>
-          <span className="ml-2">
-            {sheet.allergies.map((a, i) => (
-              <span key={i} className="mr-3"><span className="font-black text-red-600">{a.name}</span> {a.items.join('·')}</span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {sheet.memos.length > 0 && (
-        <div className="mt-2 border border-black px-2.5 py-1.5 text-[14px]">
-          <span className="font-black">메모</span>
-          <span className="ml-1.5">
-            {sheet.memos.map((m, i) => <span key={i} className="mr-3">{m.name}: {m.memo}</span>)}
-          </span>
+      {/* 알레르기·메모는 한 줄에 같이 — 아래쪽 상자마다 줄을 쓰면 A4 를 넘겨 두 장이 된다 */}
+      {(sheet.allergies.length > 0 || sheet.memos.length > 0) && (
+        <div className="mt-1.5 border-2 border-black px-1.5 py-0.5 text-[11px] leading-snug">
+          {sheet.allergies.length > 0 && (
+            <span className="mr-3">
+              <span className="font-black">알레르기 주의</span>
+              {sheet.allergies.map((a, i) => (
+                <span key={i} className="ml-2 whitespace-nowrap"><span className="font-black text-red-600">{a.name}</span> {a.items.join('·')}</span>
+              ))}
+            </span>
+          )}
+          {sheet.memos.length > 0 && (
+            <span>
+              <span className="font-black">메모</span>
+              {sheet.memos.map((m, i) => <span key={i} className="ml-2">{m.name}: {m.memo}</span>)}
+            </span>
+          )}
         </div>
       )}
     </>

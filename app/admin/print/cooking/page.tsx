@@ -67,11 +67,12 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       {/* 인쇄물을 집게로 집어 조리대 앞에 걸어두므로 위쪽 20mm는 비워둔다 — 안 그러면 집게가 글자를 가림 */}
       <style>{`@media print { @page { size: A4 landscape; margin: 20mm 8mm 8mm 8mm; } }`}</style>
 
-      <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
-        <div className="flex items-baseline gap-2 flex-wrap text-[14px]">
+      {/* 머리말은 한 줄로 낮게 — 세로 688px 중 머리말이 크면 20명짜리 블록이 밀려 두 장이 된다 */}
+      <div className="flex justify-between items-baseline mb-1 border-b border-black pb-0.5">
+        <div className="flex items-baseline gap-2 flex-wrap text-[13px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-sm.png" alt="까꿍디미방" width={34} height={34} className="w-[34px] h-[34px] object-contain self-center" />
-          <span className="text-xl font-black">
+          <img src="/logo-sm.png" alt="까꿍디미방" width={26} height={26} className="w-[26px] h-[26px] object-contain self-center" />
+          <span className="text-lg font-black">
             조리 {date} ({dow})
             {canFilterNew && <span className="ml-1.5 text-red-600">추가분</span>}
           </span>
@@ -80,6 +81,18 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
             {sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}세트`}
             {sheet.banchanSingleTotal > 0 && ` · 낱개 ${sheet.banchanSingleTotal}개`}
           </span>
+          {/* 메뉴별 합계 — 담는 대에서 마지막으로 맞춰보는 숫자. 아래 줄에 두었더니 그 한 줄
+              때문에 두 장이 되어 머리말로 올렸다 (가로는 남고 세로가 모자란 종이다). */}
+          {orders.length > 0 && (
+            <span className="text-[13px]">
+              {MENU_TYPES.map(m => (
+                <span key={m} className="ml-2"><span className="text-stone-600">{m === '기타단백질' ? '기타' : m}</span> <strong>{sheet.menuTotals[m]}</strong></span>
+              ))}
+              {sheet.unspecTotal > 0 && (
+                <span className="ml-2 text-red-600">미지정 <strong>{sheet.unspecTotal}</strong></span>
+              )}
+            </span>
+          )}
           {canFilterNew && (
             <span className="text-[13px] font-bold">
               {new Date(printedAt!).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit' })} 이후 들어온 것만
@@ -101,11 +114,11 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       {/* 오늘 메뉴 — 늘 들어가는 것(한우.닭.육수.채소상탕.양파)은 빼고 다른 것만 적는다.
           '기타' 는 이름만으로 아는 자리라 꼬리표를 붙이지 않는다. */}
       {dayMenus.length > 0 && (
-        <div className="mb-2 flex gap-2 flex-wrap text-[13px]">
+        <div className="mb-1 flex gap-1.5 flex-wrap text-[12px]">
           {dayMenus.map((m, i) => {
             const extra = shortIngredients(m.ingredients);
             return (
-              <div key={i} className="border border-black px-2 py-1">
+              <div key={i} className="border border-black px-1.5 py-0.5">
                 {m.type !== '기타' && <span className="font-black">{m.type}</span>}
                 <span className={`font-bold ${m.type !== '기타' ? 'ml-1' : ''}`}>{m.name}</span>
                 {extra && <span className="text-stone-600 ml-1">{extra}</span>}
@@ -116,19 +129,6 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
       )}
 
       <CookingTable sheet={sheet} />
-
-      {/* 메뉴별 전체 합계 — 담는 대에서 마지막으로 맞춰보는 숫자 */}
-      {orders.length > 0 && (
-        <div className="mt-2 flex gap-4 flex-wrap text-[14px] border-t border-black pt-1.5">
-          {MENU_TYPES.map(m => (
-            <span key={m}><span className="text-stone-600">{m}</span> <strong>{sheet.menuTotals[m]}</strong></span>
-          ))}
-          {sheet.unspecTotal > 0 && (
-            <span className="text-red-600"><span>미지정</span> <strong>{sheet.unspecTotal}</strong></span>
-          )}
-          <span><span className="text-stone-600">전체</span> <strong>{sheet.totalPacks}팩</strong></span>
-        </div>
-      )}
 
       {orders.length === 0 && (
         <div className="py-16 text-center text-stone-400 border-2 border-dashed border-stone-300">

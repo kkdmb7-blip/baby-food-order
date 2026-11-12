@@ -55,10 +55,8 @@ export type PersonRow = {
      ⚠️ 전에는 이걸 줄마다 통째로 적었다. 한 사람이 세 단계를 시키면 세 줄이 서로를
         다 적어서(각 줄에 "+ 중기2 230g + 중기2 300g + 후기 300g") 표가 파란 글씨로
         덮였다. 사장님이 "여러 단계를 주문하니까 너무 복잡해 보인다" 고 하신 게 이것이다.
-        줄에는 '몇 개 더 있다' 만 두고, 무엇인지는 아래 '합쳐 담기' 상자 한 곳에 모은다. */
+        줄 오른쪽 '비고' 칸에는 '+N' 만 두고, 무엇인지는 아래 '합쳐 담기' 상자 한 곳에 모은다. */
   others: string[];
-  /** 그 줄과 '이름이 다른' 다른 줄의 이름들 — 같은 번호를 쓰는 형제. 이름은 줄에도 적어야 한다 */
-  otherNames: string[];
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
 };
 
@@ -80,16 +78,15 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { name: string; qty: number; phone: string; others: string[]; otherNames: string[]; menus: Record<string, number>; single?: boolean }[];
+  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number>; single?: boolean }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
   banchanTotal: number;
   /** 낱개 개수 합 (1~5개·픽업) */
   banchanSingleTotal: number;
-  /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다.
-   *  mixed=true 는 같은 번호에 아이가 둘 이상인 경우(형제). 그때는 label 에 이름이 붙는다 */
-  multi: { name: string; mixed: boolean; parts: { label: string; qty: number }[]; total: number }[];
+  /** 그날 줄이 둘 이상인 사람(연락처+이름이 같은 줄) — 포장할 때 한 봉투로 합쳐야 한다 */
+  multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
   allergies: { name: string; items: string[] }[];
   memos: { name: string; memo: string }[];
 };
@@ -103,9 +100,18 @@ type OrderLike = {
 
 /**
  * 한 단계에 사람이 몰리면(후기 24명 같은 날) 세로로 늘어져 A4 한 장을 넘어가고 블록이
- * 통째로 다음 장으로 밀린다. 열두 명마다 같은 단계를 여러 칸으로 나눠 옆으로 흐르게 한다.
+ * 통째로 다음 장으로 밀린다. 일정 인원마다 같은 단계를 여러 칸으로 나눠 옆으로 흐르게 한다.
+ *
+ * 20명인 이유 — 실제 인쇄 페이지를 PDF 로 뽑아 재 보니(2026-11-12, 77명) 22명짜리 블록이
+ * 615~631px 이었다. A4 가로는 여백 빼고 세로 688px 인데 페이지 머리 ~60px 과 아래
+ * '합쳐 담기' 상자가 들어가야 하니 블록은 ~560px 안이어야 한다. 줄 하나 ~20px(글씨 13px·
+ * 위아래 2px), 블록 머리 ~44px, 합계 두 줄 ~40px 이면 20줄 = 484px 로 여유가 남는다.
+ * 가로는 블록 168px 짜리 여섯 개(1048px)가 1062px 에 들어간다 — 5·10·20·30명이면
+ * 1+1+2+2 = 여섯 블록이라 딱 한 장이다. 그보다 많으면 둘째 줄(다음 장)로 흐른다.
+ * '다른 칸' 표시를 이름 밑이 아니라 오른쪽 비고 칸으로 옮겨서 줄 높이가 늘 한 줄로
+ * 고정된 덕에 이 계산이 선다 (전에는 두 줄짜리 이름이 섞여 12명이 한계였다).
  */
-const CHUNK = 12;
+const CHUNK = 20;
 
 export function buildCookingSheet(
   orders: OrderLike[], date: string, printedAt?: string | null,
@@ -119,7 +125,7 @@ export function buildCookingSheet(
       // 낱개(1~5개·픽업)도 만들어야 하는 반찬이다. 세트만 잡으면 조리표에서 통째로 빠진다.
       if (isBanchanStage(s.stage)) {
         banchan.push({
-          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [], otherNames: [],
+          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage),
         });
         continue;
@@ -144,7 +150,6 @@ export function buildCookingSheet(
         allergy: (o.allergies || []).length > 0,
         multi: false,
         others: [],
-        otherNames: [],
         isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
       });
     }
@@ -158,18 +163,22 @@ export function buildCookingSheet(
         칸마다 주문 한 건을 만들게 된 뒤로는 같은 사람의 후기와 완료기가 서로 다른
         주문이라, 이 표시가 아예 뜨지 않았다. 사람(연락처) 단위로 찾는다.
         같은 단계 다른 용량(230+300)도 두 줄이므로 같이 잡는다 — 담을 때는 똑같이 합쳐야 한다. */
-  /* ⚠️ 연락처로 묶으면 '같은 집 다른 아이' 도 한 사람이 된다. 형제면 한 봉투에 담는 게
-        맞지만, 줄에는 단계만 적혀 있어서(예: "+ 후기 300g") 그게 누구 것인지 안 보였다.
-        사장님이 이수근만 넣었는데 같은 번호를 쓰는 오찬희(정기배송 자동 생성)가
-        그 줄에 붙어서 "오찬희도 추가됐다" 로 보였다.
-        그래서 한 번호에 이름이 둘 이상이면 이름을 같이 적는다. */
-  const label = (stage: string, volume: number) => `${stage} ${volume}g`;
+  /* 사람 = 연락처 + 아기 이름.
+        ⚠️ 연락처만으로 묶었더니 같은 번호를 쓰는 다른 아이(형제, 또는 시험용으로 한 번호에
+           여러 이름)가 한 사람으로 합쳐져 "이수근만 넣었는데 오찬희도 붙었다" 가 됐다.
+           사장님: "전화번호가 같다고 해서 합치지는 말고, 그건 내가 따로 체크할게."
+           그래서 이름이 다르면 다른 사람이다. 주문접수가 칸마다 주문 한 건을 만드는데
+           그 건들은 이름·연락처가 같으니 같은 사람으로 잘 묶인다. */
+  // '중기2 230' 처럼 짧게 — '합쳐 담기' 상자가 길어지면 A4 아래로 밀려 두 장이 된다
+  const label = (stage: string, volume: number) => `${stage.replace('단계', '')} ${volume}`;
   type Part = { label: string; qty: number; name: string };
+  const personKey = (phone: string, name: string) => `${phone}|${name}`;
   const byPerson = new Map<string, { name: string; parts: Part[] }>();
   const addPart = (phone: string, name: string, lbl: string, qty: number) => {
-    const e = byPerson.get(phone) || { name, parts: [] };
+    const k = personKey(phone, name);
+    const e = byPerson.get(k) || { name, parts: [] };
     e.parts.push({ label: lbl, qty, name });
-    byPerson.set(phone, e);
+    byPerson.set(k, e);
   };
   for (const [stage, list] of byStage) {
     for (const p of list) {
@@ -181,38 +190,25 @@ export function buildCookingSheet(
   const banchanLabel = (b: { single?: boolean }) => (b.single ? '반찬 낱개' : '반찬 세트');
   for (const b of banchan) addPart(b.phone, b.name, banchanLabel(b), b.qty);
 
-  /** 한 번호에 이름이 둘 이상인가 — 그러면 다른 줄을 적을 때 이름을 같이 적는다 */
-  const mixedNames = (phone: string) =>
-    new Set((byPerson.get(phone)?.parts || []).map(t => t.name)).size > 1;
-
-  // 각 줄에 "그 사람의 다른 줄"을 뽑아 둔다 (줄에는 개수만, 자세한 건 '합쳐 담기' 상자에)
-  const othersFor = (phone: string, mine: string, myName: string) => {
-    const parts = byPerson.get(phone)?.parts || [];
-    const withName = mixedNames(phone);
-    const labels: string[] = [];
-    const names = new Set<string>();
+  // 각 줄에 "그 사람의 다른 줄"을 뽑아 둔다 (줄의 비고 칸에는 개수만, 자세한 건 '합쳐 담기' 상자에)
+  const othersFor = (phone: string, name: string, mine: string) => {
+    const parts = byPerson.get(personKey(phone, name))?.parts || [];
+    const out: string[] = [];
     let skipped = false;
     for (const t of parts) {
-      // 내 줄 하나만 건너뛴다 (같은 칸이 두 줄일 수 있어 이름까지 맞춰 본다)
-      if (!skipped && t.label === mine && t.name === myName) { skipped = true; continue; }
-      labels.push(withName ? `${t.name} ${t.label}` : t.label);
-      if (t.name !== myName) names.add(t.name);
+      // 내 줄 하나만 건너뛴다 (같은 칸이 두 줄일 수 있다)
+      if (!skipped && t.label === mine) { skipped = true; continue; }
+      out.push(t.label);
     }
-    return { labels, names: [...names] };
+    return out;
   };
   for (const [stage, list] of byStage) {
     for (const p of list) {
-      const o = othersFor(p.phone, label(stage, p.volume), p.name);
-      p.others = o.labels;
-      p.otherNames = o.names;
-      p.multi = o.labels.length > 0;
+      p.others = othersFor(p.phone, p.name, label(stage, p.volume));
+      p.multi = p.others.length > 0;
     }
   }
-  for (const b of banchan) {
-    const o = othersFor(b.phone, banchanLabel(b), b.name);
-    b.others = o.labels;
-    b.otherNames = o.names;
-  }
+  for (const b of banchan) b.others = othersFor(b.phone, b.name, banchanLabel(b));
 
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있다
   for (const list of byStage.values()) {
@@ -264,21 +260,14 @@ export function buildCookingSheet(
       }
       return [...m.entries()].map(([name, qty]) => ({ name, qty }));
     })(),
-    // 합쳐 담기 — 같은 번호에 아이가 둘이면(형제) 이름을 나란히 적어야 누구 것인지 보인다
-    multi: [...byPerson.entries()]
-      .filter(([, e]) => e.parts.length > 1)
-      .map(([phone, e]) => {
-        const names = [...new Set(e.parts.map(t => t.name))];
-        return {
-          name: names.join(' · '),
-          mixed: names.length > 1,
-          parts: e.parts.map(t => ({
-            label: names.length > 1 ? `${t.name} ${t.label}` : t.label,
-            qty: t.qty,
-          })),
-          total: e.parts.reduce((a, t) => a + t.qty, 0),
-        };
-      }),
+    // 합쳐 담기 — 한 사람(연락처+이름)의 줄이 둘 이상이면 여기서 한눈에 본다
+    multi: [...byPerson.values()]
+      .filter(e => e.parts.length > 1)
+      .map(e => ({
+        name: e.name,
+        parts: e.parts.map(t => ({ label: t.label, qty: t.qty })),
+        total: e.parts.reduce((a, t) => a + t.qty, 0),
+      })),
     allergies: orders
       .filter(o => (o.allergies || []).length > 0)
       .map(o => ({ name: dispName.get(o.id) || o.baby_name, items: o.allergies || [] })),
