@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { formatPhone } from '@/lib/dates';
 import { isBanchanStage, isBanchanSingle } from '@/lib/supabase';
+import { internalToken, tokenMatches, INTERNAL_HEADER } from '@/lib/internalAuth';
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.ADMIN_EMAIL;
   const from = process.env.NOTIFY_FROM_EMAIL || 'onboarding@resend.dev';
   if (!apiKey || !to) return NextResponse.json({ ok: true, skipped: true });
+
+  /* 이 경로는 /api/orders 가 서버에서만 부른다. 바깥에서 부르면 메일 내용(아기 이름·
+     주소·연락처)을 부르는 쪽이 전부 정하게 되어, 있지도 않은 주문을 진짜처럼 꾸며
+     보낼 수 있다. 사장님이 그 메일을 보고 조리·배송하면 손해다. */
+  if (!tokenMatches(req.headers.get(INTERNAL_HEADER), internalToken())) {
+    return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
+  }
 
   const b = await req.json().catch(() => ({}));
 

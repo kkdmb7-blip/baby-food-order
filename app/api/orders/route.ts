@@ -11,6 +11,7 @@ import { kstToday } from '@/lib/dates';
 import { notify, notifyError } from '@/lib/notify';
 import { menuKindsFor } from '@/lib/menuDays';
 import { looksDirectDelivery } from '@/lib/routeCode';
+import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -406,10 +407,14 @@ export async function POST(req: NextRequest) {
       }, '새 주문');
     }
 
-    // 이메일 알림 (실패 무시)
+    // 이메일 알림 (실패 무시). 서버에서만 부르는 경로라 내부 토큰을 같이 보낸다 —
+    // 안 보내면 /api/notify 가 403 으로 거른다.
     void fetch(new URL('/api/notify', req.url), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(internalToken() ? { [INTERNAL_HEADER]: internalToken()! } : {}),
+      },
       // items까지 넘겨야 알림 메일에 날짜별 구성이 풀려 나옴(복합주문이 'mixed'로만 오던 문제)
       body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, items, total_qty, total_price: net_price, customer_phone, address })
     }).catch(() => {});
