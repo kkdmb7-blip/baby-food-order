@@ -133,19 +133,35 @@ export function getPrice(stage: StageType, volume: number, tier: PriceTier = '�
   return base + (tier === '기타' ? PACK_SURCHARGE : 0);
 }
 
-// ── 배송비 ────────────────────────────────────────────────────
-// 경쟁사(베베쿡·엘빈즈·루솔·아이배냇) 네 곳이 모두 "3만원 이상 무료 / 미달 3,000원"이라
-// 같은 문법으로 맞춘다. 택배 한 건 값은 몇 팩을 보내든 똑같이 들기 때문에, 소량 주문일 때만 받는다.
-// 기타지역 팩당 +500원(PACK_SURCHARGE)은 그대로 둔다 — 그걸 빼고 배송비만 받으면
-// 6팩 이상 구간(단골·정기배송이 대부분 여기)에서 세트당 2,800~5,600원이 날아간다.
-export const SHIPPING_FEE = 3000;           // 택배·당일배송 1건 배송비
-export const FREE_SHIPPING_QTY = 6;         // 이 팩수부터 무료
-export const FREE_SHIPPING_AMOUNT = 30000;  // 또는 이 금액부터 무료
+/*
+  ── 배송비 ────────────────────────────────────────────────────
+  사장님 확인 (2026-11-12): "3팩 이상 무료배송이고 그건 직배송일 경우야"
 
-// 픽업·직배송(강서·양천 자체배송)은 택배를 안 타니 0원 — 호출하는 쪽에서 픽업이면
-// tier를 '직배송'으로 넘기고 있으므로(order page·orders API 모두) 그 한 줄로 같이 걸러진다.
+    직배송(강서·양천 자체배송)  3팩부터 무료.
+                                배송 자체가 3팩부터라(MIN_ORDER_QTY) 직배송으로
+                                나가는 주문은 사실상 늘 무료다. 픽업도 이 갈래로
+                                들어오는데(부르는 쪽에서 tier를 '직배송'으로 넘긴다)
+                                배송을 안 나가니 역시 0원이다.
+
+    기타(두발 당일·택배)        아래 기준.
+
+  ⚠️ 기타 지역 무료 기준(6팩/30,000원)은 사장님이 정하신 값이 아니다.
+     경쟁사(베베쿡·엘빈즈·루솔·아이배냇) 네 곳이 모두 "3만원 이상 무료 / 미달 3,000원"
+     이라 거기 맞춰 둔 것이다. 간판의 무료배송은 직배송 얘기라, 기타 지역도 무료로
+     둘지는 사장님 결정이 필요하다 (할일.md). 바꾸면 손님이 내는 값이 달라지므로
+     여기서 임의로 건드리지 않는다.
+     기타지역 팩당 +500원(PACK_SURCHARGE)은 그대로 둔다 — 그걸 빼고 배송비만 받으면
+     6팩 이상 구간(단골·정기배송이 대부분 여기)에서 세트당 2,800~5,600원이 날아간다.
+*/
+export const SHIPPING_FEE = 3000;           // 택배·당일배송 1건 배송비
+export const FREE_SHIPPING_QTY_DIRECT = 3;  // 직배송 — 간판 기준(= MIN_ORDER_QTY)
+export const FREE_SHIPPING_QTY = 6;         // 기타 — 이 팩수부터 무료
+export const FREE_SHIPPING_AMOUNT = 30000;  // 기타 — 또는 이 금액부터 무료
+
 // 수량·금액 중 하나만 넘겨도 무료: 반찬세트는 1세트(=1팩)지만 38,000원이라 금액으로 걸린다.
 export function shippingFeeFor(tier: PriceTier, totalQty: number, packSubtotal: number): number {
+  // 직배송은 3팩부터 무료인데, 배송은 3팩부터만 받으므로 늘 0이다.
+  // 픽업(1~2팩도 가능)도 여기로 들어오고 배송을 안 나가니 역시 0이다.
   if (tier === '직배송') return 0;
   if (totalQty >= FREE_SHIPPING_QTY || packSubtotal >= FREE_SHIPPING_AMOUNT) return 0;
   return SHIPPING_FEE;
