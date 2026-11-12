@@ -1,6 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { MENU_TYPES, menuLabel, BANCHAN_DOW, type StageType } from '@/lib/supabase';
+import {
+  MENU_TYPES, menuLabel, BANCHAN_DOW, tierOf,
+  banchanLineTotal, BANCHAN_SET_SIZE, BANCHAN_EXTRA_PRICE,
+  type StageType,
+} from '@/lib/supabase';
 import { SLOTS, slotKey, fitSlot, spreadPacks } from '@/lib/slots';
 import { slicesOn } from '@/lib/orderItems';
 import { looksDirectDelivery } from '@/lib/routeCode';
@@ -597,6 +601,13 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   // 종류별 개수 합 — 기본은 여섯(반찬 5 + 국 1)이고, 바꾸는 손님은 다르다
   const bTotal = bMenu.reduce((a, m) => a + (Number(bQty[m.name]) || 0), 0);
   const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0) + banchanQty;
+  /* 반찬 값 — 여섯 칸은 세트 값에 들어 있고, 일곱째부터 개당 5,000원이다(사장님 확인).
+     사장님이 종류별 개수를 치시는 자리라 추가분이 생기는 곳은 여기뿐이다.
+     치는 동안 값이 보여야 더 받아야 하는 걸 놓치지 않는다. */
+  const bTier = tierOf(opts.zone || zoneGuess);
+  const bIncluded = BANCHAN_SET_SIZE * banchanQty;
+  const bExtra = Math.max(0, bTotal - bIncluded);
+  const bPrice = banchanLineTotal(bTier, banchanQty, bTotal);
   const whoOk = hit ? true : (isNew && ncValid);
   const canConfirm = whoOk && currentTotal > 0 && !busy;
 
@@ -1074,7 +1085,16 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                   <QtyCell disabled={busy} big value={banchan}
                     onChange={setBanchan} onEnter={onEnterConfirm} />
                 </div>
-                <span className="text-[11px] text-stone-500">값은 세트 수로 매겨집니다</span>
+                {banchanQty > 0 && (
+                  <span className="text-[11px] font-bold text-emerald-900">
+                    {bPrice.toLocaleString()}원
+                    {bExtra > 0 && (
+                      <span className="ml-1 font-normal text-amber-700">
+                        (세트 {banchanQty} + 추가 {bExtra}개)
+                      </span>
+                    )}
+                  </span>
+                )}
               </div>
 
               {/* 여섯 칸 — 반찬 다섯 가지와 국. 대부분 1씩이고, 바꾸는 분만 숫자를 고친다 */}
@@ -1097,11 +1117,22 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                           </td>
                         </tr>
                       ))}
+                      {/* 여섯 칸이 세트 값이다. 넘으면 개당 5,000원을 더 받아야 하니
+                          모자란 쪽(덜 담김)과 넘는 쪽(추가금)을 다르게 알려준다. */}
                       <tr className="border-t-2 border-emerald-300 bg-emerald-50">
                         <td className="pl-2 py-1 text-[12px] font-black text-emerald-900">합계</td>
                         <td className="py-1 text-center font-black text-emerald-900">
                           {bTotal}
-                          {bTotal !== 6 && <span className="ml-1 text-[10px] font-bold text-amber-700">기본 6</span>}
+                          {banchanQty > 0 && bExtra > 0 && (
+                            <span className="ml-1 text-[10px] font-bold text-amber-700">
+                              +{bExtra}개 · {(bExtra * BANCHAN_EXTRA_PRICE).toLocaleString()}원
+                            </span>
+                          )}
+                          {banchanQty > 0 && bTotal > 0 && bTotal < bIncluded && (
+                            <span className="ml-1 text-[10px] font-bold text-stone-500">
+                              기본 {bIncluded}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     </tbody>

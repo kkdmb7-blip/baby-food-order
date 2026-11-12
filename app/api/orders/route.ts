@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
   hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, shippingFeeFor,
+  banchanLineTotal, banchanItemCount,
   type StageType, type PriceTier,
 } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
@@ -215,7 +216,11 @@ export async function POST(req: NextRequest) {
     if (isMulti) {
       total_price = items.reduce((sum: number, d: any) =>
         sum + (d.sets || []).reduce((s2: number, s: any) => {
-          if (s.stage === '반찬세트') return s2 + getBanchanPrice(serverTier) * (s.qty || 0);
+          // 반찬은 여섯 칸이 세트 값에 들어 있고 일곱째부터 개당 5,000원이다.
+          // 종류별 개수는 sets[].menus 에 [{menu, qty}] 로 들어온다.
+          if (s.stage === '반찬세트') {
+            return s2 + banchanLineTotal(serverTier, s.qty || 0, banchanItemCount(s.menus));
+          }
           return s2 + (getPrice(s.stage as StageType, s.volume, serverTier) || 0) * (s.qty || 0);
         }, 0), 0);
       if (total_price <= 0) return bad('가격 계산 오류');

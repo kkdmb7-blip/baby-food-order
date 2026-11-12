@@ -186,6 +186,36 @@ export function getBanchanPrice(tier: PriceTier = '직배송'): number {
   return BANCHAN_PRICE_BY_TIER[tier];
 }
 
+// 세트 한 개 = 반찬 5종 + 국 1 = 여섯 칸. 사장님 확인(2026-11-12):
+//   "반찬은 6개 이상 배송 가능하고 그 이상 추가할 때는 개당 5000원으로 가능해"
+// 그래서 세트 값에 여섯 개가 들어 있고, 일곱째부터 개당 5,000원을 더 받는다.
+// 사장님 엑셀('수반찬 주문내역')에 7개인 분이 있었는데, 지금까지는 세트 수로만
+// 값을 매겨서 그 추가분을 못 받고 있었다.
+export const BANCHAN_SET_SIZE = 6;
+export const BANCHAN_EXTRA_PRICE = 5000;
+
+/** 반찬 줄의 종류별 개수 합 — sets[].menus 가 [{menu, qty}] 모양이다 */
+export function banchanItemCount(menus: any): number {
+  if (!Array.isArray(menus)) return 0;
+  return menus.reduce((a: number, m: any) => a + (Number(m?.qty) || 0), 0);
+}
+
+/**
+ * 반찬 주문 한 줄의 값.
+ * itemCount 가 없거나 0이면 '세트 수 × 6' 으로 본다 — 종류별 개수를 안 적던
+ * 옛 주문(카톡주문·간단주문)에 추가금이 붙어 과다청구되는 것을 막는다.
+ */
+export function banchanLineTotal(
+  tier: PriceTier, setQty: number, itemCount?: number | null,
+): number {
+  const sets = Math.max(0, Math.floor(Number(setQty) || 0));
+  if (!sets) return 0;
+  const included = BANCHAN_SET_SIZE * sets;
+  const items = Number(itemCount) > 0 ? Number(itemCount) : included;
+  return getBanchanPrice(tier) * sets
+    + Math.max(0, items - included) * BANCHAN_EXTRA_PRICE;
+}
+
 // 조리 요일 (일요일=0 ... 토요일=6)
 // 월=1, 화=2, 목=4, 금=5 (수=3 제외)
 export const COOKING_DAYS = [1, 2, 4, 5] as const;

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf, menuLabel, PACK_SURCHARGE,
+  STAGES, STAGE_OPTIONS, MENU_TYPES, MIN_ORDER_QTY, getPrice, getBanchanPrice, banchanLineTotal, tierOf, menuLabel, PACK_SURCHARGE,
   hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO,
   shippingFeeFor, packsToFreeShipping, SHIPPING_FEE, FREE_SHIPPING_QTY,
   type StageType, type MenuType, type PriceTier
@@ -212,7 +212,9 @@ function isFilledSet(s: OrderSet): boolean {
   return isBanchanSet(s) ? true : !!(s.stage && s.volume);
 }
 function setPrice(s: OrderSet, tier: PriceTier): number {
-  if (isBanchanSet(s)) return getBanchanPrice(tier) * setQtyTotal(s);
+  // 손님 화면에서는 반찬을 세트 단위로만 판다(종류별로 골라 담는 건 주문접수 쪽이다).
+  // 그래도 값 매기는 함수는 한 군데로 모아 둔다 — 나중에 종류 선택을 붙여도 어긋나지 않게.
+  if (isBanchanSet(s)) return banchanLineTotal(tier, setQtyTotal(s));
   if (!s.stage || !s.volume) return 0;
   return getPrice(s.stage, s.volume, tier) * setQtyTotal(s);
 }
