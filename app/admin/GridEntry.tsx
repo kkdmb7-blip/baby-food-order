@@ -78,6 +78,11 @@ const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDet
 /**
  * 팩수 칸 — 숫자를 치거나 화살표로 올리고 내린다.
  * 키보드로 치는 게 가장 빠르지만, 한두 팩 더하거나 빼는 건 마우스가 편하다.
+ *
+ * ⚠️ 화살표를 입력칸 '옆'에 두었더니 칸마다 14px 쯤을 더 먹었다. 여덟 칸 표는
+ *    왼쪽 패널 320px 안에 칸(84) + 메뉴 세 칸 + 합(32) 을 넣는데, 그만큼 넓어지니
+ *    표가 패널을 넘겨서 overflow-hidden 에 오른쪽 '합' 칸이 잘려 안 보였다.
+ *    그래서 화살표를 칸 '안쪽' 에 겹쳐 둔다 — 칸 폭이 입력칸 폭 그대로가 된다.
  */
 function QtyCell({ value, onChange, onEnter, disabled, big }: {
   value: string;
@@ -88,9 +93,10 @@ function QtyCell({ value, onChange, onEnter, disabled, big }: {
 }) {
   const n = Number(value) || 0;
   const step = (d: number) => onChange(d > 0 ? String(Math.min(99, n + 1)) : (n > 1 ? String(n - 1) : ''));
-  const arrow = 'leading-none text-[9px] text-stone-400 hover:text-amber-700 hover:bg-amber-50 px-0.5 disabled:opacity-30';
+  const arrow = `block leading-none text-[8px] text-stone-400 hover:text-amber-700
+                 px-[3px] disabled:opacity-30`;
   return (
-    <div className="flex items-stretch">
+    <div className="relative">
       <input inputMode="numeric" disabled={disabled} value={value}
         onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 2))}
         onKeyDown={e => {
@@ -99,9 +105,10 @@ function QtyCell({ value, onChange, onEnter, disabled, big }: {
           if (e.key === 'ArrowDown') { e.preventDefault(); step(-1); return; }
           onEnter(e);
         }}
-        className={`flex-1 min-w-0 rounded-l border border-r-0 border-stone-300 px-1 py-1 text-center
+        // 오른쪽에 화살표가 겹쳐 있으니 그만큼만 비워 둔다 (두 자리 숫자는 그대로 들어간다)
+        className={`w-full rounded border border-stone-300 pl-1 pr-[14px] py-1 text-center
                     text-sm focus:border-amber-500 focus:outline-none ${big ? 'text-base font-black' : ''}`} />
-      <div className="flex flex-col justify-center border border-l-0 border-stone-300 rounded-r bg-stone-50">
+      <div className="absolute inset-y-0 right-0 flex flex-col justify-center">
         <button type="button" onClick={() => step(1)} disabled={disabled} tabIndex={-1}
           title="한 팩 올리기" className={arrow}>▲</button>
         <button type="button" onClick={() => step(-1)} disabled={disabled} tabIndex={-1}
