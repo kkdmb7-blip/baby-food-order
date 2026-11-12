@@ -244,11 +244,43 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 );
               })}
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">합계</td>
+                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">세트</td>
                 <td className="border-2 border-black text-center py-1.5 font-black">{sheet.banchanTotal}</td>
               </tr>
             </tbody>
           </table>
+          </div>
+        )}
+
+        {/* 반찬 종류별로 몇 개를 만들지 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다.
+            손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다. */}
+        {sheet.banchanByItem.length > 0 && (
+          <div className="rounded-lg overflow-hidden break-inside-avoid" style={{ width: 300 }}>
+            <table className="table-fixed border-collapse text-[17px] leading-tight w-full">
+              <colgroup><col /><col style={{ width: 44 }} /></colgroup>
+              <thead>
+                <tr>
+                  <th colSpan={2} className="border border-black px-2 py-1 text-[17px] text-center">
+                    반찬 종류별
+                    <span className="ml-1.5 font-normal text-[13px] text-stone-600">이만큼 만듭니다</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sheet.banchanByItem.map(it => (
+                  <tr key={it.name}>
+                    <td className="border border-black px-2 py-[6px] font-bold leading-tight break-words text-[15px]">{it.name}</td>
+                    <td className="border border-black text-center py-[6px] font-black">{it.qty}</td>
+                  </tr>
+                ))}
+                <tr className="bg-stone-100">
+                  <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">합계</td>
+                  <td className="border-2 border-black text-center py-1.5 font-black">
+                    {sheet.banchanByItem.reduce((a, b) => a + b.qty, 0)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         )}
       </div>

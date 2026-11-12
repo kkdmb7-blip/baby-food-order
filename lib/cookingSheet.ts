@@ -72,7 +72,9 @@ export type CookingSheet = {
   menuTotals: Record<string, number>;
   unspecTotal: number;
   sections: Section[];
-  banchan: { name: string; qty: number; phone: string; others: string[] }[];
+  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number> }[];
+  /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
+  banchanByItem: { name: string; qty: number }[];
   banchanTotal: number;
   /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다 */
   multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
@@ -103,7 +105,7 @@ export function buildCookingSheet(
   for (const o of orders) {
     for (const s of slicesOn(o as any, date)) {
       if (s.stage === '반찬세트') {
-        banchan.push({ name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [] });
+        banchan.push({ name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [], menus: s.menus || {} });
         continue;
       }
       const stage = String(s.stage || '');
@@ -213,6 +215,14 @@ export function buildCookingSheet(
     sections,
     banchan,
     banchanTotal: banchan.reduce((s, b) => s + b.qty, 0),
+    banchanByItem: (() => {
+      // 손님마다 종류별 개수가 다르다(엑셀 '주문변경' 시트). 종류별로 모아야 몇 개를 만들지 안다.
+      const m = new Map<string, number>();
+      for (const b of banchan) for (const [k, v] of Object.entries(b.menus)) {
+        if (v) m.set(k, (m.get(k) || 0) + v);
+      }
+      return [...m.entries()].map(([name, qty]) => ({ name, qty }));
+    })(),
     multi: [...byPerson.values()]
       .filter(e => e.parts.length > 1)
       .map(e => ({

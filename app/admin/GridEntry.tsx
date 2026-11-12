@@ -155,6 +155,7 @@ type Snap = {
   pendId: string | null;      // 적어둔 이름에서 끌어온 것이면 그 id — 되돌리면 다시 '할 일'로 돌아간다
   opts: Opts;
   banchan: string;
+  bQty: Record<string, string>;   // 반찬 종류별 개수
   q: string;
   hit: Hit | null;
   isNew: boolean;
@@ -251,8 +252,19 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const [mode, setMode] = useState<'이유식' | '반찬'>(() => modeFor(date));
   useEffect(() => { setMode(modeFor(date)); }, [date]);
 
-  // 반찬 세트 수 (반찬 접수일 때만 쓴다)
-  const [banchan, setBanchan] = useState('');
+  /* 반찬 — 사장님 엑셀('수반찬 주문내역')을 보니 세트 한 덩어리가 아니었다.
+     칸이 여섯 개(반찬 5 + 국 1)이고 손님마다 개수가 다르다.
+
+        이름    소단치 한숙볶 닭크조 청김무 한잡채 국  합계
+        곽원      1     0     1     1     1    2    6
+        김우주    2     2     1     0     1    1    7
+
+     그래서 세트 수 하나가 아니라 여섯 칸을 받는다. 대부분은 1씩이라 기본값을 1로 둔다.
+     값은 세트 단위로 매겨지므로(기본 여섯 개 한 세트), 저장할 때 세트 수와 종류별 개수를
+     같이 보낸다 — 금액은 세트 수로, 조리·포장은 종류별 개수로 쓴다. */
+  const [banchan, setBanchan] = useState('');                      // 세트 수
+  const [bMenu, setBMenu] = useState<{ name: string }[]>([]);      // 그날 반찬 5종 + 국
+  const [bQty, setBQty] = useState<Record<string, string>>({});    // 칸 이름 → 개수
   // 받는 방법·권역·주문종류·요청 — 대개 지난 주문 그대로라 접어 둔다
   const [opts, setOpts] = useState<Opts>(OPTS0);
   const [optsOpen, setOptsOpen] = useState(false);
@@ -273,6 +285,24 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+
+  // 반찬 접수로 들어가면 그날 반찬 다섯 가지와 국을 불러와 칸 이름으로 쓴다
+  useEffect(() => {
+    if (!open || mode !== '반찬' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    let alive = true;
+    (async () => {
+      try {
+        const d = await fetch(`/api/admin/banchan-menu?date=${date}`).then(r => r.json());
+        if (!alive || !d.ok) return;
+        const list = [...(d.items || []), ...(d.soup ? [d.soup] : [])].map((x: any) => ({ name: String(x.name) }));
+        setBMenu(list);
+        // 기본은 한 개씩 — 엑셀에서도 대부분 1·1·1·1·1·1 이다
+        setBQty(Object.fromEntries(list.map(x => [x.name, '1'])));
+        if (list.length) setBanchan(b => b || '1');
+      } catch { /* 메뉴를 못 불러와도 세트 수로는 넣을 수 있다 */ }
+    })();
+    return () => { alive = false; };
+  }, [date, open, mode]);
 
   // 그 주(월~금)에 적어둔 이름을 한 번에 불러온다 — 요일 체크판이 한 주를 보여준다
   const week = weekDays(date);
@@ -435,6 +465,8 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     setAddrIdx(0); setAddrAdding(false); setAddrNew({ address: '', door: '' });
     setPendUsed(null);
     setBanchan(''); setOpts(OPTS0); setOptsOpen(false);
+    // 반찬 칸은 비우지 않고 기본값(한 개씩)으로 되돌린다 — 다음 손님도 대개 그대로다
+    setBQty(Object.fromEntries(bMenu.map(m => [m.name, '1'])));
     setTimeout(() => nameRef.current?.focus(), 0);
   }
 
@@ -446,7 +478,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     setIsNew(s.isNew); setNc({ ...s.nc });
     setAddrIdx(s.addrIdx); setAddrAdding(s.addrAdding); setAddrNew({ ...s.addrNew });
     setQty(copyQty(s.qty));
-    setBanchan(s.banchan); setOpts({ ...s.opts });
+    setBanchan(s.banchan); setOpts({ ...s.opts }); setBQty({ ...(s.bQty || {}) });
     setPaste(''); setParsed(null); setPasteNote(null);
     setErr(null);
     setTimeout(() => nameRef.current?.focus(), 0);
@@ -562,6 +594,8 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   // 지금 받는 것만 센다 — 모드를 바꾸기 전에 쳐둔 숫자가 같이 들어가면 안 된다
   const usedSlots = mode === '이유식' ? SLOTS.filter(s => slotTotal(s.key) > 0) : [];
   const banchanQty = mode === '반찬' ? (Number(banchan) || 0) : 0;
+  // 종류별 개수 합 — 기본은 여섯(반찬 5 + 국 1)이고, 바꾸는 손님은 다르다
+  const bTotal = bMenu.reduce((a, m) => a + (Number(bQty[m.name]) || 0), 0);
   const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0) + banchanQty;
   const whoOk = hit ? true : (isNew && ncValid);
   const canConfirm = whoOk && currentTotal > 0 && !busy;
@@ -581,7 +615,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
     const snap: Snap = {
       deliveryDate, pendId: pendUsed, q: q.trim(), hit, isNew, nc: { ...nc },
       addrIdx, addrAdding, addrNew: { ...addrNew }, qty: copyQty(qty),
-      opts: { ...opts }, banchan,
+      opts: { ...opts }, banchan, bQty: { ...bQty },
     };
 
     // 단골이면 지난 주문에서(고른 주소로), 처음이면 지금 치신 값에서
@@ -622,11 +656,17 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
         }],
       };
     });
-    // 반찬 세트 — 단계·용량이 없고 한 세트가 한 묶음이다(단가 체계가 다르다)
+    /* 반찬 세트 — 단계·용량이 없고 값은 세트 단위다(단가 체계가 다르다).
+       qty 는 세트 수다 — 서버가 getBanchanPrice × qty 로 값을 매기므로
+       여기에 종류별 개수 합(보통 6)을 넣으면 여섯 배가 된다.
+       종류별 개수는 menus 에 적어 조리·포장에서 쓴다. */
     if (banchanQty > 0) {
+      const bMenus = bMenu
+        .map(m => ({ menu: m.name, qty: Number(bQty[m.name]) || 0 }))
+        .filter(m => m.qty > 0);
       jobs.push({
         slot: BANCHAN_SLOT, menus: {}, total: banchanQty, stage: null, volume: null,
-        sets: [{ stage: '반찬세트', volume: null, simple: true, menus: [], qty: banchanQty }],
+        sets: [{ stage: '반찬세트', volume: null, simple: true, menus: bMenus, qty: banchanQty }],
       });
     }
 
@@ -1028,17 +1068,51 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
           {/* ② 반찬 접수 — 단계·용량·메뉴가 없다. 세트 수만 받는다 */}
           {mode === '반찬' && (
             <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-emerald-900">반찬 세트</span>
-                <div className="w-24">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-bold text-emerald-900">세트</span>
+                <div className="w-20">
                   <QtyCell disabled={busy} big value={banchan}
                     onChange={setBanchan} onEnter={onEnterConfirm} />
                 </div>
-                <span className="text-sm font-bold text-emerald-900">세트</span>
-                <span className="text-[11px] text-stone-500">
-                  이유식과 단가 체계가 다릅니다 · 메뉴는 나누지 않습니다
-                </span>
+                <span className="text-[11px] text-stone-500">값은 세트 수로 매겨집니다</span>
               </div>
+
+              {/* 여섯 칸 — 반찬 다섯 가지와 국. 대부분 1씩이고, 바꾸는 분만 숫자를 고친다 */}
+              {bMenu.length > 0 ? (
+                <div className="rounded border border-emerald-200 bg-white overflow-hidden">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {bMenu.map((m, i) => (
+                        <tr key={m.name} className={i > 0 ? 'border-t border-stone-100' : ''}>
+                          <td className="pl-2 py-0.5 text-[13px] font-bold text-stone-700">
+                            {i === bMenu.length - 1 && /국|탕/.test(m.name)
+                              ? <span className="text-emerald-700">국 · {m.name}</span>
+                              : m.name}
+                          </td>
+                          <td className="py-0.5 px-1 w-[76px]">
+                            <QtyCell disabled={busy}
+                              value={bQty[m.name] ?? ''}
+                              onChange={v => setBQty(x => ({ ...x, [m.name]: v }))}
+                              onEnter={onEnterConfirm} />
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-emerald-300 bg-emerald-50">
+                        <td className="pl-2 py-1 text-[12px] font-black text-emerald-900">합계</td>
+                        <td className="py-1 text-center font-black text-emerald-900">
+                          {bTotal}
+                          {bTotal !== 6 && <span className="ml-1 text-[10px] font-bold text-amber-700">기본 6</span>}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-[11px] text-stone-500">
+                  이 날짜의 반찬 메뉴를 못 불러왔어요 — 세트 수만으로 넣습니다.
+                  (메뉴관리에서 그 주 식단을 올리면 여기에 칸이 생깁니다)
+                </p>
+              )}
             </div>
           )}
 
