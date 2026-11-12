@@ -227,7 +227,7 @@ export default function AdminShell({
     <div className="min-h-screen bg-stone-50">
       {/* 헤더 */}
       <header className="bg-white border-b border-stone-200 sticky top-0 z-20 no-print">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="font-bold text-stone-900 flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo-sm.png" alt="까꿍디미방" width={30} height={30} className="w-[30px] h-[30px] object-contain" />
@@ -243,7 +243,7 @@ export default function AdminShell({
         {/* 조리일 — 날짜를 입력칸에 치는 게 아니라 그 주 월~금을 펼쳐 놓고 누른다.
             화살표는 한 주씩 옮긴다. 조리는 월·화·목·금(이유식)과 수(반찬)에만 하므로
             주말은 올리지 않는다. */}
-        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-1.5">
+        <div className="max-w-6xl mx-auto px-4 pb-2 flex items-center gap-1.5">
           <button onClick={() => router.push(`/admin?date=${shiftDay(selectedDate, -7)}`)} aria-label="지난 주"
             title="지난 주"
             className="px-2 py-1.5 rounded-lg border-2 border-stone-300 bg-white text-stone-700 text-base font-black leading-none hover:bg-stone-50">
@@ -274,7 +274,7 @@ export default function AdminShell({
               className="text-xs text-amber-700 font-bold underline underline-offset-2 ml-1">오늘</button>
           )}
         </div>
-        <div className="max-w-5xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
+        <div className="max-w-6xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto no-scrollbar">
           {tabs.map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap ${tab === t ? 'border-amber-500 text-amber-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}>
@@ -285,7 +285,7 @@ export default function AdminShell({
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-5">
+      <main className="max-w-6xl mx-auto px-4 py-5">
         {/* ── 탭 1: 오늘 주문 ─────────────────────────────── */}
         {tab === '주문' && (
           <div className="space-y-3">
