@@ -33,16 +33,18 @@ const edits = [
 `    <a href="https://www.kmib.co.kr/article/20230209500503" target="_blank" rel="noopener"
        style="font-size:12px;color:var(--fg-soft);text-decoration:underline;text-underline-offset:3px;">국민일보 2023년 2월 9일 보도 &rsaquo;</a>`],
 
-  ['상단바 · 주문 동선 추가',
-`<strong>체험팩 1팩 무료</strong> · 배송비 3,000원만 · 한 가정 1회 · 강서구 10년 수제 이유식`,
-`<strong>체험팩 1팩 무료</strong> · 배송비 3,000원만 · 한 가정 1회 · 강서구 10년 수제 이유식`],
+  // 자사몰 상단바에만 주문 동선을 단다. 스마트스토어는 외부 링크가 막혀 있고,
+  // 어차피 그 페이지 안에 구매 버튼이 따로 붙는다.
+  ['상단바 · 주문 링크 (자사몰만)',
+`  <p class="w"><strong>주문 안 하셔도 상담만 하셔도 됩니다</strong> · 10년째 같은 주방 · 강서구 화곡동</p>`,
+`  <p class="w"><strong>주문 안 하셔도 상담만 하셔도 됩니다</strong> · 10년째 같은 주방 · <a href="/order" style="color:inherit;text-decoration:underline;text-underline-offset:3px;">주문하기</a></p>`],
 
   ['주문 섹션 · 주문하기 버튼 복구',
-`    <p class="cta-info">문의는 평일 오전 9시~오후 5시에 받습니다</p>`,
+`    <p class="cta-info">문의는 평일 오전 9시~오후 5시에 받습니다 · 배송은 3팩부터</p>`,
 `    <div class="cta-btns">
       <a href="/order" class="btn-w">주문하러 가기</a>
     </div>
-    <p class="cta-info">문의는 평일 오전 9시~오후 5시에 받습니다 · 카카오채널 <strong>까꿍디미방</strong></p>`],
+    <p class="cta-info">문의는 평일 오전 9시~오후 5시에 받습니다 · 배송은 3팩부터 · 카카오채널 <strong>까꿍디미방</strong></p>`],
 
   ['꼬리말 · 전화·이메일 복구 (자사몰은 전자상거래법 직접 적용)',
 `      (07760) 서울특별시 강서구 강서로12길 22, 1층 102호`,

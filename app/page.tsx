@@ -3,9 +3,9 @@ import Script from 'next/script';
 import { INTRO_FONT_HREF, INTRO_STYLE, INTRO_BODY, INTRO_SCRIPT } from './intro-html';
 
 export const metadata: Metadata = {
-  title: '까꿍디미방 — 누가 만드는지 아는 이유식',
+  title: '까꿍디미방 — 아이에게 맞춰주는 수제 이유식',
   description:
-    '2016년부터 강서구 화곡동 같은 주방에서 만듭니다. 들어간 재료와 원산지, 한 팩에 든 고기 양을 g 단위로 공개합니다. 체험팩 1팩은 배송비 3,000원만 받습니다.',
+    '아이가 안 먹은 재료를 알려주시면 다음 주에 다시 넣어 보내드립니다. 2016년부터 강서구 화곡동 같은 주방에서 만들고, 만든 사람이 직접 상담합니다. 주문 안 하셔도 상담만 하셔도 됩니다.',
   alternates: { canonical: '/' },
 };
 
