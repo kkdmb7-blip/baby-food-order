@@ -134,10 +134,16 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                     {p.name}{p.allergy && <span className="text-red-600">*</span>}
                     {p.pickup && <span className="ml-1 text-[12px] font-black text-emerald-700">픽업</span>}
                     {printedAt && p.isNew && <span className="ml-1 text-[11px] font-black text-amber-700">추가</span>}
-                    {/* 이 사람 줄이 또 어디에 있는지 — 모르면 따로 담거나 하나를 빠뜨린다 */}
+                    {/* 이 사람 줄이 또 있다는 신호만 — 무엇인지는 아래 '합쳐 담기' 한 곳에 모았다.
+                        줄마다 다 적었더니 세 단계 시킨 사람은 세 줄이 서로를 다 적어서
+                        표가 파란 글씨로 덮였다. 다만 같은 번호에 아이가 둘이면(형제)
+                        이름은 줄에도 보여야 한다 — 남의 것으로 헷갈리면 안 된다. */}
                     {p.others.length > 0 && (
                       <span className="block text-[12px] font-black text-blue-700 leading-tight">
-                        + {p.others.join(' + ')}
+                        다른 칸 {p.others.length}
+                        {p.otherNames.length > 0 && (
+                          <span className="ml-1 text-amber-700">{p.otherNames.join('·')}</span>
+                        )}
                       </span>
                     )}
                     {/* 메뉴가 안 정해진 팩 — 이름 옆에 붙이면 이름칸이 터져서 아랫줄에 작게 */}
@@ -233,7 +239,10 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                     {b.name}
                     {b.others.length > 0 && (
                       <span className="block text-[12px] font-black text-blue-700 leading-tight">
-                        + {b.others.join(' + ')}
+                        다른 칸 {b.others.length}
+                        {b.otherNames.length > 0 && (
+                          <span className="ml-1 text-amber-700">{b.otherNames.join('·')}</span>
+                        )}
                       </span>
                     )}
                   </>
@@ -317,6 +326,8 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
             {sheet.multi.map((m, i) => (
               <span key={i}>
                 <span className="font-black">{m.name}</span>
+                {/* 같은 번호에 아이가 둘이면(형제) 한 봉투지만 아이가 다르다는 걸 알아야 한다 */}
+                {m.mixed && <span className="ml-1 text-[11px] font-black text-amber-700">형제</span>}
                 <span className="ml-1">{m.parts.map(t => `${t.label} ${t.qty}팩`).join(' + ')}</span>
                 <span className="ml-1 font-black">= {m.total}팩</span>
               </span>

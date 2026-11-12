@@ -51,7 +51,14 @@ export type PersonRow = {
   menus: Record<string, number>;
   allergy: boolean;
   multi: boolean;      // 같은 사람의 줄이 또 있는지 (포장 시 합쳐야 한다)
-  others: string[];    // 그 사람의 다른 줄들 — "+완료기 300g" 처럼 어디 있는지 적어준다
+  /* 그 사람의 다른 줄들.
+     ⚠️ 전에는 이걸 줄마다 통째로 적었다. 한 사람이 세 단계를 시키면 세 줄이 서로를
+        다 적어서(각 줄에 "+ 중기2 230g + 중기2 300g + 후기 300g") 표가 파란 글씨로
+        덮였다. 사장님이 "여러 단계를 주문하니까 너무 복잡해 보인다" 고 하신 게 이것이다.
+        줄에는 '몇 개 더 있다' 만 두고, 무엇인지는 아래 '합쳐 담기' 상자 한 곳에 모은다. */
+  others: string[];
+  /** 그 줄과 '이름이 다른' 다른 줄의 이름들 — 같은 번호를 쓰는 형제. 이름은 줄에도 적어야 한다 */
+  otherNames: string[];
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
 };
 
@@ -73,15 +80,16 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number>; single?: boolean }[];
+  banchan: { name: string; qty: number; phone: string; others: string[]; otherNames: string[]; menus: Record<string, number>; single?: boolean }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
   banchanTotal: number;
   /** 낱개 개수 합 (1~5개·픽업) */
   banchanSingleTotal: number;
-  /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다 */
-  multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
+  /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다.
+   *  mixed=true 는 같은 번호에 아이가 둘 이상인 경우(형제). 그때는 label 에 이름이 붙는다 */
+  multi: { name: string; mixed: boolean; parts: { label: string; qty: number }[]; total: number }[];
   allergies: { name: string; items: string[] }[];
   memos: { name: string; memo: string }[];
 };
@@ -111,7 +119,7 @@ export function buildCookingSheet(
       // 낱개(1~5개·픽업)도 만들어야 하는 반찬이다. 세트만 잡으면 조리표에서 통째로 빠진다.
       if (isBanchanStage(s.stage)) {
         banchan.push({
-          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
+          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [], otherNames: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage),
         });
         continue;
@@ -136,6 +144,7 @@ export function buildCookingSheet(
         allergy: (o.allergies || []).length > 0,
         multi: false,
         others: [],
+        otherNames: [],
         isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
       });
     }
@@ -149,11 +158,17 @@ export function buildCookingSheet(
         칸마다 주문 한 건을 만들게 된 뒤로는 같은 사람의 후기와 완료기가 서로 다른
         주문이라, 이 표시가 아예 뜨지 않았다. 사람(연락처) 단위로 찾는다.
         같은 단계 다른 용량(230+300)도 두 줄이므로 같이 잡는다 — 담을 때는 똑같이 합쳐야 한다. */
+  /* ⚠️ 연락처로 묶으면 '같은 집 다른 아이' 도 한 사람이 된다. 형제면 한 봉투에 담는 게
+        맞지만, 줄에는 단계만 적혀 있어서(예: "+ 후기 300g") 그게 누구 것인지 안 보였다.
+        사장님이 이수근만 넣었는데 같은 번호를 쓰는 오찬희(정기배송 자동 생성)가
+        그 줄에 붙어서 "오찬희도 추가됐다" 로 보였다.
+        그래서 한 번호에 이름이 둘 이상이면 이름을 같이 적는다. */
   const label = (stage: string, volume: number) => `${stage} ${volume}g`;
-  const byPerson = new Map<string, { name: string; parts: { label: string; qty: number }[] }>();
+  type Part = { label: string; qty: number; name: string };
+  const byPerson = new Map<string, { name: string; parts: Part[] }>();
   const addPart = (phone: string, name: string, lbl: string, qty: number) => {
     const e = byPerson.get(phone) || { name, parts: [] };
-    e.parts.push({ label: lbl, qty });
+    e.parts.push({ label: lbl, qty, name });
     byPerson.set(phone, e);
   };
   for (const [stage, list] of byStage) {
@@ -166,24 +181,38 @@ export function buildCookingSheet(
   const banchanLabel = (b: { single?: boolean }) => (b.single ? '반찬 낱개' : '반찬 세트');
   for (const b of banchan) addPart(b.phone, b.name, banchanLabel(b), b.qty);
 
-  // 각 줄에 "그 사람의 다른 줄"을 적어준다 — 어디에 또 있는지 알면 찾아다니지 않는다
-  const othersFor = (phone: string, mine: string) => {
+  /** 한 번호에 이름이 둘 이상인가 — 그러면 다른 줄을 적을 때 이름을 같이 적는다 */
+  const mixedNames = (phone: string) =>
+    new Set((byPerson.get(phone)?.parts || []).map(t => t.name)).size > 1;
+
+  // 각 줄에 "그 사람의 다른 줄"을 뽑아 둔다 (줄에는 개수만, 자세한 건 '합쳐 담기' 상자에)
+  const othersFor = (phone: string, mine: string, myName: string) => {
     const parts = byPerson.get(phone)?.parts || [];
-    const out: string[] = [];
+    const withName = mixedNames(phone);
+    const labels: string[] = [];
+    const names = new Set<string>();
     let skipped = false;
     for (const t of parts) {
-      if (!skipped && t.label === mine) { skipped = true; continue; }
-      out.push(t.label);
+      // 내 줄 하나만 건너뛴다 (같은 칸이 두 줄일 수 있어 이름까지 맞춰 본다)
+      if (!skipped && t.label === mine && t.name === myName) { skipped = true; continue; }
+      labels.push(withName ? `${t.name} ${t.label}` : t.label);
+      if (t.name !== myName) names.add(t.name);
     }
-    return out;
+    return { labels, names: [...names] };
   };
   for (const [stage, list] of byStage) {
     for (const p of list) {
-      p.others = othersFor(p.phone, label(stage, p.volume));
-      p.multi = p.others.length > 0;
+      const o = othersFor(p.phone, label(stage, p.volume), p.name);
+      p.others = o.labels;
+      p.otherNames = o.names;
+      p.multi = o.labels.length > 0;
     }
   }
-  for (const b of banchan) b.others = othersFor(b.phone, banchanLabel(b));
+  for (const b of banchan) {
+    const o = othersFor(b.phone, banchanLabel(b), b.name);
+    b.others = o.labels;
+    b.otherNames = o.names;
+  }
 
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있다
   for (const list of byStage.values()) {
@@ -235,12 +264,21 @@ export function buildCookingSheet(
       }
       return [...m.entries()].map(([name, qty]) => ({ name, qty }));
     })(),
-    multi: [...byPerson.values()]
-      .filter(e => e.parts.length > 1)
-      .map(e => ({
-        name: e.name, parts: e.parts,
-        total: e.parts.reduce((a, t) => a + t.qty, 0),
-      })),
+    // 합쳐 담기 — 같은 번호에 아이가 둘이면(형제) 이름을 나란히 적어야 누구 것인지 보인다
+    multi: [...byPerson.entries()]
+      .filter(([, e]) => e.parts.length > 1)
+      .map(([phone, e]) => {
+        const names = [...new Set(e.parts.map(t => t.name))];
+        return {
+          name: names.join(' · '),
+          mixed: names.length > 1,
+          parts: e.parts.map(t => ({
+            label: names.length > 1 ? `${t.name} ${t.label}` : t.label,
+            qty: t.qty,
+          })),
+          total: e.parts.reduce((a, t) => a + t.qty, 0),
+        };
+      }),
     allergies: orders
       .filter(o => (o.allergies || []).length > 0)
       .map(o => ({ name: dispName.get(o.id) || o.baby_name, items: o.allergies || [] })),
