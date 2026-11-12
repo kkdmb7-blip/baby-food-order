@@ -2,7 +2,7 @@
 //  1) base64 이미지 9장을 public/intro/ 파일로 빼낸다 (244KB를 번들에서 제거)
 //  2) 스마트스토어용으로 뺐던 연락처·주문 동선을 자사몰용으로 되살린다
 //  3) <style> + 본문만 추려 app/intro-html.ts 로 내보낸다
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 
 const SRC = 'C:/Users/차니파파/Downloads/까꿍디미방 이유식 (수정).html';
 const APP = 'C:/Users/차니파파/Desktop/baby-food-order';
@@ -10,7 +10,15 @@ let s = readFileSync(SRC, 'utf8');
 const log = [], fails = [];
 
 // ── 1. 이미지 추출 ──
+// 이미지는 본문에 나오는 순서대로 1,2,3… 번호를 받는다. 그래서 섹션 순서를 바꾸거나
+// 사진을 한 장 끼우면 번호가 밀리고, 확장자까지 달라지면(20.jpg → 20.webp) 옛 파일이
+// 아무도 안 쓰는 채로 남는다. 실제로 6개 338KB 가 그렇게 배포되고 있었다.
+// 매번 비우고 새로 쓴다 — 참조와 파일이 늘 1:1 이 된다.
 mkdirSync(`${APP}/public/intro`, { recursive: true });
+let wiped = 0;
+for (const f of readdirSync(`${APP}/public/intro`)) {
+  rmSync(`${APP}/public/intro/${f}`); wiped++;
+}
 const EXT = { jpeg: 'jpg', jpg: 'jpg', png: 'png', webp: 'webp' };
 let n = 0, saved = 0;
 s = s.replace(/data:image\/(\w+);base64,([A-Za-z0-9+/=]+)/g, (_, type, b64) => {
@@ -21,7 +29,7 @@ s = s.replace(/data:image\/(\w+);base64,([A-Za-z0-9+/=]+)/g, (_, type, b64) => {
   saved += buf.length;
   return `/intro/${n}.${ext}`;
 });
-log.push(`이미지 ${n}장 추출 → public/intro/ (${Math.round(saved / 1024)}KB)`);
+log.push(`public/intro 비움 ${wiped}개 → 이미지 ${n}장 추출 (${Math.round(saved / 1024)}KB)`);
 
 // ── 2. 자사몰용 복구 ──
 const edits = [
