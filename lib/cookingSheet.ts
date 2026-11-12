@@ -30,13 +30,20 @@ export const SMALL_VOLUME: Record<string, number> = Object.fromEntries(
   닭육수·채소상탕(육수), 양파. 조리실에서는 그게 아니라 '오늘 뭐가 다른지' 만 보면 된다.
   그래서 항상 들어가는 것은 지우고 남는 재료만 적는다.
 */
-const ALWAYS_IN = /^(한우|소고기|쇠고기|한우안심|닭|닭고기|닭안심|닭가슴살|닭육수|육수|채소상탕|상탕|채수|채소육수|양파|물|쌀|쌀가루)$/;
+const ALWAYS_IN = /^(한우|소고기|쇠고기|한우안심|닭|닭고기|닭안심|닭가슴살|채소상탕|상탕|채수|양파|물|쌀|쌀가루)$/;
 
-export function shortIngredients(raw: string): string {
+/**
+ * 재료 목록에서 '오늘 뭐가 다른지' 만 남긴다.
+ *  - 늘 들어가는 것(한우·닭·양파·채소상탕·쌀)과 육수 전부(한우육수·닭육수·소고기육수…)는 뺀다
+ *  - 메뉴 이름에 이미 있는 재료도 뺀다 — '한우 콜리플라워' 옆에 '콜리플라워' 가 또 붙어
+ *    "콜리플라워가 왜 두 번 적혔어" 가 됐다
+ */
+export function shortIngredients(raw: string, menuName = ''): string {
+  const name = String(menuName || '').replace(/\s+/g, '');
   return String(raw || '')
     .split(/[,·/]|\s+/)
     .map(t => t.replace(/[()]/g, '').trim())
-    .filter(t => t && !ALWAYS_IN.test(t))
+    .filter(t => t && !ALWAYS_IN.test(t) && !t.endsWith('육수') && !(name && name.includes(t)))
     .join(' · ');
 }
 

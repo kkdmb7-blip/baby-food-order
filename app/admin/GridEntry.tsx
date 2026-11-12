@@ -76,13 +76,14 @@ const addDays = (d: string, n: number) =>
 const fullAddr = (a: Addr) => (a.address + (a.addressDetail ? ' ' + a.addressDetail : '')).trim();
 
 /**
- * 팩수 칸 — 숫자를 치거나 화살표로 올리고 내린다.
+ * 팩수 칸 — 숫자를 치거나 양옆 −/+ 로 올리고 내린다.
  * 키보드로 치는 게 가장 빠르지만, 한두 팩 더하거나 빼는 건 마우스가 편하다.
  *
- * ⚠️ 화살표를 입력칸 '옆'에 두었더니 칸마다 14px 쯤을 더 먹었다. 여덟 칸 표는
- *    왼쪽 패널 320px 안에 칸(84) + 메뉴 세 칸 + 합(32) 을 넣는데, 그만큼 넓어지니
- *    표가 패널을 넘겨서 overflow-hidden 에 오른쪽 '합' 칸이 잘려 안 보였다.
- *    그래서 화살표를 칸 '안쪽' 에 겹쳐 둔다 — 칸 폭이 입력칸 폭 그대로가 된다.
+ * 처음엔 ▲▼ 를 입력칸 오른쪽에 세로로 겹쳐 두었다. 작아서 마우스로 누르기 어려웠다.
+ * 사장님: "화살표를 칸 양쪽으로 해서 가로로, 좀 키워서 마우스로 잘 누를 수 있게."
+ * 그래서 [−] 숫자 [+] 모양이다. 단추 하나가 22px 폭에 칸 높이 전부라 누르기 쉽다.
+ * 그만큼 칸이 넓어져서 여덟 칸 표의 왼쪽 패널을 320 → 360px 로 넓혔다
+ * (칸 84 + 메뉴 세 칸 ~78 + 합 32 = ~350).
  */
 function QtyCell({ value, onChange, onEnter, disabled, big }: {
   value: string;
@@ -93,10 +94,13 @@ function QtyCell({ value, onChange, onEnter, disabled, big }: {
 }) {
   const n = Number(value) || 0;
   const step = (d: number) => onChange(d > 0 ? String(Math.min(99, n + 1)) : (n > 1 ? String(n - 1) : ''));
-  const arrow = `block leading-none text-[8px] text-stone-400 hover:text-amber-700
-                 px-[3px] disabled:opacity-30`;
+  const btn = `shrink-0 w-[22px] border border-stone-300 bg-stone-50 text-stone-600 font-black leading-none
+               hover:bg-amber-100 hover:text-amber-800 active:bg-amber-200 disabled:opacity-30
+               ${big ? 'text-base' : 'text-sm'}`;
   return (
-    <div className="relative">
+    <div className="flex items-stretch">
+      <button type="button" onClick={() => step(-1)} disabled={disabled} tabIndex={-1}
+        title="한 팩 내리기" className={`${btn} rounded-l border-r-0`}>−</button>
       <input inputMode="numeric" disabled={disabled} value={value}
         onChange={e => onChange(e.target.value.replace(/\D/g, '').slice(0, 2))}
         onKeyDown={e => {
@@ -105,15 +109,10 @@ function QtyCell({ value, onChange, onEnter, disabled, big }: {
           if (e.key === 'ArrowDown') { e.preventDefault(); step(-1); return; }
           onEnter(e);
         }}
-        // 오른쪽에 화살표가 겹쳐 있으니 그만큼만 비워 둔다 (두 자리 숫자는 그대로 들어간다)
-        className={`w-full rounded border border-stone-300 pl-1 pr-[14px] py-1 text-center
+        className={`flex-1 min-w-0 w-0 border border-stone-300 px-0 py-1 text-center
                     text-sm focus:border-amber-500 focus:outline-none ${big ? 'text-base font-black' : ''}`} />
-      <div className="absolute inset-y-0 right-0 flex flex-col justify-center">
-        <button type="button" onClick={() => step(1)} disabled={disabled} tabIndex={-1}
-          title="한 팩 올리기" className={arrow}>▲</button>
-        <button type="button" onClick={() => step(-1)} disabled={disabled} tabIndex={-1}
-          title="한 팩 내리기" className={arrow}>▼</button>
-      </div>
+      <button type="button" onClick={() => step(1)} disabled={disabled} tabIndex={-1}
+        title="한 팩 올리기" className={`${btn} rounded-r border-l-0`}>+</button>
     </div>
   );
 }
@@ -1104,7 +1103,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
 
           {/* 치는 칸(왼쪽)과 그날 집계(오른쪽)를 나란히 — 입력칸 옆이 비어 있었다 */}
           <div className="flex flex-col sm:flex-row gap-3 items-start">
-            <div className="w-full sm:w-[320px] flex-shrink-0">
+            <div className="w-full sm:w-[360px] flex-shrink-0">
           {/* ② 반찬 접수 — 단계·용량이 없다.
               세트 수를 넣으면 세트 주문, 세트를 0으로 두고 종류별로만 담으면
               낱개 주문(1~5개·개당 6,000원·픽업만)이다. */}

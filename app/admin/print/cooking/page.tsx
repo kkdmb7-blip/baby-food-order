@@ -111,16 +111,16 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
         <PrintBar date={date} kind="cooking" />
       </div>
 
-      {/* 오늘 메뉴 — 늘 들어가는 것(한우.닭.육수.채소상탕.양파)은 빼고 다른 것만 적는다.
-          '기타' 는 이름만으로 아는 자리라 꼬리표를 붙이지 않는다. */}
+      {/* 오늘 메뉴 — 이름 + 이름에 없는 재료만. 늘 들어가는 것(한우·닭·육수·채소상탕·양파)과
+          이름에 이미 있는 재료는 뺀다. 종류 꼬리표('한우'·'닭')도 뺐다 — 이름 첫 글자와 겹쳐
+          "한우 한우 콜리플라워" 로 보였다. */}
       {dayMenus.length > 0 && (
         <div className="mb-1 flex gap-1.5 flex-wrap text-[12px]">
           {dayMenus.map((m, i) => {
-            const extra = shortIngredients(m.ingredients);
+            const extra = shortIngredients(m.ingredients, m.name);
             return (
               <div key={i} className="border border-black px-1.5 py-0.5">
-                {m.type !== '기타' && <span className="font-black">{m.type}</span>}
-                <span className={`font-bold ${m.type !== '기타' ? 'ml-1' : ''}`}>{m.name}</span>
+                <span className="font-bold">{m.name}</span>
                 {extra && <span className="text-stone-600 ml-1">{extra}</span>}
               </div>
             );

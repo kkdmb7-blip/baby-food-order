@@ -117,8 +117,9 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
              ⚠️ 머리글 '한우' 두 글자는 11px 글씨에 좌우 여백 0 이어야 24px 에 들어간다. */}
       <div className="flex gap-2 items-start flex-wrap">
         {sheet.sections.map(sec => (
-          // 모서리를 둥글게 — border-collapse 표는 radius 가 안 먹어서 겉을 감싸 잘라낸다
-          <div key={sec.key} className="rounded-lg overflow-hidden break-inside-avoid">
+          // 겉 상자에 rounded + overflow-hidden 을 줘서 모서리를 둥글게 했었는데, 그 둥근 틀이
+          // 표의 네 모서리 테두리를 잘라냈다 (사장님: "각 표 모서리는 왜 다 안 보여"). 틀을 뺐다.
+          <div key={sec.key} className="break-inside-avoid">
           <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
               <col style={{ width: 78 }} />
@@ -222,7 +223,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         ))}
 
         {sheet.banchan.length > 0 && (
-          <div className="rounded-lg overflow-hidden break-inside-avoid">
+          <div className="break-inside-avoid">
           <table className="table-fixed border-collapse text-[14px] leading-tight">
             <colgroup>
               <col style={{ width: 78 }} />
@@ -277,7 +278,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         {/* 반찬 종류별로 몇 개를 만들지 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다.
             손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다. */}
         {sheet.banchanByItem.length > 0 && (
-          <div className="rounded-lg overflow-hidden break-inside-avoid">
+          <div className="break-inside-avoid">
             <table className="table-fixed border-collapse text-[14px] leading-tight">
               <colgroup><col style={{ width: 170 }} /><col style={{ width: 34 }} /></colgroup>
               <thead>
