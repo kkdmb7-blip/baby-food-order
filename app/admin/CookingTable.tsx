@@ -143,7 +143,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 // 픽업·추가·미지정은 작은 꼬리표로 옆에 붙인다.
                 const nameNode = (
                   <>
-                    {p.name}{p.allergy && <span className="text-red-600">*</span>}
+                    {p.name}
                     {printedAt && p.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}
                     {p.unspec > 0 && <span className="ml-0.5 text-[10px] font-bold text-red-600">미지정{p.unspec}</span>}
                   </>
@@ -317,26 +317,12 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
       {/* '합쳐 담기' 상자는 뺐다 (사장님: "이 칸은 없애도 돼"). 다른 칸에 줄이 더 있다는 건
           비고 '+N' 으로 충분하고, 어느 칸인지는 사장님이 직접 보신다. */}
 
-      {/* 알레르기 — 하루 분량을 한 솥에 만들어서 특정 재료만 뺄 수는 없다.
-          그래서 이 줄은 '빼라' 가 아니라 '이 아이에게 그 재료가 가면 안 된다' 는 표시다.
-          (교차오염 주의 같은 당연한 문구는 뺐다 — 조리실에서 보는 종이다) */}
-      {/* 알레르기·메모는 한 줄에 같이 — 아래쪽 상자마다 줄을 쓰면 A4 를 넘겨 두 장이 된다 */}
-      {(sheet.allergies.length > 0 || sheet.memos.length > 0) && (
+      {/* 알레르기 표시(이름 옆 '*', 아래 '알레르기 주의' 줄)는 뺐다.
+          사장님: "알레르기는 상관없다고, 엄마가 알아서 빼야 한다고. 우린 앞으로 알레르기는 관여 안 해." */}
+      {sheet.memos.length > 0 && (
         <div className="mt-1.5 border-2 border-black px-1.5 py-0.5 text-[11px] leading-snug">
-          {sheet.allergies.length > 0 && (
-            <span className="mr-3">
-              <span className="font-black">알레르기 주의</span>
-              {sheet.allergies.map((a, i) => (
-                <span key={i} className="ml-2 whitespace-nowrap"><span className="font-black text-red-600">{a.name}</span> {a.items.join('·')}</span>
-              ))}
-            </span>
-          )}
-          {sheet.memos.length > 0 && (
-            <span>
-              <span className="font-black">메모</span>
-              {sheet.memos.map((m, i) => <span key={i} className="ml-2">{m.name}: {m.memo}</span>)}
-            </span>
-          )}
+          <span className="font-black">메모</span>
+          {sheet.memos.map((m, i) => <span key={i} className="ml-2">{m.name}: {m.memo}</span>)}
         </div>
       )}
     </>

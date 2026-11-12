@@ -52,7 +52,6 @@ export type PersonRow = {
   volume: number;
   isBig: boolean;
   menus: Record<string, number>;
-  allergy: boolean;
   multi: boolean;      // 같은 사람의 줄이 또 있는지 (포장 시 합쳐야 한다)
   /* 그 사람의 다른 줄들.
      ⚠️ 전에는 이걸 줄마다 통째로 적었다. 한 사람이 세 단계를 시키면 세 줄이 서로를
@@ -89,7 +88,7 @@ export type CookingSheet = {
   /** 낱개 개수 합 (1~5개·픽업) */
   banchanSingleTotal: number;
   // '합쳐 담기' 목록(multi)은 뺐다 — 사장님이 그 칸을 없애자고 하셨다. 줄의 비고 '+N' 만 남는다.
-  allergies: { name: string; items: string[] }[];
+  // 알레르기 목록은 조리표에서 뺐다 — 사장님: "우린 앞으로 알레르기는 관여 안 해, 엄마가 알아서 빼야 한다"
   memos: { name: string; memo: string }[];
 };
 
@@ -162,7 +161,6 @@ export function buildCookingSheet(
         volume: Number(s.volume) || 0,
         isBig: Number(s.volume) === BIG_VOLUME[stage],
         menus,
-        allergy: (o.allergies || []).length > 0,
         multi: false,
         others: [],
         isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
@@ -279,9 +277,6 @@ export function buildCookingSheet(
       }
       return [...m.entries()].map(([name, qty]) => ({ name, qty }));
     })(),
-    allergies: orders
-      .filter(o => (o.allergies || []).length > 0)
-      .map(o => ({ name: dispName.get(o.id) || o.baby_name, items: o.allergies || [] })),
     memos: orders
       .filter(o => o.memo)
       .map(o => ({ name: dispName.get(o.id) || o.baby_name, memo: String(o.memo) })),
