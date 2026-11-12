@@ -305,25 +305,8 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
         )}
       </div>
 
-      {/* 합쳐 담는 사람 — 블록이 나뉘어 있어서, 담을 때는 이 줄대로 한 봉투에 모은다.
-          여기 숫자는 위 블록에 이미 들어 있는 것이다. 조리 수량에 더하면 두 배가 된다. */}
-      {sheet.multi.length > 0 && (
-        /* 실제 PDF 로 재 보니(77명) 이 상자가 97px 이라 A4 를 넘겨 두 장이 됐다.
-           한 줄에 제목과 사람을 같이 흘리고, 글씨를 줄이고, 설명은 한 마디만 남긴다. */
-        <div className="mt-1.5 border-2 border-blue-700 px-1.5 py-0.5 text-[11px] leading-snug">
-          <span className="font-black text-blue-700 mr-2">
-            + 합쳐 담기 {sheet.multi.length}명
-            <span className="ml-1 font-normal text-[10px] text-stone-600">한 봉투로 · 위 수량에 이미 포함</span>
-          </span>
-          {sheet.multi.map((m, i) => (
-            <span key={i} className="inline-block mr-3 whitespace-nowrap">
-              <span className="font-black">{m.name}</span>
-              <span className="ml-0.5 text-stone-700">{m.parts.map(t => `${t.label}×${t.qty}`).join('+')}</span>
-              <span className="ml-0.5 font-black">={m.total}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      {/* '합쳐 담기' 상자는 뺐다 (사장님: "이 칸은 없애도 돼"). 다른 칸에 줄이 더 있다는 건
+          비고 '+N' 으로 충분하고, 어느 칸인지는 사장님이 직접 보신다. */}
 
       {/* 알레르기 — 하루 분량을 한 솥에 만들어서 특정 재료만 뺄 수는 없다.
           그래서 이 줄은 '빼라' 가 아니라 '이 아이에게 그 재료가 가면 안 된다' 는 표시다.

@@ -85,8 +85,7 @@ export type CookingSheet = {
   banchanTotal: number;
   /** 낱개 개수 합 (1~5개·픽업) */
   banchanSingleTotal: number;
-  /** 그날 줄이 둘 이상인 사람(연락처+이름이 같은 줄) — 포장할 때 한 봉투로 합쳐야 한다 */
-  multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
+  // '합쳐 담기' 목록(multi)은 뺐다 — 사장님이 그 칸을 없애자고 하셨다. 줄의 비고 '+N' 만 남는다.
   allergies: { name: string; items: string[] }[];
   memos: { name: string; memo: string }[];
 };
@@ -260,14 +259,6 @@ export function buildCookingSheet(
       }
       return [...m.entries()].map(([name, qty]) => ({ name, qty }));
     })(),
-    // 합쳐 담기 — 한 사람(연락처+이름)의 줄이 둘 이상이면 여기서 한눈에 본다
-    multi: [...byPerson.values()]
-      .filter(e => e.parts.length > 1)
-      .map(e => ({
-        name: e.name,
-        parts: e.parts.map(t => ({ label: t.label, qty: t.qty })),
-        total: e.parts.reduce((a, t) => a + t.qty, 0),
-      })),
     allergies: orders
       .filter(o => (o.allergies || []).length > 0)
       .map(o => ({ name: dispName.get(o.id) || o.baby_name, items: o.allergies || [] })),
