@@ -11,6 +11,7 @@ import GridEntry from './GridEntry';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
+import { defaultArrivalNote } from '@/lib/arrival';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
@@ -121,6 +122,21 @@ export default function AdminShell({
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: next }),
     }).catch(() => {})));
+    router.refresh();
+  }
+
+  // 고른 주문 모두에 기본 도착 안내를 남긴다(배송완료로도 바뀐다). 한 집씩 다른 말은 주문 카드에서.
+  async function bulkArrive() {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    if (!confirm(`${ids.length}건에 도착 안내를 남길까요? (배송완료로도 바뀌어요)`)) return;
+    const results = await Promise.all(ids.map(id => fetch(`/api/orders/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ arrive: true }),
+    }).then(r => r.json()).catch(() => ({ ok: false }))));
+    const failed = results.filter(r => !r.ok).length;
+    setPicked(new Set());
+    if (failed) alert(`${ids.length - failed}건 보냄 · ${failed}건 실패 (취소된 주문이거나 연결 오류)`);
     router.refresh();
   }
 
@@ -367,6 +383,7 @@ export default function AdminShell({
                 <button onClick={() => bulkStatus('준비중')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">준비중</button>
                 <button onClick={() => bulkStatus('배송중')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">배송중</button>
                 <button onClick={() => bulkStatus('배송완료')} className="text-xs px-2.5 py-1 bg-white/15 rounded-lg font-bold">배송완료</button>
+                <button onClick={bulkArrive} className="text-xs px-2.5 py-1 bg-emerald-500/40 rounded-lg font-bold">도착 안내 보내기</button>
                 <button onClick={() => setPicked(new Set())} className="text-xs px-2 py-1 ml-auto opacity-70">선택 해제</button>
               </div>
             )}
@@ -490,6 +507,10 @@ export default function AdminShell({
                   placeholder="메모 남기기 (조리표에도 표시돼요)"
                   className="mt-2 w-full px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs outline-none focus:border-amber-400 bg-stone-50"
                 />
+                {(o.status === '배송중' || o.status === '배송완료') && (
+                  <ArrivalBox order={o} onSent={(note, at) => setOrders(prev => prev.map(x =>
+                    x.id === o.id ? { ...x, status: '배송완료', arrival_note: note, arrived_at: at } : x))} />
+                )}
               </div>
             ))}
 
@@ -991,6 +1012,16 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   const [chargingId, setChargingId] = useState<string | null>(null);
   const [openLedger, setOpenLedger] = useState<string | null>(null);
 
+  // 잔여가 바뀌면 목록·검색결과 둘 다 맞춘다. 0에서 처음 넣은 손님은 아래 선결제 목록에 새로 뜬다.
+  function setBalance(id: string, n: number) {
+    const inList = customers.some(c => c.id === id);
+    const hit = found.find(x => x.id === id);
+    onUpdate(inList
+      ? customers.map(c => c.id === id ? { ...c, prepaid_balance: n } : c)
+      : hit ? [...customers, { ...hit, prepaid_balance: n }] : customers);
+    setFound(prev => prev.map(x => x.id === id ? { ...x, prepaid_balance: n } : x));
+  }
+
   async function charge(id: string, units: typeof PREPAID_UNITS[number]) {
     if (chargingId) return;
     setChargingId(id);
@@ -1002,9 +1033,10 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       });
       const d = await r.json().catch(() => ({}));
       if (d.ok) {
-        onUpdate(customers.map(c => c.id === id ? { ...c, prepaid_balance: d.new_balance } : c));
+        setBalance(id, d.new_balance);
         setMsg(`${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
-        if (openLedger === id) { setOpenLedger(null); setTimeout(() => setOpenLedger(id), 0); }
+        const open = openLedger;
+        if (open === id || open === 'f:' + id) { setOpenLedger(null); setTimeout(() => setOpenLedger(open), 0); }
       } else {
         setMsg(`오류: ${d.error || r.status}`);
       }
@@ -1034,7 +1066,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             <div className="max-h-80 overflow-auto divide-y divide-stone-100 border border-stone-200 rounded-lg">
               {!finding && found.length === 0 && <p className="px-3 py-3 text-sm text-stone-400">그런 손님이 없어요</p>}
               {found.map(c => (
-                <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                <div key={c.id} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     {nameInput(c)}
                     <span className="ml-2 text-xs text-stone-500">{formatPhone(c.phone)}</span>
@@ -1042,7 +1074,25 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     {c.is_regular && <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
                     {c.prepaid_balance > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">잔여 {c.prepaid_balance}</span>}
+                    <button onClick={() => setOpenLedger(openLedger === 'f:' + c.id ? null : 'f:' + c.id)}
+                      className="text-[10px] px-2 py-0.5 border border-stone-200 text-stone-600 rounded-full font-bold">
+                      {openLedger === 'f:' + c.id ? '닫기' : '선결제·주문내역'}
+                    </button>
                   </div>
+                  {/* 검색으로 찾은 손님도 선결제를 넣고 주문 내역을 볼 수 있게 (잔여 0 손님은 아래 목록에 없다) */}
+                  {openLedger === 'f:' + c.id && (
+                    <div className="w-full">
+                      <div className="flex gap-2 mt-2">
+                        {PREPAID_UNITS.map(u => (
+                          <button key={u} onClick={() => charge(c.id, u)} disabled={chargingId === c.id}
+                            className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
+                            +{u}팩
+                          </button>
+                        ))}
+                      </div>
+                      <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1088,10 +1138,60 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 {openLedger === c.id ? '기록 닫기' : '기록 보기'}
               </button>
             </div>
-            {openLedger === c.id && <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} />}
+            {openLedger === c.id && <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} />}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ── 도착 안내 ─────────────────────────────────────────────────────
+// 배송 후 손님에게 남기는 한마디. 손님 앱 '내 주문'에 보이고, 알림을 켠 손님에겐 푸시가 간다.
+// 앱 알림을 켠 손님이 거의 없어서, 같은 문구를 카톡으로 보낼 수 있게 '복사' 단추도 둔다.
+function ArrivalBox({ order, onSent }: { order: Order; onSent: (note: string, at: string) => void }) {
+  const [text, setText] = useState(order.arrival_note || defaultArrivalNote(order.baby_name, (order as any).receive_method));
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const sentAt = order.arrived_at ? new Date(order.arrived_at) : null;
+
+  async function send() {
+    setBusy(true); setInfo(null);
+    try {
+      const r = await fetch(`/api/orders/${order.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arrive: true, arrival_note: text }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { onSent(d.arrival_note, d.arrived_at); setInfo('앱에 남겼어요'); }
+      else setInfo(`못 남겼어요: ${d.error || r.status}`);
+    } catch (e: any) { setInfo(`못 남겼어요: ${e?.message || '네트워크 오류'}`); }
+    setBusy(false);
+  }
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); setInfo('복사했어요 — 카톡에 붙여넣으세요'); }
+    catch { setInfo('복사가 안 돼요 — 글을 직접 골라 복사해 주세요'); }
+  }
+
+  return (
+    <div className="mt-2 border border-emerald-200 bg-emerald-50/60 rounded-lg p-2">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-bold text-emerald-800">도착 안내</span>
+        <span className="text-[10px] text-emerald-700">
+          {sentAt ? `남김 ${sentAt.getMonth() + 1}/${sentAt.getDate()} ${String(sentAt.getHours()).padStart(2, '0')}:${String(sentAt.getMinutes()).padStart(2, '0')}` : '아직 안 남김'}
+        </span>
+      </div>
+      <textarea value={text} onChange={e => setText(e.target.value)} maxLength={200} rows={2}
+        className="w-full px-2 py-1 border border-emerald-200 rounded text-xs bg-white outline-none focus:border-emerald-400 resize-none" />
+      <div className="flex gap-1.5 mt-1">
+        <button onClick={send} disabled={busy || !text.trim()}
+          className="flex-1 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded disabled:opacity-40">
+          {sentAt ? '고쳐서 다시 남기기' : '앱에 남기기'}
+        </button>
+        <button onClick={copy}
+          className="px-3 py-1 text-[11px] font-bold text-stone-600 bg-white border border-stone-200 rounded">카톡용 복사</button>
+      </div>
+      {info && <p className="mt-1 text-[10px] text-emerald-700">{info}</p>}
     </div>
   );
 }
@@ -1101,55 +1201,146 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
 // 마지막 줄의 '남은 팩' 이 위의 잔여와 같아야 정상 — 다르면 빨갛게 알린다.
 type LedgerRow = { created_at: string; kind: string; packs: number; balance_after: number; amount_won: number | null; memo: string | null };
 
-function PrepaidLedger({ customerId, balance }: { customerId: string; balance: number }) {
+type HistOrder = { id: string; created_at: string; delivery_date: string; stage: string; volume: number; total_qty: number; total_price: number; status: string; order_type: string; receive_method: string | null };
+
+function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string; balance: number; onBalance: (n: number) => void }) {
   const [rows, setRows] = useState<LedgerRow[] | null>(null);
+  const [orders, setOrders] = useState<HistOrder[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [setTo, setSetTo] = useState('');
+  const [why, setWhy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+
   useEffect(() => {
     let alive = true;
     fetch(`/api/customers/${customerId}/prepaid`).then(r => r.json())
-      .then(d => { if (!alive) return; if (d.ok) setRows(d.rows); else setErr(d.error || '불러오지 못했어요'); })
+      .then(d => {
+        if (!alive) return;
+        if (d.ok) { setRows(d.rows); setOrders(d.orders || []); setErr(null); }
+        else setErr(d.error || '불러오지 못했어요');
+      })
       .catch(e => { if (alive) setErr(e?.message || '불러오지 못했어요'); });
     return () => { alive = false; };
-  }, [customerId]);
+  }, [customerId, reload]);
 
-  if (err) return <p className="mt-3 text-xs text-red-600">기록을 불러오지 못했어요: {err}</p>;
-  if (!rows) return <p className="mt-3 text-xs text-stone-400">기록 불러오는 중…</p>;
-  if (rows.length === 0) return <p className="mt-3 text-xs text-stone-400">아직 기록이 없어요</p>;
-  const mismatch = rows[0].balance_after !== balance;
+  // 잔여를 직접 고친다 — 장부에 '수정' 으로, 사유와 함께 남는다
+  async function applySet() {
+    const n = Number(setTo);
+    if (setTo.trim() === '' || !Number.isInteger(n) || n < 0) { setInfo('0 이상 숫자로 적어주세요'); return; }
+    if (n === balance) { setInfo('지금 잔여와 같아요'); return; }
+    if (!confirm(`잔여를 ${balance}팩 → ${n}팩으로 고칠까요?`)) return;
+    setBusy(true); setInfo(null);
+    try {
+      const r = await fetch(`/api/customers/${customerId}/prepaid`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ set: n, memo: why }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { onBalance(d.new_balance); setSetTo(''); setWhy(''); setInfo(`${d.new_balance}팩으로 고쳤어요`); setReload(x => x + 1); }
+      else setInfo(`못 고쳤어요: ${d.error || r.status}`);
+    } catch (e: any) { setInfo(`못 고쳤어요: ${e?.message || '네트워크 오류'}`); }
+    setBusy(false);
+  }
+
   const fmt = (s: string) => {
     const d = new Date(s);
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
+  const mismatch = !!rows && rows.length > 0 && rows[0].balance_after !== balance;
+  const live = orders.filter(o => o.status !== '취소');
+
   return (
-    <div className="mt-3 border-t border-stone-100 pt-2">
-      {mismatch && (
-        <p className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-          기록상 남은 팩({rows[0].balance_after})과 잔여({balance})가 달라요 — 확인이 필요해요
-        </p>
+    <div className="mt-3 border-t border-stone-100 pt-2 space-y-3">
+      {/* 잔여 직접 고치기 */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs font-bold text-stone-600">잔여 고치기</span>
+        <input value={setTo} onChange={e => setSetTo(e.target.value.replace(/\D/g, '').slice(0, 3))}
+          inputMode="numeric" placeholder={String(balance)}
+          className="w-14 px-2 py-1 border border-stone-300 rounded text-xs text-right outline-none focus:border-amber-400" />
+        <span className="text-xs text-stone-500">팩</span>
+        <input value={why} onChange={e => setWhy(e.target.value)} maxLength={100} placeholder="사유 (예: 카톡 선결제 옮김)"
+          className="flex-1 min-w-[120px] px-2 py-1 border border-stone-300 rounded text-xs outline-none focus:border-amber-400" />
+        <button onClick={applySet} disabled={busy}
+          className="px-3 py-1 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs font-bold disabled:opacity-40">저장</button>
+      </div>
+      {info && <p className="text-[11px] text-amber-700">{info}</p>}
+
+      {err && <p className="text-xs text-red-600">기록을 불러오지 못했어요: {err}</p>}
+      {!err && !rows && <p className="text-xs text-stone-400">기록 불러오는 중…</p>}
+
+      {rows && (
+        <div>
+          <p className="text-xs font-bold text-stone-600 mb-1">선결제 기록</p>
+          {mismatch && (
+            <p className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+              기록상 남은 팩({rows[0].balance_after})과 잔여({balance})가 달라요 — 확인이 필요해요
+            </p>
+          )}
+          {rows.length === 0 ? <p className="text-xs text-stone-400">아직 기록이 없어요</p> : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-stone-400">
+                  <th className="text-left font-normal py-1">날짜</th>
+                  <th className="text-left font-normal">구분</th>
+                  <th className="text-right font-normal">팩</th>
+                  <th className="text-right font-normal">남은 팩</th>
+                  <th className="text-left font-normal pl-3">내용</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t border-stone-50">
+                    <td className="py-1 text-stone-500 whitespace-nowrap">{fmt(r.created_at)}</td>
+                    <td className="text-stone-700">{r.kind}</td>
+                    <td className={`text-right font-bold ${r.packs > 0 ? 'text-emerald-700' : 'text-stone-700'}`}>{r.packs > 0 ? `+${r.packs}` : r.packs}</td>
+                    <td className="text-right text-stone-700">{r.balance_after}</td>
+                    <td className="pl-3 text-stone-500">{r.memo}{r.amount_won ? ` · ${r.amount_won.toLocaleString()}원` : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {rows.length >= 100 && <p className="mt-1 text-[11px] text-stone-400">최근 100줄만 보여드려요</p>}
+        </div>
       )}
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-stone-400">
-            <th className="text-left font-normal py-1">날짜</th>
-            <th className="text-left font-normal">구분</th>
-            <th className="text-right font-normal">팩</th>
-            <th className="text-right font-normal">남은 팩</th>
-            <th className="text-left font-normal pl-3">내용</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-stone-50">
-              <td className="py-1 text-stone-500 whitespace-nowrap">{fmt(r.created_at)}</td>
-              <td className="text-stone-700">{r.kind}</td>
-              <td className={`text-right font-bold ${r.packs > 0 ? 'text-emerald-700' : 'text-stone-700'}`}>{r.packs > 0 ? `+${r.packs}` : r.packs}</td>
-              <td className="text-right text-stone-700">{r.balance_after}</td>
-              <td className="pl-3 text-stone-500">{r.memo}{r.amount_won ? ` · ${r.amount_won.toLocaleString()}원` : ''}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length >= 100 && <p className="mt-1 text-[11px] text-stone-400">최근 100줄만 보여드려요</p>}
+
+      {rows && (
+        <div>
+          <p className="text-xs font-bold text-stone-600 mb-1">
+            주문 내역 {live.length}건{orders.length > live.length ? ` (취소 ${orders.length - live.length}건 별도)` : ''}
+          </p>
+          {orders.length === 0 ? <p className="text-xs text-stone-400">주문이 없어요</p> : (
+            <div className="max-h-64 overflow-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-stone-400">
+                    <th className="text-left font-normal py-1">조리일</th>
+                    <th className="text-left font-normal">구성</th>
+                    <th className="text-right font-normal">팩</th>
+                    <th className="text-left font-normal pl-3">구분</th>
+                    <th className="text-left font-normal">상태</th>
+                    <th className="text-left font-normal">주문한 날</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map(o => (
+                    <tr key={o.id} className={`border-t border-stone-50 ${o.status === '취소' ? 'text-stone-300 line-through' : 'text-stone-700'}`}>
+                      <td className="py-1 whitespace-nowrap font-bold">{o.delivery_date.slice(5).replace('-', '/')}</td>
+                      <td className="whitespace-nowrap">{o.stage?.replace('단계', '')}{o.volume ? ` ${o.volume}` : ''}</td>
+                      <td className="text-right">{o.total_qty}</td>
+                      <td className="pl-3 whitespace-nowrap">{o.order_type}{o.receive_method === '픽업' ? '·픽' : ''}</td>
+                      <td className="whitespace-nowrap">{o.status}</td>
+                      <td className="whitespace-nowrap text-stone-400">{fmt(o.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

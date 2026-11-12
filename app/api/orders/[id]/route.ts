@@ -4,6 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { applyCancelReversal } from '@/lib/orderCancel';
 import { orderDates } from '@/lib/orderItems';
 import { sendStatusPush, statusPushText } from '@/lib/push';
+import { defaultArrivalNote } from '@/lib/arrival';
 
 const STATUSES = ['접수', '준비중', '배송중', '배송완료', '취소'];
 
@@ -22,6 +23,25 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     const { error } = await sb.from('baby_food_orders').update({ memo }).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, memo });
+  }
+
+  // 도착 메시지 — 배송 후 사장님이 남기는 한마디. 손님 앱 '내 주문'에 보이고, 알림을 켠 손님에겐 푸시도 간다.
+  // 글을 비워 보내면 기본 문구를 쓴다(여러 건 한꺼번에 보낼 때). 아직 배송완료가 아니면 배송완료로 바꾼다.
+  // 돈이 걸린 상태 변경(취소)과는 무관하므로 아래 상태 변경 로직을 타지 않는다.
+  if (status === undefined && body.arrive === true) {
+    const { data: o } = await sb.from('baby_food_orders')
+      .select('id, status, baby_name, customer_phone, delivery_date, receive_method').eq('id', id).single();
+    if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
+    if (o.status === '취소') return NextResponse.json({ ok: false, error: '취소된 주문이에요' }, { status: 409 });
+    const typed = typeof body.arrival_note === 'string' ? body.arrival_note.trim().slice(0, 200) : '';
+    const note = typed || defaultArrivalNote(o.baby_name, o.receive_method);
+    const arrived_at = new Date().toISOString();
+    const patch: Record<string, any> = { arrival_note: note, arrived_at };
+    if (o.status !== '배송완료') patch.status = '배송완료';
+    const { error } = await sb.from('baby_food_orders').update(patch).eq('id', id).neq('status', '취소');
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    void sendStatusPush(sb, o.customer_phone, `${o.baby_name} 이유식이 도착했어요`, note);
+    return NextResponse.json({ ok: true, arrival_note: note, arrived_at, status: '배송완료' });
   }
 
   // 아기 이름 고치기 — 조리표에 찍히는 이름은 카카오 채널에 저장해 둔 이름과 같아야 한다.

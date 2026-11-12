@@ -182,7 +182,7 @@ export default function OrderPage() {
     setPushStatus(result);
   }
   // ── 배송상태 알림 배너 ──────────────────────────────────────────
-  const [statusAlerts, setStatusAlerts] = useState<{ id: string; status: string; delivery_date: string }[]>([]);
+  const [statusAlerts, setStatusAlerts] = useState<{ id: string; status: string; delivery_date: string; note?: string | null }[]>([]);
   function dismissAlerts() {
     // 현재 상태를 '본 것'으로 기록하고 배너 닫기
     const seen = loadSeenStatus();
@@ -505,12 +505,12 @@ export default function OrderPage() {
         const seen = loadSeenStatus();
         const firstTime = !hasSeenStatusRecord();
         const NOTABLE = ['준비중', '배송중', '배송완료', '취소'];
-        const alerts: { id: string; status: string; delivery_date: string }[] = [];
+        const alerts: { id: string; status: string; delivery_date: string; note?: string | null }[] = [];
         const nextSeen: Record<string, string> = { ...seen };
         for (const o of d.orders) {
           nextSeen[o.id] = o.status;
           if (!firstTime && seen[o.id] !== o.status && NOTABLE.includes(o.status)) {
-            alerts.push({ id: o.id, status: o.status, delivery_date: o.delivery_date });
+            alerts.push({ id: o.id, status: o.status, delivery_date: o.delivery_date, note: o.arrival_note });
           }
         }
         if (firstTime) saveSeenStatus(nextSeen); // 첫 방문은 조용히 기록만
@@ -1158,7 +1158,7 @@ export default function OrderPage() {
                   : { emoji: '❌', text: '주문이 취소됐어요', cls: 'bg-stone-100 border-stone-200 text-stone-600' };
               return (
                 <div key={a.id} className={`rounded-xl border px-4 py-3 text-sm font-bold flex items-center justify-between gap-2 ${info.cls}`}>
-                  <span>{info.emoji} {a.delivery_date} 배송분 — {info.text}</span>
+                  <span>{info.emoji} {a.delivery_date} 배송분 — {info.text}{a.status === '배송완료' && a.note && <span className="block mt-1 font-normal">{a.note}</span>}</span>
                 </div>
               );
             })}
@@ -1779,6 +1779,14 @@ export default function OrderPage() {
                     </div>
                     {o.allergies && o.allergies.length > 0 && (
                       <div className="text-[10px] text-rose-600 mt-1">🚫 {o.allergies.join(', ')}</div>
+                    )}
+                    {/* 배송 후 사장님이 남긴 도착 메시지 */}
+                    {o.arrival_note && o.status !== '취소' && (
+                      <div className="mt-1.5 text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                        <span className="font-bold">도착 안내</span>
+                        {o.arrived_at && <span className="ml-1 text-[10px] text-emerald-600">{new Date(o.arrived_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                        <div>{o.arrival_note}</div>
+                      </div>
                     )}
                     <div className="text-[10px] text-stone-300 mt-1">주문 {new Date(o.created_at).toLocaleDateString('ko-KR')} · {o.id.slice(0, 8)}</div>
                     {/* 정기배송은 "이번 회차만" 손볼 수 있어야 함 — 한 주 쉬거나 수량만 줄이려고

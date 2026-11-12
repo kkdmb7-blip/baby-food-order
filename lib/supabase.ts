@@ -44,6 +44,8 @@ export type Order = {
   status: OrderStatus;
   memo: string | null;
   customer_id: string | null;
+  arrival_note?: string | null;   // 배송 후 사장님이 남긴 도착 메시지 (손님 앱에 보임)
+  arrived_at?: string | null;
   allergies?: string[];
   postal_code?: string | null;
   zone_group?: string | null;

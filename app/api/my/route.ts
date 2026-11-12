@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const { data: orders, error } = await sb
     .from('baby_food_orders')
-    .select('id, created_at, delivery_date, stage, volume, items, total_qty, total_price, status, order_type, allergies, baby_name')
+    .select('id, created_at, delivery_date, stage, volume, items, total_qty, total_price, status, order_type, allergies, baby_name, arrival_note, arrived_at')
     .eq('customer_phone', phone)
     .order('created_at', { ascending: false })
     .limit(20);
