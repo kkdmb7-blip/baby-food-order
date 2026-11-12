@@ -215,7 +215,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
               </tr>
               <tr className="bg-stone-200">
                 <th className="border border-black px-1 py-1 text-[15px]">이 름</th>
-                <th className="border border-black px-0.5 py-1 text-[14px]">세트</th>
+                <th className="border border-black px-0.5 py-1 text-[14px]">수</th>
               </tr>
             </thead>
             <tbody>
@@ -239,13 +239,24 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                         className="w-full text-center hover:text-amber-700 hover:underline">{bn}</button>
                     ) : bn}
                   </td>
-                  <td className="border border-black text-center py-[7px] font-black">{b.qty}</td>
+                  {/* 낱개는 세트가 아니라 개수다 — 담을 때 세트로 착각하면 안 된다 */}
+                  <td className="border border-black text-center py-[7px] font-black">
+                    {b.qty}
+                    {b.single && <span className="block text-[11px] font-bold text-amber-700 leading-none">낱개</span>}
+                  </td>
                 </tr>
                 );
               })}
               <tr className="bg-stone-100">
-                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">세트</td>
-                <td className="border-2 border-black text-center py-1.5 font-black">{sheet.banchanTotal}</td>
+                <td className="border-2 border-black px-2 py-1.5 text-right font-black text-[13px]">
+                  세트{sheet.banchanSingleTotal > 0 && <span className="text-amber-700"> · 낱개</span>}
+                </td>
+                <td className="border-2 border-black text-center py-1.5 font-black">
+                  {sheet.banchanTotal}
+                  {sheet.banchanSingleTotal > 0 && (
+                    <span className="block text-[12px] text-amber-700 leading-none">{sheet.banchanSingleTotal}개</span>
+                  )}
+                </td>
               </tr>
             </tbody>
           </table>

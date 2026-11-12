@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
-import { supabaseService, STAGES, STAGE_OPTIONS, MENU_TYPES, menuLabel, type Order } from '@/lib/supabase';
+import {
+  supabaseService, STAGES, STAGE_OPTIONS, MENU_TYPES, menuLabel,
+  isBanchanStage, isBanchanSingle, type Order,
+} from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
 import { orderDates, slicesOn, shiftDate } from '@/lib/orderItems';
 import PrintAuto from '../PrintAuto';
@@ -52,12 +55,15 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
   }
 
   let banchanQty = 0;
+  let banchanSingleQty = 0;
   let banchanPeople = 0;
   const peopleSet = new Set<string>();
 
   for (const o of orders) {
     for (const sl of slicesOn(o as any, date)) {
-      if (sl.stage === '반찬세트') { banchanQty += sl.qty; banchanPeople++; continue; }
+      // 낱개(개수)와 세트(세트 수)는 단위가 달라 따로 센다
+      if (isBanchanSingle(sl.stage)) { banchanSingleQty += sl.qty; banchanPeople++; continue; }
+      if (isBanchanStage(sl.stage)) { banchanQty += sl.qty; banchanPeople++; continue; }
       const stage = String(sl.stage || '');
       if (!STAGES.includes(stage as any)) continue;
       const cell = grid.get(key(stage, Number(sl.volume)));
@@ -74,7 +80,7 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
   let orphan = 0;
   for (const o of orders) {
     for (const sl of slicesOn(o as any, date)) {
-      if (sl.stage === '반찬세트') continue;
+      if (isBanchanStage(sl.stage)) continue;
       const stage = String(sl.stage || '');
       if (!STAGES.includes(stage as any) || !grid.get(key(stage, Number(sl.volume)))) orphan += sl.qty;
     }
@@ -108,7 +114,11 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="" width={38} height={38} className="w-[38px] h-[38px] object-contain self-center" />
           <span className="text-2xl font-black">담는 수량 {date} ({dow})</span>
-          <span className="text-[15px] font-bold">{peopleSet.size}명 · {grand}팩{banchanQty > 0 && ` · 반찬 ${banchanQty}`}</span>
+          <span className="text-[15px] font-bold">
+            {peopleSet.size}명 · {grand}팩
+            {banchanQty > 0 && ` · 반찬 ${banchanQty}세트`}
+            {banchanSingleQty > 0 && ` · 낱개 ${banchanSingleQty}개`}
+          </span>
           <span className="text-[13px] text-stone-500"><span className="text-red-600 font-bold">빨강=큰용량</span></span>
         </div>
         <PrintBar date={date} kind="tally" />
@@ -166,9 +176,10 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
         </tbody>
       </table>
 
-      {banchanQty > 0 && (
+      {(banchanQty > 0 || banchanSingleQty > 0) && (
         <table className="w-full border-collapse text-[20px] mt-4">
           <tbody>
+            {banchanQty > 0 && (
             <tr>
               <td className="border-2 border-black px-3 py-2 text-[17px] font-black bg-stone-100">
                 유아식(반찬) 세트
@@ -176,6 +187,17 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
               </td>
               <td className="border-2 border-black text-center py-2 font-black w-[14%]">{banchanQty}</td>
             </tr>
+            )}
+            {/* 낱개는 픽업만 나간다 — 배송차에 실으면 안 되니 따로 적는다 */}
+            {banchanSingleQty > 0 && (
+            <tr>
+              <td className="border-2 border-black px-3 py-2 text-[17px] font-black bg-amber-50">
+                유아식(반찬) 낱개
+                <span className="ml-2 text-[12px] font-normal text-amber-700">픽업</span>
+              </td>
+              <td className="border-2 border-black text-center py-2 font-black w-[14%]">{banchanSingleQty}개</td>
+            </tr>
+            )}
           </tbody>
         </table>
       )}
@@ -190,7 +212,7 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
           ⚠ 표에 못 넣은 {orphan}팩이 있습니다 — 그 단계에 없는 용량으로 들어온 주문입니다. 조리표를 확인하세요.
         </p>
       )}
-      {grand === 0 && banchanQty === 0 && (
+      {grand === 0 && banchanQty === 0 && banchanSingleQty === 0 && (
         <p className="mt-6 text-center text-[16px] text-stone-400">{date}에 담을 것이 없습니다.</p>
       )}
     </div>

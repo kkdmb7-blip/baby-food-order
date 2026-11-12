@@ -642,7 +642,9 @@ function CookingSheet({ orders, today, customers, onChanged }: {
             조리 {Number(today.slice(5, 7))}/{Number(today.slice(8, 10))}({DOW_KO[new Date(today + 'T00:00:00Z').getUTCDay()]})
           </span>
           <span className="font-bold text-stone-700">
-            {sheet.people}명 · {sheet.totalPacks}팩{sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}`}
+            {sheet.people}명 · {sheet.totalPacks}팩
+            {sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}세트`}
+            {sheet.banchanSingleTotal > 0 && ` · 낱개 ${sheet.banchanSingleTotal}개`}
           </span>
           {MENU_TYPES.map(m => (
             <span key={m} className="text-stone-600">{menuLabel(m)} <strong>{sheet.menuTotals[m]}</strong></span>

@@ -1,4 +1,4 @@
-import { STAGES, STAGE_OPTIONS, MENU_TYPES } from './supabase';
+import { STAGES, STAGE_OPTIONS, MENU_TYPES, isBanchanStage, isBanchanSingle } from './supabase';
 import { slicesOn, disambiguateNames } from './orderItems';
 
 /*
@@ -72,10 +72,14 @@ export type CookingSheet = {
   menuTotals: Record<string, number>;
   unspecTotal: number;
   sections: Section[];
-  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number> }[];
+  /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
+  banchan: { name: string; qty: number; phone: string; others: string[]; menus: Record<string, number>; single?: boolean }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
+  /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
   banchanTotal: number;
+  /** 낱개 개수 합 (1~5개·픽업) */
+  banchanSingleTotal: number;
   /** 그날 줄이 둘 이상인 사람 — 포장할 때 한 봉투로 합쳐야 한다 */
   multi: { name: string; parts: { label: string; qty: number }[]; total: number }[];
   allergies: { name: string; items: string[] }[];
@@ -104,8 +108,12 @@ export function buildCookingSheet(
 
   for (const o of orders) {
     for (const s of slicesOn(o as any, date)) {
-      if (s.stage === '반찬세트') {
-        banchan.push({ name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [], menus: s.menus || {} });
+      // 낱개(1~5개·픽업)도 만들어야 하는 반찬이다. 세트만 잡으면 조리표에서 통째로 빠진다.
+      if (isBanchanStage(s.stage)) {
+        banchan.push({
+          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
+          menus: s.menus || {}, single: isBanchanSingle(s.stage),
+        });
         continue;
       }
       const stage = String(s.stage || '');
@@ -154,7 +162,9 @@ export function buildCookingSheet(
         MENU_TYPES.reduce((a, m) => a + p.menus[m], 0) + p.unspec);
     }
   }
-  for (const b of banchan) addPart(b.phone, b.name, '반찬 세트', b.qty);
+  // 낱개는 '세트 N개' 가 아니라 '반찬 N개' 다 — 합쳐 담을 때 숫자를 헷갈리면 안 된다
+  const banchanLabel = (b: { single?: boolean }) => (b.single ? '반찬 낱개' : '반찬 세트');
+  for (const b of banchan) addPart(b.phone, b.name, banchanLabel(b), b.qty);
 
   // 각 줄에 "그 사람의 다른 줄"을 적어준다 — 어디에 또 있는지 알면 찾아다니지 않는다
   const othersFor = (phone: string, mine: string) => {
@@ -173,7 +183,7 @@ export function buildCookingSheet(
       p.multi = p.others.length > 0;
     }
   }
-  for (const b of banchan) b.others = othersFor(b.phone, '반찬 세트');
+  for (const b of banchan) b.others = othersFor(b.phone, banchanLabel(b));
 
   // 같은 용량끼리 붙여두면 240g 먼저 쭉, 그다음 310g 쭉 챙길 수 있다
   for (const list of byStage.values()) {
@@ -214,7 +224,9 @@ export function buildCookingSheet(
     unspecTotal,
     sections,
     banchan,
-    banchanTotal: banchan.reduce((s, b) => s + b.qty, 0),
+    // 세트 수와 낱개 개수는 단위가 달라 한 숫자로 더하면 뜻이 없어진다
+    banchanTotal: banchan.filter(b => !b.single).reduce((s, b) => s + b.qty, 0),
+    banchanSingleTotal: banchan.filter(b => b.single).reduce((s, b) => s + b.qty, 0),
     banchanByItem: (() => {
       // 손님마다 종류별 개수가 다르다(엑셀 '주문변경' 시트). 종류별로 모아야 몇 개를 만들지 안다.
       const m = new Map<string, number>();

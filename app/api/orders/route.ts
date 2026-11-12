@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   supabaseService, STAGES, MIN_ORDER_QTY, getPrice, getBanchanPrice, tierOf,
   hanwooAllowed, othersNeededForHanwoo, HANWOO_MAX_RATIO, shippingFeeFor,
-  banchanLineTotal, banchanItemCount,
+  banchanLineTotal, banchanItemCount, isBanchanStage, isBanchanSingle,
+  BANCHAN_SINGLE_MAX, BANCHAN_SET_SIZE,
   type StageType, type PriceTier,
 } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
     if (isMulti) {
       for (const d of items) {
         for (const s of (d.sets || [])) {
-          if (s.simple || s.stage === '반찬세트') continue; // 간단주문·반찬은 메뉴 구성이 없음
+          if (s.simple || isBanchanStage(s.stage)) continue; // 간단주문·반찬은 이유식 메뉴 구성이 없음
           const menuSum = (s.menus || []).reduce((a: number, m: any) => a + (Number(m.qty) || 0), 0);
           if (menuSum !== (Number(s.qty) || 0)) {
             void notifyError('order-qty-mismatch', new Error('세트 수량 불일치'), {
@@ -126,8 +127,8 @@ export async function POST(req: NextRequest) {
           const sets = d.sets || [];
           const err = check(
             String(d.delivery_date),
-            sets.some((s: any) => s.stage !== '반찬세트'),
-            sets.some((s: any) => s.stage === '반찬세트'),
+            sets.some((s: any) => !isBanchanStage(s.stage)),
+            sets.some((s: any) => isBanchanStage(s.stage)),
           );
           if (err && !adminManual) return bad(err);
         }
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
       for (const d of items) {
         let hanwoo = 0, others = 0;
         for (const s of (d.sets || [])) {
-          if (s.stage === '반찬세트') continue; // 반찬은 이유식 메뉴 구성이 없음
+          if (isBanchanStage(s.stage)) continue; // 반찬은 이유식 메뉴 구성이 없음
           for (const m of (s.menus || [])) {
             const q = Number(m?.qty) || 0;
             if (m?.menu === '한우') hanwoo += q; else others += q;
@@ -152,6 +153,25 @@ export async function POST(req: NextRequest) {
         if (!adminManual && !hanwooAllowed(hanwoo, others)) {
           const need = othersNeededForHanwoo(hanwoo, others);
           return bad(`${d.delivery_date} 한우 ${hanwoo}팩 / 나머지 ${others}팩 — 한우는 나머지 메뉴의 ${HANWOO_MAX_RATIO}배까지만 가능해요. 닭이나 기타를 ${need}팩 더 담아주세요.`);
+        }
+      }
+    }
+
+    /* 반찬 낱개(1~5개)는 픽업만 — 사장님 확인(2026-11-12):
+         "반찬은 세트(6개) 이상만 배송이 가능해 1-5개까지는 픽업가능하고 개당 6000원"
+       값은 banchanLineTotal 이 개당 6,000원으로 매긴다. 여기서는 받을 수 있는 주문인지만 본다.
+       관리자가 직접 넣는 것도 막는다 — 배송을 못 나가는 건 사장님이 치셔도 마찬가지다. */
+    if (Array.isArray(items)) {
+      for (const d of items) {
+        for (const s of (d?.sets || [])) {
+          if (!isBanchanSingle(s?.stage)) continue;
+          const n = Number(s?.qty) || 0;
+          if (n > BANCHAN_SINGLE_MAX) {
+            return bad(`반찬 낱개는 ${BANCHAN_SINGLE_MAX}개까지예요. ${BANCHAN_SET_SIZE}개부터는 세트로 넣어주세요.`);
+          }
+          if (receive_method !== '픽업') {
+            return bad(`반찬 ${n}개 — 배송은 세트(${BANCHAN_SET_SIZE}개)부터예요. ${n}개는 픽업으로 받으실 수 있어요.`);
+          }
         }
       }
     }
@@ -216,10 +236,10 @@ export async function POST(req: NextRequest) {
     if (isMulti) {
       total_price = items.reduce((sum: number, d: any) =>
         sum + (d.sets || []).reduce((s2: number, s: any) => {
-          // 반찬은 여섯 칸이 세트 값에 들어 있고 일곱째부터 개당 5,000원이다.
-          // 종류별 개수는 sets[].menus 에 [{menu, qty}] 로 들어온다.
-          if (s.stage === '반찬세트') {
-            return s2 + banchanLineTotal(serverTier, s.qty || 0, banchanItemCount(s.menus));
+          // 반찬은 세트(여섯 칸, 일곱째부터 개당 5,000원)와 낱개(개당 6,000원·픽업만)가
+          // 단가 체계가 다르다. 종류별 개수는 sets[].menus 에 [{menu, qty}] 로 들어온다.
+          if (isBanchanStage(s.stage)) {
+            return s2 + banchanLineTotal(serverTier, s.stage, s.qty || 0, banchanItemCount(s.menus));
           }
           return s2 + (getPrice(s.stage as StageType, s.volume, serverTier) || 0) * (s.qty || 0);
         }, 0), 0);

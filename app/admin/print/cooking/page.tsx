@@ -76,7 +76,9 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
             {canFilterNew && <span className="ml-1.5 text-red-600">추가분</span>}
           </span>
           <span className="font-bold">
-            {sheet.people}명 · {sheet.totalPacks}팩{sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}`}
+            {sheet.people}명 · {sheet.totalPacks}팩
+            {sheet.banchanTotal > 0 && ` · 반찬 ${sheet.banchanTotal}세트`}
+            {sheet.banchanSingleTotal > 0 && ` · 낱개 ${sheet.banchanSingleTotal}개`}
           </span>
           {canFilterNew && (
             <span className="text-[13px] font-bold">

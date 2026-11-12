@@ -186,13 +186,40 @@ export function getBanchanPrice(tier: PriceTier = '직배송'): number {
   return BANCHAN_PRICE_BY_TIER[tier];
 }
 
-// 세트 한 개 = 반찬 5종 + 국 1 = 여섯 칸. 사장님 확인(2026-11-12):
-//   "반찬은 6개 이상 배송 가능하고 그 이상 추가할 때는 개당 5000원으로 가능해"
-// 그래서 세트 값에 여섯 개가 들어 있고, 일곱째부터 개당 5,000원을 더 받는다.
-// 사장님 엑셀('수반찬 주문내역')에 7개인 분이 있었는데, 지금까지는 세트 수로만
-// 값을 매겨서 그 추가분을 못 받고 있었다.
-export const BANCHAN_SET_SIZE = 6;
-export const BANCHAN_EXTRA_PRICE = 5000;
+/*
+  ── 반찬 단가 ────────────────────────────────────────────────
+  사장님 확인 (2026-11-12):
+    "반찬은 6개 이상 배송 가능하고 그 이상 추가할 때는 개당 5000원으로 가능해"
+    "반찬은 세트(6개) 이상만 배송이 가능해 1-5개까지는 픽업가능하고 개당 6000원"
+
+  정리하면 반찬은 두 가지로 팔린다.
+
+    세트  여섯 칸(반찬 5종 + 국 1) = 35,000원(직배송) / 38,000원(기타)
+          일곱째부터 개당 5,000원. 배송 가능.
+    낱개  1~5개. 개당 6,000원. 픽업만.
+
+  낱개가 개당 6,000원이라 5개면 30,000원인데 세트(6개)는 35,000원이다 —
+  개당으로 보면 세트가 싸다(5,833원). 세트 쪽이 묶음 할인인 셈이라 맞는 방향이다.
+
+  사장님 엑셀('수반찬 주문내역')에 7개를 담은 분이 있었는데, 지금까지는 세트 수로만
+  값을 매겨서 그 추가분을 못 받고 있었다.
+*/
+export const BANCHAN_STAGE = '반찬세트';
+export const BANCHAN_SINGLE_STAGE = '반찬낱개';
+export const BANCHAN_SET_SIZE = 6;      // 세트 한 개에 들어가는 칸 수
+export const BANCHAN_EXTRA_PRICE = 5000; // 세트를 넘는 칸 — 개당
+export const BANCHAN_SINGLE_PRICE = 6000; // 낱개 — 개당 (픽업만)
+export const BANCHAN_SINGLE_MAX = 5;     // 낱개는 여기까지. 6개부터는 세트다
+
+/** 반찬 줄인가 — 세트든 낱개든 */
+export function isBanchanStage(stage: any): boolean {
+  return stage === BANCHAN_STAGE || stage === BANCHAN_SINGLE_STAGE;
+}
+
+/** 낱개 줄인가 (픽업만 가능한 줄) */
+export function isBanchanSingle(stage: any): boolean {
+  return stage === BANCHAN_SINGLE_STAGE;
+}
 
 /** 반찬 줄의 종류별 개수 합 — sets[].menus 가 [{menu, qty}] 모양이다 */
 export function banchanItemCount(menus: any): number {
@@ -201,18 +228,23 @@ export function banchanItemCount(menus: any): number {
 }
 
 /**
- * 반찬 주문 한 줄의 값.
- * itemCount 가 없거나 0이면 '세트 수 × 6' 으로 본다 — 종류별 개수를 안 적던
- * 옛 주문(카톡주문·간단주문)에 추가금이 붙어 과다청구되는 것을 막는다.
+ * 반찬 줄 하나의 값.
+ *
+ *   낱개  qty = 개수       → 개수 × 6,000
+ *   세트  qty = 세트 수    → 세트값 × 세트수 + (종류별 합 − 6×세트수) × 5,000
+ *
+ * 세트에서 itemCount 가 없거나 0이면 '세트 수 × 6' 으로 본다 — 종류별 개수를 안 적던
+ * 옛 주문(카톡주문·간단주문·손님 화면)에 추가금이 붙어 과다청구되는 것을 막는다.
  */
 export function banchanLineTotal(
-  tier: PriceTier, setQty: number, itemCount?: number | null,
+  tier: PriceTier, stage: any, qty: number, itemCount?: number | null,
 ): number {
-  const sets = Math.max(0, Math.floor(Number(setQty) || 0));
-  if (!sets) return 0;
-  const included = BANCHAN_SET_SIZE * sets;
+  const n = Math.max(0, Math.floor(Number(qty) || 0));
+  if (!n) return 0;
+  if (isBanchanSingle(stage)) return n * BANCHAN_SINGLE_PRICE;
+  const included = BANCHAN_SET_SIZE * n;
   const items = Number(itemCount) > 0 ? Number(itemCount) : included;
-  return getBanchanPrice(tier) * sets
+  return getBanchanPrice(tier) * n
     + Math.max(0, items - included) * BANCHAN_EXTRA_PRICE;
 }
 

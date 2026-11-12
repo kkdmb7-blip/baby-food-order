@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { formatPhone } from '@/lib/dates';
+import { isBanchanStage, isBanchanSingle } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.RESEND_API_KEY;
@@ -17,8 +18,11 @@ export async function POST(req: NextRequest) {
     ? items.map(d => {
         const sets = (d.sets || []).map((s: any) => {
           const menus = (s.menus || []).filter((m: any) => m.qty > 0).map((m: any) => `${m.menu} ${m.qty}`).join('·');
-          const label = s.stage === '반찬세트' ? '반찬세트' : `${s.stage} ${s.volume}g`;
-          return `${label} ${s.qty}${s.stage === '반찬세트' ? '세트' : '팩'}${menus ? ` (${menus})` : ''}`;
+          // 반찬은 세트(세트 수)와 낱개(개수)로 단위가 다르다
+          const single = isBanchanSingle(s.stage);
+          const label = single ? '반찬낱개' : isBanchanStage(s.stage) ? '반찬세트' : `${s.stage} ${s.volume}g`;
+          const unit = single ? '개' : isBanchanStage(s.stage) ? '세트' : '팩';
+          return `${label} ${s.qty}${unit}${menus ? ` (${menus})` : ''}`;
         }).join(' / ');
         return `  · ${d.delivery_date}: ${sets || '-'} = ${d.date_qty || 0}팩`;
       }).join('\n')

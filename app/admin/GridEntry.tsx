@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  MENU_TYPES, menuLabel, BANCHAN_DOW, tierOf,
-  banchanLineTotal, BANCHAN_SET_SIZE, BANCHAN_EXTRA_PRICE,
+  MENU_TYPES, menuLabel, BANCHAN_DOW, tierOf, banchanLineTotal,
+  BANCHAN_STAGE, BANCHAN_SINGLE_STAGE, BANCHAN_SET_SIZE,
+  BANCHAN_EXTRA_PRICE, BANCHAN_SINGLE_PRICE, BANCHAN_SINGLE_MAX,
   type StageType,
 } from '@/lib/supabase';
 import { SLOTS, slotKey, fitSlot, spreadPacks } from '@/lib/slots';
@@ -600,16 +601,29 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
   const banchanQty = mode === '반찬' ? (Number(banchan) || 0) : 0;
   // 종류별 개수 합 — 기본은 여섯(반찬 5 + 국 1)이고, 바꾸는 손님은 다르다
   const bTotal = bMenu.reduce((a, m) => a + (Number(bQty[m.name]) || 0), 0);
-  const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0) + banchanQty;
-  /* 반찬 값 — 여섯 칸은 세트 값에 들어 있고, 일곱째부터 개당 5,000원이다(사장님 확인).
-     사장님이 종류별 개수를 치시는 자리라 추가분이 생기는 곳은 여기뿐이다.
+  /* 반찬 값 — 사장님 확인(2026-11-12)
+       세트  여섯 칸이 세트 값에 들어 있고 일곱째부터 개당 5,000원. 배송 가능.
+       낱개  1~5개, 개당 6,000원. 픽업만.
+     사장님이 종류별 개수를 치시는 자리라 추가분·낱개가 생기는 곳은 여기뿐이다.
      치는 동안 값이 보여야 더 받아야 하는 걸 놓치지 않는다. */
   const bTier = tierOf(opts.zone || zoneGuess);
+  // 세트를 0으로 두고 종류별로만 담으면 낱개 주문이다
+  const bIsSingle = banchanQty === 0 && bTotal > 0 && bTotal <= BANCHAN_SINGLE_MAX;
+  const bStage = bIsSingle ? BANCHAN_SINGLE_STAGE : BANCHAN_STAGE;
+  // 낱개는 qty 가 개수, 세트는 qty 가 세트 수다
+  const bQtyForPrice = bIsSingle ? bTotal : banchanQty;
   const bIncluded = BANCHAN_SET_SIZE * banchanQty;
-  const bExtra = Math.max(0, bTotal - bIncluded);
-  const bPrice = banchanLineTotal(bTier, banchanQty, bTotal);
+  const bExtra = banchanQty > 0 ? Math.max(0, bTotal - bIncluded) : 0;
+  const bPrice = banchanLineTotal(bTier, bStage, bQtyForPrice, bTotal);
+  // 세트 0 인데 여섯 개 이상 담은 경우 — 낱개로는 못 받는다(세트로 치셔야 한다)
+  const bNeedsSet = banchanQty === 0 && bTotal > BANCHAN_SINGLE_MAX;
+  // 낱개는 배송을 못 나간다. 사장님이 '배송'으로 두면 서버가 거부하므로 미리 막는다
+  const bSingleNeedsPickup = bIsSingle && opts.receive !== '픽업';
+  // 낱개도 받는 주문이다 — 세트 수만 세면 '넣기' 버튼이 안 열린다
+  const currentTotal = usedSlots.reduce((a, s) => a + slotTotal(s.key), 0) + bQtyForPrice;
   const whoOk = hit ? true : (isNew && ncValid);
-  const canConfirm = whoOk && currentTotal > 0 && !busy;
+  const banchanBlocked = bNeedsSet || bSingleNeedsPickup;
+  const canConfirm = whoOk && currentTotal > 0 && !busy && !banchanBlocked;
 
   async function confirm() {
     if (!canConfirm) {
@@ -617,7 +631,13 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
         setErr(isNew
           ? '연락처(10~11자리)·주소·개월수를 넣어주세요'
           : '이름을 쳐서 뜨는 집을 고르거나, 처음 오는 손님이면 "새 손님"을 눌러주세요');
-      } else if (currentTotal === 0) setErr(mode === '반찬' ? '반찬 세트 수를 넣어주세요' : '팩수를 넣어주세요');
+      } else if (bNeedsSet) {
+        setErr(`반찬 ${bTotal}개 — 낱개는 ${BANCHAN_SINGLE_MAX}개까지예요. ${BANCHAN_SET_SIZE}개부터는 세트 수를 넣어주세요`);
+      } else if (bSingleNeedsPickup) {
+        setErr(`반찬 ${bTotal}개는 배송이 안 돼요 — 세트(${BANCHAN_SET_SIZE}개)부터 배송됩니다. 받는 방법을 픽업으로 바꿔주세요`);
+      } else if (currentTotal === 0) {
+        setErr(mode === '반찬' ? '반찬 세트 수나 종류별 개수를 넣어주세요' : '팩수를 넣어주세요');
+      }
       return;
     }
     setErr(null); setInfo(null);
@@ -667,17 +687,19 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
         }],
       };
     });
-    /* 반찬 세트 — 단계·용량이 없고 값은 세트 단위다(단가 체계가 다르다).
-       qty 는 세트 수다 — 서버가 getBanchanPrice × qty 로 값을 매기므로
-       여기에 종류별 개수 합(보통 6)을 넣으면 여섯 배가 된다.
-       종류별 개수는 menus 에 적어 조리·포장에서 쓴다. */
-    if (banchanQty > 0) {
+    /* 반찬 — 단계·용량이 없고 단가 체계가 따로다.
+         세트  qty = 세트 수. 여섯 칸이 세트 값에 들어 있고 일곱째부터 개당 5,000원.
+         낱개  qty = 개수(1~5). 개당 6,000원, 픽업만.
+       종류별 개수는 menus 에 적어 조리·포장에서 쓴다. qty 에 종류별 합을 넣으면
+       세트 주문이 여섯 배가 되므로 단위를 섞지 않는다. */
+    if (bQtyForPrice > 0) {
       const bMenus = bMenu
         .map(m => ({ menu: m.name, qty: Number(bQty[m.name]) || 0 }))
         .filter(m => m.qty > 0);
       jobs.push({
-        slot: BANCHAN_SLOT, menus: {}, total: banchanQty, stage: null, volume: null,
-        sets: [{ stage: '반찬세트', volume: null, simple: true, menus: bMenus, qty: banchanQty }],
+        slot: bIsSingle ? { key: `${BANCHAN_SINGLE_STAGE}|0`, label: '반찬 낱개' } : BANCHAN_SLOT,
+        menus: {}, total: bQtyForPrice, stage: null, volume: null,
+        sets: [{ stage: bStage, volume: null, simple: true, menus: bMenus, qty: bQtyForPrice }],
       });
     }
 
@@ -1076,26 +1098,51 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
           {/* 치는 칸(왼쪽)과 그날 집계(오른쪽)를 나란히 — 입력칸 옆이 비어 있었다 */}
           <div className="flex flex-col sm:flex-row gap-3 items-start">
             <div className="w-full sm:w-[320px] flex-shrink-0">
-          {/* ② 반찬 접수 — 단계·용량·메뉴가 없다. 세트 수만 받는다 */}
+          {/* ② 반찬 접수 — 단계·용량이 없다.
+              세트 수를 넣으면 세트 주문, 세트를 0으로 두고 종류별로만 담으면
+              낱개 주문(1~5개·개당 6,000원·픽업만)이다. */}
           {mode === '반찬' && (
-            <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-3">
+            <div className={`rounded-lg border-2 p-3 ${bIsSingle ? 'border-amber-300 bg-amber-50/50' : 'border-emerald-300 bg-emerald-50/50'}`}>
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-sm font-bold text-emerald-900">세트</span>
                 <div className="w-20">
                   <QtyCell disabled={busy} big value={banchan}
                     onChange={setBanchan} onEnter={onEnterConfirm} />
                 </div>
-                {banchanQty > 0 && (
-                  <span className="text-[11px] font-bold text-emerald-900">
+                {bPrice > 0 && (
+                  <span className={`text-[11px] font-bold ${bIsSingle ? 'text-amber-800' : 'text-emerald-900'}`}>
                     {bPrice.toLocaleString()}원
                     {bExtra > 0 && (
                       <span className="ml-1 font-normal text-amber-700">
                         (세트 {banchanQty} + 추가 {bExtra}개)
                       </span>
                     )}
+                    {bIsSingle && (
+                      <span className="ml-1 font-normal">낱개 {bTotal}개 · 픽업만</span>
+                    )}
                   </span>
                 )}
               </div>
+
+              {/* 세트를 0으로 두면 낱개 주문이다. 받을 수 있는 조건을 바로 알려준다 —
+                  안 그러면 다 치고 '넣기' 를 눌렀을 때 서버가 거부한다. */}
+              {bNeedsSet && (
+                <p className="mb-2 rounded bg-rose-50 border border-rose-200 px-2 py-1 text-[11px] font-bold text-rose-700">
+                  반찬 {bTotal}개 — 낱개는 {BANCHAN_SINGLE_MAX}개까지예요.
+                  {BANCHAN_SET_SIZE}개부터는 위 세트 칸에 세트 수를 넣어주세요.
+                </p>
+              )}
+              {bSingleNeedsPickup && (
+                <p className="mb-2 rounded bg-amber-50 border border-amber-300 px-2 py-1 text-[11px] font-bold text-amber-800">
+                  낱개 {bTotal}개는 배송이 안 돼요 — 세트({BANCHAN_SET_SIZE}개)부터 배송됩니다.
+                  아래 '받는 방법'을 픽업으로 바꿔주세요.
+                </p>
+              )}
+              {bIsSingle && !bSingleNeedsPickup && (
+                <p className="mb-2 rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] font-bold text-amber-800">
+                  낱개 {bTotal}개 · 개당 {BANCHAN_SINGLE_PRICE.toLocaleString()}원 — 픽업으로 받습니다.
+                </p>
+              )}
 
               {/* 여섯 칸 — 반찬 다섯 가지와 국. 대부분 1씩이고, 바꾸는 분만 숫자를 고친다 */}
               {bMenu.length > 0 ? (
@@ -1373,8 +1420,10 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
             {busy ? '넣는 중…'
               : canConfirm
                 ? (mode === '반찬'
-                    ? `확인 — ${hit ? hit.babyName : q.trim()} 반찬 ${banchanQty}세트  ⏎`
+                    ? `확인 — ${hit ? hit.babyName : q.trim()} 반찬 ${bIsSingle ? `낱개 ${bTotal}개` : `${banchanQty}세트`} · ${bPrice.toLocaleString()}원  ⏎`
                     : `확인 — ${hit ? hit.babyName : q.trim()} ${currentTotal}팩 (칸 ${usedSlots.length}개)  ⏎`)
+              : bNeedsSet ? `${BANCHAN_SET_SIZE}개부터는 세트 수를 넣어주세요`
+              : bSingleNeedsPickup ? '낱개는 픽업으로만 받을 수 있어요'
               : isNew ? `연락처·주소·개월수와 ${mode === '반찬' ? '세트 수' : '팩수'}를 넣어주세요`
               : `이름 고르고 ${mode === '반찬' ? '세트 수' : '팩수'}를 넣어주세요`}
           </button>
