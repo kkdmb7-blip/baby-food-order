@@ -1096,7 +1096,7 @@ export default function OrderPage() {
     return (
       <Wrap>
         <div className="text-center mb-6 pt-6">
-          <div className="text-4xl mb-2">🍱</div>
+          <Logo size={72} className="mb-2" />
           <div className="text-xl font-bold text-stone-900 mb-1">{STORE_NAME}</div>
           <div className="text-sm text-stone-500">우리 아기 첫 이유식, 신선하게 집까지</div>
         </div>
@@ -1163,7 +1163,7 @@ export default function OrderPage() {
       return (
         <Wrap>
           <div className="text-center mb-8 pt-4">
-            <div className="text-3xl mb-2">🍱</div>
+            <Logo size={60} className="mb-2" />
             <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
             <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
           </div>
@@ -1228,7 +1228,7 @@ export default function OrderPage() {
     return (
       <Wrap>
         <div className="text-center mb-8 pt-4">
-          <div className="text-3xl mb-2">🍱</div>
+          <Logo size={60} className="mb-2" />
           <div className="text-xl font-bold text-stone-900 mb-1">까꿍 디미방</div>
           <div className="text-sm text-stone-500">신선한 이유식을 집까지</div>
         </div>
@@ -1988,7 +1988,7 @@ export default function OrderPage() {
     return (
       <Wrap>
         <div className="bg-white rounded-2xl p-7 shadow-sm border border-amber-100 text-center">
-          <div className="text-5xl mb-4">🍱</div>
+          <Logo size={80} className="mb-4" />
           <h1 className="text-xl font-bold text-stone-900 mb-2">주문이 접수됐어요!</h1>
           {/* 주문은 항상 "내일 이후" 조리분인데 안내는 "오늘 오후 배송"으로 고정돼 있어서
               실제 배송일과 다른 안내가 나갔음 — 실제 조리일을 그대로 보여준다. */}
@@ -3290,6 +3290,19 @@ function MonthCalendar({
 // ── 공통 컴포넌트 ─────────────────────────────────────────────────
 function Wrap({ children }: { children: React.ReactNode }) {
   return <div className="max-w-md mx-auto px-4 py-6 pb-36 safe-top">{children}</div>;
+}
+/**
+ * 가게 로고. 브랜드 자리(화면 맨 위, 주문 완료)에 쓴다.
+ * 전에는 🍱 이모지였는데, 어느 가게나 쓰는 그림이라 우리 것으로 바꿨다.
+ * 원본 logo.png 는 774x891·395KB 라 손님 화면에 올리기엔 무겁다 — 250x288·60KB 로
+ * 줄인 logo-sm.png 를 쓴다(화면에서 제일 크게 쓰는 곳이 72px이라 2배까지 감당한다).
+ */
+function Logo({ size = 52, className = '' }: { size?: number; className?: string }) {
+  return (
+    <img src="/logo-sm.png" alt="까꿍디미방" width={size} height={size}
+      style={{ width: size, height: 'auto' }}
+      className={`mx-auto object-contain ${className}`} />
+  );
 }
 // 홈 화면에서 앱을 설치(PWA)해서 쓰면 브라우저 주소창이 없어서 /admin으로 갈 방법이 없었음 —
 // 손님에게는 눈에 안 띄되 사장님은 언제든 누를 수 있는 위치(맨 아래)에 조용히 둔다.

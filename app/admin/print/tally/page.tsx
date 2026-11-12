@@ -112,7 +112,7 @@ export default async function TallyPrint({ searchParams }: { searchParams: { dat
       <div className="flex justify-between items-baseline mb-3 border-b-2 border-black pb-1.5">
         <div className="flex items-baseline gap-3 flex-wrap">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="" width={38} height={38} className="w-[38px] h-[38px] object-contain self-center" />
+          <img src="/logo-sm.png" alt="까꿍디미방" width={38} height={38} className="w-[38px] h-[38px] object-contain self-center" />
           <span className="text-2xl font-black">담는 수량 {date} ({dow})</span>
           <span className="text-[15px] font-bold">
             {peopleSet.size}명 · {grand}팩

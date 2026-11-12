@@ -31,8 +31,10 @@ export default function LoginPage() {
   return (
     <div className="max-w-sm mx-auto px-5 py-20">
       <div className="bg-white rounded-2xl p-8 shadow-sm border border-brand-100">
-        <div className="text-[11px] tracking-[0.3em] text-brand-600 font-bold mb-1">ADMIN</div>
-        <h1 className="text-xl font-bold text-stone-900 mb-6">관리자 로그인</h1>
+        <img src="/logo-sm.png" alt="까꿍디미방" width={56} height={64}
+          style={{ width: 56, height: 'auto' }} className="mx-auto object-contain mb-3" />
+        <div className="text-[11px] tracking-[0.3em] text-brand-600 font-bold mb-1 text-center">ADMIN</div>
+        <h1 className="text-xl font-bold text-stone-900 mb-6 text-center">관리자 로그인</h1>
         <form onSubmit={submit}>
           <input
             type="password"

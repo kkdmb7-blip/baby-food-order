@@ -1147,6 +1147,22 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
               {/* 여섯 칸 — 반찬 다섯 가지와 국. 대부분 1씩이고, 바꾸는 분만 숫자를 고친다 */}
               {bMenu.length > 0 ? (
                 <div className="rounded border border-emerald-200 bg-white overflow-hidden">
+                  {/* 메뉴 안에서는 얼마든지 바꿔 담으신다 — 한 종류로 6개도, 2·2·2 도 된다.
+                      칸이 전부 1로 차 있으면 몰아 담을 때 다섯 칸을 지워야 해서
+                      한 번에 비우고 한 번에 1씩 채우는 버튼을 둔다. */}
+                  <div className="flex items-center gap-1 border-b border-emerald-200 bg-emerald-50/60 px-2 py-1">
+                    <span className="text-[10px] text-stone-500 flex-1">종류별로 자유롭게</span>
+                    <button type="button" disabled={busy}
+                      onClick={() => setBQty(Object.fromEntries(bMenu.map(m => [m.name, '1'])))}
+                      className="rounded border border-stone-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-stone-600 hover:bg-stone-50">
+                      1씩
+                    </button>
+                    <button type="button" disabled={busy}
+                      onClick={() => setBQty({})}
+                      className="rounded border border-stone-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-stone-600 hover:bg-stone-50">
+                      비우기
+                    </button>
+                  </div>
                   <table className="w-full text-sm">
                     <tbody>
                       {bMenu.map((m, i) => (
@@ -1177,7 +1193,7 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                           )}
                           {banchanQty > 0 && bTotal > 0 && bTotal < bIncluded && (
                             <span className="ml-1 text-[10px] font-bold text-stone-500">
-                              기본 {bIncluded}
+                              {bIncluded}까지 세트값
                             </span>
                           )}
                         </td>
