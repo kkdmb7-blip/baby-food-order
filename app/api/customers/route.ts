@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     if (digits.length >= 2) conds.push(`phone.ilike.%${digits}%`);
     query = query.or(conds.join(',')).order('baby_name').limit(80);
   } else {
-    query = query.or('prepaid_balance.gt.0,is_regular.eq.true').order('baby_name').limit(1000);
+    query = query.or('prepaid_balance.gt.0,prepaid_banchan.gt.0,is_regular.eq.true').order('baby_name').limit(1000);
   }
 
   const { data, error } = await query;
@@ -67,7 +67,13 @@ export async function PATCH(req: NextRequest) {
   let ordersUpdated = 0;
   let ordersError: string | null = null;
   const phone = String(cur.phone || '').replace(/\D/g, '');
-  if (phone) {
+  if (!phone) {
+    // 번호 없는 손님 — 주문은 customer_id 로 이어져 있다
+    const { data: rows, error: oErr } = await sb
+      .from('baby_food_orders').update({ baby_name }).eq('customer_id', id).select('id');
+    if (oErr) ordersError = oErr.message;
+    else ordersUpdated = rows?.length || 0;
+  } else {
     const { data: rows, error: oErr } = await sb
       .from('baby_food_orders').update({ baby_name })
       .eq('customer_phone', phone).select('id');

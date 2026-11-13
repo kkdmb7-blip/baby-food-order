@@ -1,4 +1,5 @@
 import { STAGES, STAGE_OPTIONS, MENU_TYPES, isBanchanStage, isBanchanSingle } from './supabase';
+import { sortBanchanNames } from './banchanOrder';
 import { slicesOn, disambiguateNames } from './orderItems';
 
 /*
@@ -295,7 +296,8 @@ export function buildCookingSheet(
       for (const b of banchan) for (const [k, v] of Object.entries(b.menus)) {
         if (v) m.set(k, (m.get(k) || 0) + v);
       }
-      return [...m.entries()].map(([name, qty]) => ({ name, qty }));
+      // 손님 메뉴표와 같은 번호 순서로 (lib/banchanOrder) — 국은 맨 뒤
+      return sortBanchanNames([...m.entries()].map(([name, qty]) => ({ name, qty })));
     })(),
     memos: orders
       .filter(o => o.memo)

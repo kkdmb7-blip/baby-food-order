@@ -27,6 +27,7 @@ export async function recordPrepaid(sb: SupabaseClient, e: {
   amountWon?: number | null;
   orderId?: string | null;
   memo?: string | null;
+  item?: '이유식' | '반찬'; // 반찬 선결제는 팩이 아니라 '회'로 센다 (기본 이유식)
 }): Promise<void> {
   if (!e.packs) return;
   try {
@@ -34,6 +35,7 @@ export async function recordPrepaid(sb: SupabaseClient, e: {
       customer_id: e.customerId, phone: e.phone ?? null, baby_name: e.babyName ?? null,
       kind: e.kind, packs: e.packs, balance_after: e.balanceAfter,
       amount_won: e.amountWon ?? null, order_id: e.orderId ?? null, memo: e.memo ?? null,
+      item: e.item || '이유식',
     });
     if (error) throw error;
   } catch (err) {

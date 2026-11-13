@@ -32,6 +32,7 @@ import {
 } from './components';
 import { ALLERGENS, COMMON_KEYS, allergenByKey, matchSeriousAllergens } from '@/lib/allergens';
 import { menuForStage, bannedInMidStage } from '@/lib/midStage';
+import { sortBanchanItems } from '@/lib/banchanOrder';
 import {
   recommendStage, stageGuide, stageTransitionNote,
   loadDiary, setFoodStatus, foodKeysByStatus, testingDays, type Diary, type FoodStatus,
@@ -594,7 +595,8 @@ export default function OrderPage() {
         if (opt.isBanchan) {
           return {
             date: opt.value, label: opt.label, dow: opt.dow, menus: [],
-            banchan: (dayData?.items || []).map((it:any) => ({ name: it.name || '', ingredients: it.ingredients || '' })),
+            // 손님이 받는 메뉴표와 같은 순서 — "1번 2번 3번 두 개" 로 주문하시므로 번호가 같아야 한다
+            banchan: sortBanchanItems(dayData?.items || []).map((it:any) => ({ name: it.name || '', ingredients: it.ingredients || '' })),
             soup: dayData?.soup ? { name: dayData.soup.name || '', ingredients: dayData.soup.ingredients || '' } : undefined
           };
         }
@@ -1494,7 +1496,7 @@ export default function OrderPage() {
                               ))}
                               {day.soup && (
                                 <div className="pt-1 border-t border-emerald-100">
-                                  <span className="font-bold">국. {day.soup.name}</span>
+                                  <span className="font-bold">{day.banchan!.length + 1}. {day.soup.name}</span>
                                   <AllergyBadge ingredients={day.soup.ingredients} allergies={allergies} />
                                 </div>
                               )}

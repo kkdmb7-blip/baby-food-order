@@ -1174,6 +1174,8 @@ export default function GridEntry({ date, orders, onSaved, onDateChange }: {
                       {bMenu.map((m, i) => (
                         <tr key={m.name} className={i > 0 ? 'border-t border-stone-100' : ''}>
                           <td className="pl-2 py-0.5 text-[13px] font-bold text-stone-700">
+                            {/* 번호는 손님이 받는 메뉴표와 같다 — "3번 두 개, 4번 빼고" 로 주문이 온다 */}
+                            <span className="text-stone-400 mr-1">{i + 1}.</span>
                             {i === bMenu.length - 1 && /국|탕/.test(m.name)
                               ? <span className="text-emerald-700">국 · {m.name}</span>
                               : m.name}

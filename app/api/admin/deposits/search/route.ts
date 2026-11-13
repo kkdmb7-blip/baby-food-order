@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     .order('delivery_date').limit(120);
   if (q) {
     const { data: cs } = await sb.from('baby_food_customers').select('phone').contains('payer_names', [q]);
-    const phones = (cs || []).map(c => c.phone);
+    const phones = (cs || []).map(c => c.phone).filter(Boolean); // 번호 없는 손님 카드는 건너뛴다
     query = phones.length
       ? query.or(`baby_name.ilike.%${q}%,customer_phone.in.(${phones.join(',')})`)
       : query.ilike('baby_name', `%${q}%`);

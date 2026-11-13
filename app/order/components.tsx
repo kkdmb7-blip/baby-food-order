@@ -37,6 +37,7 @@ import {
   SYMPTOMS, loadSymptoms, addSymptom, removeSymptom, type SymptomEntry,
   loadSeenStatus, saveSeenStatus, hasSeenStatusRecord,
 } from '@/lib/personalize';
+import { sortBanchanItems } from '@/lib/banchanOrder';
 import { addPhoto, listPhotos, deletePhoto, type PhotoMeta } from '@/lib/album';
 /*
   주문 화면에서 쓰는 큰 조각들 — 정기배송 신청, 달력, 알레르기 등록, 식단일기,
@@ -81,6 +82,12 @@ export function RegularSetup({ phone, babyName, initial, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const isActive = !!initial?.is_regular;
+  // 사장님이 요일마다 단계·용량을 다르게 맞춰 둔 일정(월 후기 230 6팩 / 화 완료기 300 3팩 …).
+  // 이 화면은 단계·용량을 하나만 고르므로, 여기서 저장하면 요일별 설정이 하나로 뭉개진다 — 보여주기만 한다.
+  const slotList: any[] = Array.isArray(sched.slots) ? sched.slots : [];
+  const mixed = isActive && slotList.some((s: any) =>
+    (s.stage && s.stage !== sched.stage) || (s.volume && Number(s.volume) !== Number(sched.volume)));
+  const shortStage = (st: string) => String(st || '').replace('중기1단계', '중기1').replace('중기2단계', '중기2');
 
   // 주소·지역 tier (가격 노출 조건)
   const [postalCode, setPostalCode] = useState(initial?.postal_code || '');
@@ -157,7 +164,21 @@ export function RegularSetup({ phone, babyName, initial, onSaved }: {
         </div>
         <span className="text-stone-400 text-sm">{open ? '∧' : '∨'}</span>
       </button>
-      {open && (
+      {open && mixed && (
+        <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-2">
+          {slotList.map((s: any) => (
+            <div key={s.day} className="flex justify-between text-xs text-stone-700 bg-emerald-50/60 rounded-lg px-3 py-2">
+              <span className="font-bold">{s.day}요일</span>
+              <span>{shortStage(s.stage || sched.stage)} {s.volume || sched.volume}g · {s.qty}팩</span>
+            </div>
+          ))}
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            요일마다 단계·용량을 따로 맞춰 둔 일정이에요. 바꾸실 내용은 카톡으로 알려주시면 반영해 드립니다.
+            한 번만 바꾸실 때는 아래 주문 목록에서 그 회차를 고치시면 돼요.
+          </p>
+        </div>
+      )}
+      {open && !mixed && (
         <div className="px-4 pb-4 border-t border-emerald-50 pt-3 space-y-3">
           <p className="text-[11px] text-stone-500 leading-relaxed">
             매주 원하는 요일·수량을 등록하면 자동으로 주문돼요. 배송지·단계·용량과 요일별 팩 수를 골라주세요.
@@ -351,10 +372,11 @@ export function MonthCalendar({
                   <div className="text-xs font-bold text-violet-700">{day.label}({DOW_KOR[day.dow]}) 메뉴</div>
                   {day.dow === 3 ? (
                     <div className="text-xs text-stone-700 space-y-1">
-                      {(day.data?.items || []).map((it: any, i: number) => (
-                        <div key={i}>🍱 {it.name}<AllergyBadge ingredients={it.ingredients || ''} allergies={allergies} /></div>
+                      {/* 메뉴표와 같은 번호 — 손님이 번호로 주문한다 (lib/banchanOrder) */}
+                      {sortBanchanItems(day.data?.items || []).map((it: any, i: number) => (
+                        <div key={i}><b>{i + 1}.</b> {it.name}<AllergyBadge ingredients={it.ingredients || ''} allergies={allergies} /></div>
                       ))}
-                      {day.data?.soup && <div>🍲 {day.data.soup.name}</div>}
+                      {day.data?.soup && <div><b>{(day.data?.items || []).length + 1}.</b> {day.data.soup.name}</div>}
                     </div>
                   ) : (
                     <div className="space-y-1.5">

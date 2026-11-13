@@ -1,3 +1,4 @@
+import { numberBanchanDay } from './banchanOrder';
 import { supabaseService } from './supabase';
 import { weekMonday, kstToday } from './dates';
 
@@ -65,11 +66,9 @@ function normalizeWeek(monday: string, yusik: any, today: string): WeekMenu | nu
     const soupName = String(d?.soup?.name || '').trim();
     const isBanchan = rawItems.length > 0 || !!soupName;
 
+    // 반찬 날은 메뉴표 인쇄와 같은 순서·번호로 (lib/banchanOrder) — 손님이 번호로 주문한다
     const lines: string[] = isBanchan
-      ? [
-          ...rawItems.map(x => String(x?.name || '').trim()).filter(Boolean),
-          ...(soupName ? [`국 · ${soupName}`] : []),
-        ]
+      ? numberBanchanDay(d).map(x => `${x.no}. ${x.isSoup ? `국 · ${x.name}` : x.name}`)
       : rawMenus.map(x => String(x?.name || '').trim()).filter(Boolean);
 
     if (!lines.length) continue; // 아직 안 짜인 날은 칸을 비워 둔다

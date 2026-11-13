@@ -242,14 +242,15 @@ function DepositRow({ d, orders, onDone }: { d: Dep; orders: Record<string, O>; 
       {linked.length > 0 && <div className="mt-2 space-y-0.5">{linked.map(o => orderLine(o, 'linked'))}</div>}
 
       <div className="mt-2 flex gap-1.5 flex-wrap">
-        {canPick && <button onClick={() => setOpen(v => !v)} className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-amber-50 text-amber-800 font-bold">{open ? '닫기' : '주문 골라 붙이기'}</button>}
+        {/* 자동확인·직접확인한 것도 나중에 다른 아기 주문으로 바꿀 수 있다 — 아기 이름과 다른 집 엄마 이름이 같은 경우가 있다 */}
+        <button onClick={() => setOpen(v => !v)} className="text-[11px] px-2.5 py-1 rounded border border-amber-300 bg-amber-50 text-amber-800 font-bold">{open ? '닫기' : canPick ? '주문 골라 붙이기' : '다른 주문으로 바꾸기'}</button>
         {linked.length > 0 && <button disabled={busy} onClick={() => confirm('이 입금 짝을 풀까요? 주문은 미입금으로 돌아가요') && act({ action: 'unlink' })} className="text-[11px] px-2.5 py-1 rounded border border-stone-300 text-stone-600 font-bold">짝 풀기</button>}
         {d.status !== '무관' && <button disabled={busy} onClick={() => act({ action: 'status', status: '무관' })} className="text-[11px] px-2.5 py-1 rounded border border-stone-200 text-stone-500">손님 돈 아님</button>}
         {d.status !== '선결제' && d.status !== '자동확인' && d.status !== '수동확인' && <button disabled={busy} onClick={() => act({ action: 'status', status: '선결제' })} className="text-[11px] px-2.5 py-1 rounded border border-violet-200 text-violet-700">선결제로 표시</button>}
         {(d.status === '무관' || d.status === '선결제') && d.confirmed_at && <button disabled={busy} onClick={() => act({ action: 'status', status: '모름' })} className="text-[11px] px-2.5 py-1 rounded border border-stone-200 text-stone-500">되돌리기</button>}
       </div>
 
-      {canPick && (sugg.length > 0 || open) && (
+      {((canPick && sugg.length > 0) || open) && (
         <div className="mt-2 border-t border-stone-100 pt-2 space-y-1">
           {sugg.length > 0 && <p className="text-[11px] text-stone-500">아마 이 주문</p>}
           {sugg.map(o => orderLine(o, 'pick'))}

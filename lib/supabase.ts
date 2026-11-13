@@ -23,7 +23,13 @@ export type OrderStatus = '접수' | '준비중' | '배송중' | '배송완료' 
 export type OrderType = '일반' | '정기' | '선결제';
 
 export type OrderItem = { menu: MenuType; qty: number };
-export type RegularSlot = { day: '월' | '화' | '수' | '목' | '금'; qty: number };
+// 요일마다 단계·용량이 다를 수 있다 (월 중기 300 3팩 / 목 후기 230 4팩 …).
+// stage·volume 이 없는 칸은 일정 전체의 stage·volume 을 쓴다 (예전 신청은 전부 그 모양).
+export type RegularSlot = {
+  day: '월' | '화' | '수' | '목' | '금'; qty: number;
+  stage?: StageType; volume?: number;
+  menus?: { menu: string; qty: number }[];
+};
 
 export type Order = {
   id: string;
@@ -69,6 +75,8 @@ export type Customer = {
   // regular_schedule.length / .map()을 쓰다가 아무것도 표시하지 못했음.
   regular_schedule: RegularSchedule | null;
   memo: string | null;
+  prepaid_label?: string | null;  // 어떤 단계·용량으로 산 선결제인지 ('완료기 300g')
+  prepaid_banchan?: number;       // 반찬 선결제 남은 회수 (이유식 팩과 따로 센다)
 };
 
 export type RegularSchedule = {

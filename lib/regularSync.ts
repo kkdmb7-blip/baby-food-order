@@ -69,8 +69,11 @@ export async function syncRegularOrders(
   let created = 0, updated = 0, revived = 0;
 
   for (const c of regulars || []) {
-    const sched = c.regular_schedule as any; // { stage, volume, slots:[{day, qty, menus:[{menu,qty}]}] }
-    if (!sched?.stage || !sched?.volume || !Array.isArray(sched?.slots)) {
+    // { stage, volume, slots:[{day, qty, stage?, volume?, menus:[{menu,qty}]}] }
+    // 요일마다 단계·용량이 다를 수 있다 — 칸에 stage·volume 이 있으면 그것, 없으면 전체 값.
+    const sched = c.regular_schedule as any;
+    const slotsOk = Array.isArray(sched?.slots) && sched.slots.every((s: any) => (s?.stage || sched.stage) && (s?.volume || sched.volume));
+    if (!Array.isArray(sched?.slots) || !slotsOk) {
       skipped.push({ phone: mask(c.phone), reason: '스케줄 정보 없음' });
       continue;
     }
@@ -79,8 +82,6 @@ export async function syncRegularOrders(
       skipped.push({ phone: mask(c.phone), reason: '배송지 미등록' });
       continue;
     }
-    const stage = sched.stage as StageType;
-    const volume = Number(sched.volume);
 
     // baby_food_orders.months는 CHECK (months > 0) — 0을 넣으면 저장이 매번 실패한다.
     const { data: lastOrder } = await sb
@@ -108,15 +109,16 @@ export async function syncRegularOrders(
         tier = '기타'; deliveryMethod = '택배익일배송';
       }
     }
-    const pricePer = getPrice(stage, volume, tier);
-    if (!pricePer) {
-      skipped.push({ phone: mask(c.phone), reason: `가격 없음 (${stage} ${volume}g)` });
-      continue;
-    }
-
     for (const u of upcoming) {
       const slot = sched.slots.find((s: any) => s.day === u.day && Number(s.qty) > 0);
       if (!slot) continue;
+      const stage = (slot.stage || sched.stage) as StageType;
+      const volume = Number(slot.volume || sched.volume);
+      const pricePer = getPrice(stage, volume, tier);
+      if (!pricePer) {
+        skipped.push({ phone: mask(c.phone), reason: `${u.day} 가격 없음 (${stage} ${volume}g)` });
+        continue;
+      }
       // 조리표는 메뉴별 팩수로 찍히므로 menus를 그대로 실어야 함 — 없으면 "메뉴 미지정"이 된다.
       // 수량 기준은 menus 합으로 통일(청구는 하고 조리표엔 안 뜨는 팩이 생기지 않게).
       const menus = Array.isArray(slot.menus)

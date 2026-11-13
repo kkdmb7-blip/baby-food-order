@@ -13,6 +13,7 @@ import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
 import { defaultArrivalNote } from '@/lib/arrival';
+import { sortBanchanNames } from '@/lib/banchanOrder';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
@@ -229,7 +230,10 @@ export default function AdminShell({
           <span className="font-bold text-amber-700">{d.delivery_date}</span>{' '}
           {(d.sets || []).map((s: any, si: number) => (
             <span key={si}>
-              {s.stage} {s.volume}g:[{(s.menus||[]).filter((m:any)=>m.qty>0).map((m:any)=>`${m.menu} ${m.qty}`).join('·')}]{' '}
+              {String(s.stage || '').startsWith('반찬')
+                // 반찬은 손님 메뉴표와 같은 번호 순서로 (lib/banchanOrder)
+                ? <>{s.stage}:[{sortBanchanNames((s.menus||[]).filter((m:any)=>m.qty>0).map((m:any)=>({ ...m, name: m.menu }))).map((m:any)=>`${m.menu} ${m.qty}`).join('·')}]{' '}</>
+                : <>{s.stage} {s.volume}g:[{(s.menus||[]).filter((m:any)=>m.qty>0).map((m:any)=>`${m.menu} ${m.qty}`).join('·')}]{' '}</>}
             </span>
           ))}
           <span className="text-amber-700 font-bold">{d.date_qty}팩</span>
@@ -651,6 +655,11 @@ function CookingSheet({ orders, today, customers, onChanged }: {
             className="px-4 py-2 bg-white border-2 border-stone-400 text-stone-700 rounded-lg text-sm font-bold">
             📋 담는 수량 프린트
           </button>
+          {/* 포장한 봉투에 잘라 붙이는 이름 — 엑셀 '이유식이름' 시트와 같은 크기 */}
+          <button onClick={() => window.open(`/admin/print/names?date=${today}`, '_blank')}
+            className="px-4 py-2 bg-white border-2 border-stone-400 text-stone-700 rounded-lg text-sm font-bold">
+            이름표 프린트
+          </button>
         </div>
 
         {/* 언제 뽑았고 그 뒤로 몇 건이 들어왔는지. 지금까지 이 줄들을 종이에 손으로 적으셨다. */}
@@ -954,7 +963,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   const [msg, setMsg] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
-  const prepaid = customers.filter(c => c.prepaid_balance > 0 || c.is_regular);
+  const prepaid = customers.filter(c => c.prepaid_balance > 0 || (c.prepaid_banchan || 0) > 0 || c.is_regular);
 
   // 손님은 계속 쌓이므로 화면에 다 들고 있지 않는다 — 찾는 건 서버가 한다.
   // (전부 받아다 걸렀더니 1000명 뒤의 손님은 검색해도 안 나왔다)
@@ -1024,13 +1033,15 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   const [openLedger, setOpenLedger] = useState<string | null>(null);
 
   // 잔여가 바뀌면 목록·검색결과 둘 다 맞춘다. 0에서 처음 넣은 손님은 아래 선결제 목록에 새로 뜬다.
-  function setBalance(id: string, n: number) {
+  function setBalance(id: string, n: number) { patchCustomer(id, { prepaid_balance: n }); }
+  // 손님 한 명의 값이 바뀌면 목록·검색결과 둘 다 맞춘다 (잔여·반찬 회수·단계 표시·정기배송)
+  function patchCustomer(id: string, patch: Partial<Customer>) {
     const inList = customers.some(c => c.id === id);
     const hit = found.find(x => x.id === id);
     onUpdate(inList
-      ? customers.map(c => c.id === id ? { ...c, prepaid_balance: n } : c)
-      : hit ? [...customers, { ...hit, prepaid_balance: n }] : customers);
-    setFound(prev => prev.map(x => x.id === id ? { ...x, prepaid_balance: n } : x));
+      ? customers.map(c => c.id === id ? { ...c, ...patch } : c)
+      : hit ? [...customers, { ...hit, ...patch }] : customers);
+    setFound(prev => prev.map(x => x.id === id ? { ...x, ...patch } : x));
   }
 
   async function charge(id: string, units: typeof PREPAID_UNITS[number]) {
@@ -1080,11 +1091,12 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 <div key={c.id} className="px-3 py-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     {nameInput(c)}
-                    <span className="ml-2 text-xs text-stone-500">{formatPhone(c.phone)}</span>
+                    <span className="ml-2 text-xs text-stone-500">{c.phone ? formatPhone(c.phone) : "연락처 없음"}</span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     {c.is_regular && <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
-                    {c.prepaid_balance > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">잔여 {c.prepaid_balance}</span>}
+                    {c.prepaid_balance > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">잔여 {c.prepaid_balance}{c.prepaid_label ? ` · ${c.prepaid_label}` : ''}</span>}
+                    {(c.prepaid_banchan || 0) > 0 && <span className="text-[10px] bg-lime-100 text-lime-800 px-2 py-0.5 rounded-full">반찬 {c.prepaid_banchan}회</span>}
                     <button onClick={() => setOpenLedger(openLedger === 'f:' + c.id ? null : 'f:' + c.id)}
                       className="text-[10px] px-2 py-0.5 border border-stone-200 text-stone-600 rounded-full font-bold">
                       {openLedger === 'f:' + c.id ? '닫기' : '선결제·주문내역'}
@@ -1093,6 +1105,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                   {/* 검색으로 찾은 손님도 선결제를 넣고 주문 내역을 볼 수 있게 (잔여 0 손님은 아래 목록에 없다) */}
                   {openLedger === 'f:' + c.id && (
                     <div className="w-full">
+                      <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
                       <div className="flex gap-2 mt-2">
                         {PREPAID_UNITS.map(u => (
                           <button key={u} onClick={() => charge(c.id, u)} disabled={chargingId === c.id}
@@ -1101,7 +1114,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                           </button>
                         ))}
                       </div>
-                      <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} />
+                      <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
                     </div>
                   )}
                 </div>
@@ -1120,21 +1133,24 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             <div className="flex items-center justify-between mb-2">
               <div>
                 {nameInput(c)}
-                <span className="ml-2 text-xs text-stone-500">{formatPhone(c.phone)}</span>
+                <span className="ml-2 text-xs text-stone-500">{c.phone ? formatPhone(c.phone) : "연락처 없음"}</span>
                 {c.is_regular && <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
               </div>
-              <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
-                잔여 {c.prepaid_balance}팩
+              <div className="text-right">
+                {(c.prepaid_balance > 0 || !(c.prepaid_banchan || 0)) && (
+                  <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
+                    잔여 {c.prepaid_balance}팩{c.prepaid_label ? <span className="ml-1 text-xs font-normal text-stone-500">{c.prepaid_label}</span> : null}
+                  </div>
+                )}
+                {(c.prepaid_banchan || 0) > 0 && <div className="font-bold text-lime-700 text-sm">반찬 {c.prepaid_banchan}회 남음</div>}
               </div>
             </div>
             {/* regular_schedule은 배열이 아니라 { stage, volume, slots:[{day,qty}] } 객체 —
                 예전엔 배열로 다뤄서(.length/.map) 정기배송 스케줄이 화면에 전혀 안 나왔음 */}
             {c.is_regular && (c.regular_schedule?.slots?.length ?? 0) > 0 && (
               <div className="text-xs text-stone-500 mb-2">
-                정기: {c.regular_schedule?.stage}
-                {c.regular_schedule?.volume ? ` ${c.regular_schedule.volume}g` : ''}
-                {' · '}
-                {(c.regular_schedule?.slots || []).map(s => `${s.day} ${s.qty}팩`).join(' · ')}
+                정기: {(c.regular_schedule?.slots || []).map(s =>
+                  `${s.day} ${shortStage(s.stage || c.regular_schedule?.stage)} ${s.volume || c.regular_schedule?.volume || ''} ${s.qty}팩`).join(' · ')}
               </div>
             )}
             <div className="flex gap-2">
@@ -1149,10 +1165,130 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 {openLedger === c.id ? '기록 닫기' : '기록 보기'}
               </button>
             </div>
-            {openLedger === c.id && <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} />}
+            {openLedger === c.id && <>
+              <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
+              <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
+            </>}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const shortStage = (st?: string | null) => String(st || '').replace('중기1단계', '중기1').replace('중기2단계', '중기2');
+
+// ── 정기배송 고치기 ───────────────────────────────────────────────
+// 사장님: "정기배송으로 해도 중간에 변경하는 경우도 있고 … 월 중기 300 3팩 목 4팩 받다가
+//          월요일 후기 230 6개 화요일 후기 230 3개 금요일 후기 230 6개 이런 식으로"
+// 요일마다 단계·용량·메뉴별 팩수를 따로 맞춘다. 저장하면 아직 조리 전('접수')인 그 주 주문도 바로 바뀐다.
+// 딱 한 번만 바뀌는 건 여기 말고 그 주문 카드에서 고치면 된다(일정은 그대로).
+const REG_DAYS = ['월', '화', '목', '금'] as const;
+type RegRow = { on: boolean; stage: string; volume: number; menus: Record<string, number> };
+
+function RegularEditor({ customer, onSaved }: { customer: Customer; onSaved: (p: Partial<Customer>) => void }) {
+  const sched: any = customer.regular_schedule || {};
+  const init = () => {
+    const rows: Record<string, RegRow> = {};
+    for (const d of REG_DAYS) {
+      const s = (sched.slots || []).find((x: any) => x.day === d);
+      const menus: Record<string, number> = { 한우: 0, 닭: 0, 기타단백질: 0 };
+      if (s) {
+        if (Array.isArray(s.menus) && s.menus.length) s.menus.forEach((m: any) => { if (m.menu in menus) menus[m.menu] = Number(m.qty) || 0; });
+        else menus.한우 = Number(s.qty) || 0;
+      }
+      rows[d] = {
+        on: !!s && customer.is_regular,
+        stage: s?.stage || sched.stage || '후기',
+        volume: Number(s?.volume || sched.volume) || 230,
+        menus,
+      };
+    }
+    return rows;
+  };
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Record<string, RegRow>>(init);
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const set = (d: string, p: Partial<RegRow>) => setRows(r => ({ ...r, [d]: { ...r[d], ...p } }));
+  const total = (r: RegRow) => MENU_TYPES.reduce((a, m) => a + (Number(r.menus[m]) || 0), 0);
+
+  async function save(active: boolean) {
+    if (!active && !confirm('정기배송을 끌까요? 아직 조리 전인 정기 주문은 자동으로 취소됩니다.')) return;
+    setBusy(true); setInfo(null);
+    try {
+      const slots = REG_DAYS.filter(d => rows[d].on && total(rows[d]) > 0)
+        .map(d => ({ day: d, stage: rows[d].stage, volume: rows[d].volume, menus: rows[d].menus }));
+      const r = await fetch(`/api/customers/${customer.id}/regular`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active, slots }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || String(r.status));
+      onSaved({ is_regular: d.active, regular_schedule: d.regular_schedule });
+      const sy = d.sync;
+      setInfo(!d.autoEnabled ? '저장했어요 (자동 주문 만들기는 아직 꺼져 있어요)'
+        : sy ? `저장했어요 — 이번 주 주문 새로 ${sy.created} · 바뀜 ${sy.updated + sy.revived} · 취소 ${sy.cancelled}`
+               + (sy.skipped?.length ? ` · 못 만든 것 ${sy.skipped.length}건: ${sy.skipped.map((x: any) => x.reason).join(', ')}` : '')
+        : `저장은 됐는데 주문 맞추기가 안 됐어요: ${d.syncError || ''}`);
+    } catch (e: any) { setInfo(`못 저장했어요: ${e.message}`); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="mt-2 border border-violet-200 rounded-lg">
+      <button onClick={() => { setOpen(!open); if (!open) setRows(init()); }}
+        className="w-full flex justify-between items-center px-3 py-2 text-xs font-bold text-violet-800">
+        <span>정기배송 {customer.is_regular ? '고치기' : '켜기'}</span><span>{open ? '∧' : '∨'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-1.5">
+          <p className="text-[11px] text-stone-500 leading-relaxed">
+            요일마다 단계·용량·팩수를 따로 넣을 수 있어요. 저장하면 조리 전인 이번 주 정기 주문도 같이 바뀝니다.
+            한 번만 바뀌는 건 그 주문 카드에서 고쳐 주세요.
+          </p>
+          {REG_DAYS.map(d => {
+            const r = rows[d];
+            const vols = STAGE_OPTIONS[r.stage as keyof typeof STAGE_OPTIONS]?.map(o => o.volume) || [];
+            return (
+              <div key={d} className={`flex flex-wrap items-center gap-1.5 rounded px-2 py-1.5 ${r.on ? 'bg-violet-50' : 'bg-stone-50'}`}>
+                <label className="flex items-center gap-1 text-xs font-bold w-10">
+                  <input type="checkbox" checked={r.on} onChange={e => set(d, { on: e.target.checked })} />{d}
+                </label>
+                <select value={r.stage} disabled={!r.on}
+                  onChange={e => { const st = e.target.value; const v = STAGE_OPTIONS[st as keyof typeof STAGE_OPTIONS]; set(d, { stage: st, volume: v?.some(o => o.volume === r.volume) ? r.volume : v?.[0]?.volume || 230 }); }}
+                  className="text-xs border border-stone-300 rounded px-1 py-0.5 bg-white">
+                  {STAGES.map(st => <option key={st} value={st}>{shortStage(st)}</option>)}
+                </select>
+                <select value={r.volume} disabled={!r.on} onChange={e => set(d, { volume: Number(e.target.value) })}
+                  className="text-xs border border-stone-300 rounded px-1 py-0.5 bg-white">
+                  {vols.map(v => <option key={v} value={v}>{v}g</option>)}
+                </select>
+                {MENU_TYPES.map(m => (
+                  <label key={m} className="flex items-center gap-0.5 text-[11px] text-stone-600">
+                    {menuLabel(m)}
+                    <input value={r.menus[m] || ''} disabled={!r.on} inputMode="numeric"
+                      onChange={e => set(d, { menus: { ...r.menus, [m]: Number(e.target.value.replace(/\D/g, '').slice(0, 2)) || 0 } })}
+                      className="w-8 text-xs text-right border border-stone-300 rounded px-1 py-0.5" />
+                  </label>
+                ))}
+                <span className={`text-[11px] font-bold ${r.on && total(r) > 0 && total(r) < 3 ? 'text-rose-600' : 'text-stone-600'}`}>{total(r)}팩</span>
+              </div>
+            );
+          })}
+          <div className="flex gap-1.5 pt-1">
+            <button onClick={() => save(true)} disabled={busy}
+              className="flex-1 py-1.5 text-xs font-bold text-violet-800 bg-violet-100 border border-violet-300 rounded disabled:opacity-40">
+              {customer.is_regular ? '이대로 저장' : '정기배송 켜기'}
+            </button>
+            {customer.is_regular && (
+              <button onClick={() => save(false)} disabled={busy}
+                className="px-3 py-1.5 text-xs font-bold text-stone-600 bg-white border border-stone-300 rounded disabled:opacity-40">끄기</button>
+            )}
+          </div>
+          {info && <p className="text-[11px] text-violet-700">{info}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1210,11 +1346,20 @@ function ArrivalBox({ order, onSent }: { order: Order; onSent: (note: string, at
 // ── 선결제 기록 ───────────────────────────────────────────────────
 // 충전·사용·취소환불·조리표 수정이 한 줄씩 쌓인다(baby_food_prepaid_ledger).
 // 마지막 줄의 '남은 팩' 이 위의 잔여와 같아야 정상 — 다르면 빨갛게 알린다.
-type LedgerRow = { created_at: string; kind: string; packs: number; balance_after: number; amount_won: number | null; memo: string | null };
+type LedgerRow = { created_at: string; kind: string; packs: number; balance_after: number; amount_won: number | null; memo: string | null; item?: string };
 
 type HistOrder = { id: string; created_at: string; delivery_date: string; stage: string; volume: number; total_qty: number; total_price: number; shipping_fee?: number; status: string; order_type: string; receive_method: string | null; paid?: boolean; paid_note?: string | null; source?: string | null };
 
-function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string; balance: number; onBalance: (n: number) => void }) {
+// 선결제를 어떤 단계·용량으로 샀는지 고르는 칸 (할인표: 중기·후기 230/300, 완료기 230/300)
+const PREPAID_LABELS = ['중기 230g', '중기 300g', '후기 230g', '후기 300g', '완료기 230g', '완료기 300g'];
+
+function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
+  customerId: string; balance: number; onBalance: (n: number) => void; onPatch?: (p: Partial<Customer>) => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [banchan, setBanchan] = useState(0);
+  const [bSet, setBSet] = useState('');
+  const [bWhy, setBWhy] = useState('');
   const [rows, setRows] = useState<LedgerRow[] | null>(null);
   const [orders, setOrders] = useState<HistOrder[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -1244,6 +1389,7 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
         if (!alive) return;
         if (d.ok) {
           setRows(d.rows); setOrders(d.orders || []); setErr(null); setMemo(d.memo || null);
+          setLabel(d.label || ''); setBanchan(Number(d.banchan) || 0);
           const v = (d.payer_names || []).join(', '); setPayers(v); setPayersSaved(v);
         }
         else setErr(d.error || '불러오지 못했어요');
@@ -1271,11 +1417,44 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
     setBusy(false);
   }
 
+  async function saveLabel(v: string) {
+    setLabel(v);
+    const d = await fetch(`/api/customers/${customerId}/prepaid`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: v }),
+    }).then(r => r.json()).catch(() => ({}));
+    if (d.ok) { onPatch?.({ prepaid_label: d.label }); setInfo(v ? `${v} 로 표시해요` : '단계 표시를 지웠어요'); }
+    else setInfo(`못 저장했어요: ${d.error || ''}`);
+  }
+
+  // 반찬 선결제 — 팩이 아니라 '회'(세트 한 번). 4회 = 130,000원
+  async function banchanApply(body: any, ask: string) {
+    if (!confirm(ask)) return;
+    setBusy(true); setInfo(null);
+    try {
+      const r = await fetch(`/api/customers/${customerId}/prepaid`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: '반찬', ...body }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { setBanchan(d.new_balance); onPatch?.({ prepaid_banchan: d.new_balance }); setBSet(''); setBWhy(''); setInfo(`반찬 ${d.new_balance}회 남았어요`); setReload(x => x + 1); }
+      else setInfo(`못 고쳤어요: ${d.error || r.status}`);
+    } catch (e: any) { setInfo(`못 고쳤어요: ${e?.message || '네트워크 오류'}`); }
+    setBusy(false);
+  }
+  function banchanSet() {
+    const n = Number(bSet);
+    if (bSet.trim() === '' || !Number.isInteger(n) || n < 0) { setInfo('0 이상 숫자로 적어주세요'); return; }
+    if (n === banchan) { setInfo('지금 남은 회수와 같아요'); return; }
+    banchanApply({ set: n, memo: bWhy }, `반찬 선결제를 ${banchan}회 → ${n}회로 고칠까요?`);
+  }
+
   const fmt = (s: string) => {
     const d = new Date(s);
     return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
-  const mismatch = !!rows && rows.length > 0 && rows[0].balance_after !== balance;
+  // 이유식(팩)과 반찬(회)은 잔액이 따로라 마지막 줄도 따로 본다
+  const lastPack = rows?.find(r => (r.item || '이유식') === '이유식');
+  const lastBanchan = rows?.find(r => r.item === '반찬');
+  const mismatch = (!!lastPack && lastPack.balance_after !== balance) || (!!lastBanchan && lastBanchan.balance_after !== banchan);
   const live = orders.filter(o => o.status !== '취소');
 
   return (
@@ -1302,6 +1481,30 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
         <button onClick={applySet} disabled={busy}
           className="px-3 py-1 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs font-bold disabled:opacity-40">저장</button>
       </div>
+      {/* 어떤 단계·용량으로 산 선결제인지 */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs font-bold text-stone-600">이유식 선결제 단계</span>
+        <select value={label} onChange={e => saveLabel(e.target.value)}
+          className="text-xs border border-stone-300 rounded px-1.5 py-1 bg-white">
+          <option value="">표시 안 함</option>
+          {[...new Set([...PREPAID_LABELS, ...(label ? [label] : [])])].map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+      </div>
+
+      {/* 반찬 선결제 — 회수로 센다 */}
+      <div className="flex items-center gap-1.5 flex-wrap bg-lime-50/60 rounded px-2 py-1.5">
+        <span className="text-xs font-bold text-lime-800">반찬 선결제 {banchan}회 남음</span>
+        <button onClick={() => banchanApply({ times: 4, amount_won: 130000 }, '반찬 4회(130,000원)를 넣을까요?')} disabled={busy}
+          className="px-2 py-0.5 border border-lime-300 text-lime-800 rounded text-[11px] font-bold disabled:opacity-40">+4회</button>
+        <input value={bSet} onChange={e => setBSet(e.target.value.replace(/\D/g, '').slice(0, 2))}
+          inputMode="numeric" placeholder={String(banchan)}
+          className="w-10 px-1.5 py-0.5 border border-stone-300 rounded text-xs text-right outline-none focus:border-lime-400" />
+        <span className="text-xs text-stone-500">회로</span>
+        <input value={bWhy} onChange={e => setBWhy(e.target.value)} maxLength={100} placeholder="사유 (예: 11/11 주문 차감)"
+          className="flex-1 min-w-[110px] px-2 py-0.5 border border-stone-300 rounded text-xs outline-none focus:border-lime-400" />
+        <button onClick={banchanSet} disabled={busy}
+          className="px-2 py-0.5 border border-lime-300 bg-white text-lime-800 rounded text-[11px] font-bold disabled:opacity-40">고치기</button>
+      </div>
       {info && <p className="text-[11px] text-amber-700">{info}</p>}
 
       {err && <p className="text-xs text-red-600">기록을 불러오지 못했어요: {err}</p>}
@@ -1312,7 +1515,7 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
           <p className="text-xs font-bold text-stone-600 mb-1">선결제 기록</p>
           {mismatch && (
             <p className="mb-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-              기록상 남은 팩({rows[0].balance_after})과 잔여({balance})가 달라요 — 확인이 필요해요
+              기록상 남은 수({lastPack ? `${lastPack.balance_after}팩` : ''}{lastBanchan ? ` 반찬 ${lastBanchan.balance_after}회` : ''})와 잔여({balance}팩 · 반찬 {banchan}회)가 달라요 — 확인이 필요해요
             </p>
           )}
           {rows.length === 0 ? <p className="text-xs text-stone-400">아직 기록이 없어요</p> : (
@@ -1330,9 +1533,9 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
                 {rows.map((r, i) => (
                   <tr key={i} className="border-t border-stone-50">
                     <td className="py-1 text-stone-500 whitespace-nowrap">{fmt(r.created_at)}</td>
-                    <td className="text-stone-700">{r.kind}</td>
-                    <td className={`text-right font-bold ${r.packs > 0 ? 'text-emerald-700' : 'text-stone-700'}`}>{r.packs > 0 ? `+${r.packs}` : r.packs}</td>
-                    <td className="text-right text-stone-700">{r.balance_after}</td>
+                    <td className="text-stone-700 whitespace-nowrap">{r.item === '반찬' ? <span className="text-lime-700">반찬 </span> : null}{r.kind}</td>
+                    <td className={`text-right font-bold ${r.packs > 0 ? 'text-emerald-700' : 'text-stone-700'}`}>{r.packs > 0 ? `+${r.packs}` : r.packs}{r.item === '반찬' ? '회' : ''}</td>
+                    <td className="text-right text-stone-700">{r.balance_after}{r.item === '반찬' ? '회' : ''}</td>
                     <td className="pl-3 text-stone-500">{r.memo}{r.amount_won ? ` · ${r.amount_won.toLocaleString()}원` : ''}</td>
                   </tr>
                 ))}

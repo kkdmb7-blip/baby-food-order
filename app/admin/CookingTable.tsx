@@ -290,9 +290,9 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 </tr>
               </thead>
               <tbody>
-                {sheet.banchanByItem.map(it => (
+                {sheet.banchanByItem.map((it, i) => (
                   <tr key={it.name}>
-                    <td className="border border-black px-1 py-[2px] font-bold leading-tight break-words text-[12px]">{it.name}</td>
+                    <td className="border border-black px-1 py-[2px] font-bold leading-tight break-words text-[12px]">{i + 1}. {it.name}</td>
                     <td className="border border-black text-center py-[2px] font-black">{it.qty}</td>
                   </tr>
                 ))}

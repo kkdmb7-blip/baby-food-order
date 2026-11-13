@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { shiftDate } from '@/lib/orderItems';
+import { sortBanchanItems } from '@/lib/banchanOrder';
 
 /*
   GET /api/admin/banchan-menu?date=YYYY-MM-DD — 그날 유아식 반찬 다섯 가지와 국
@@ -37,8 +38,9 @@ export async function GET(req: NextRequest) {
     const { data } = await sb.from('kkakung_history').select('yusik').eq('id', monday).maybeSingle();
     const day = (((data as any)?.yusik?.schedule) || []).find((d: any) => d?.date === date);
 
+    // 손님이 받는 메뉴표 인쇄와 같은 순서·번호로 준다 (lib/banchanOrder)
     const items: { name: string; ingredients: string }[] =
-      (day?.items || []).map((x: any) => ({
+      sortBanchanItems(day?.items || []).map((x: any) => ({
         name: String(x?.name || '').trim(),
         ingredients: String(x?.ingredients || '').trim(),
       })).filter((x: any) => x.name);

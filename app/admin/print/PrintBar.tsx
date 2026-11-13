@@ -10,9 +10,10 @@ const SHEETS = [
   { kind: 'cooking', path: 'cooking', label: '🍲 조리표' },
   { kind: 'tally',   path: 'tally',   label: '📋 담는 수량' },
   { kind: 'labels',  path: 'labels',  label: '🚚 배송 주소록' },
+  { kind: 'names',   path: 'names',   label: '이름표' },
 ] as const;
 
-export default function PrintBar({ date, kind }: { date: string; kind: 'cooking' | 'labels' | 'tally' }) {
+export default function PrintBar({ date, kind }: { date: string; kind: 'cooking' | 'labels' | 'tally' | 'names' }) {
   const others = SHEETS.filter(s => s.kind !== kind);
   return (
     <div className="no-print flex gap-2 flex-shrink-0">
