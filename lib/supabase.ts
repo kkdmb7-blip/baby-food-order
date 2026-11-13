@@ -286,3 +286,21 @@ export const COOKING_DAY_KOR: Record<number, string> = { 1: '월', 2: '화', 4: 
 
 // 선결제 단위
 export const PREPAID_UNITS = [20, 30, 50] as const;
+
+/*
+  차감식 선결제 할인표 (주방 간판, 2024.11.1 · 현금만) — 2026-11-12 사진으로 읽음
+  규칙은 하나다: 묶음 크기별로 팩당 깎는 값이 같다.
+      20팩 −200원 · 30팩 −250원 · 50팩 −300원
+  중기·후기 230g 5,000 / 300g 6,000, 완료기 230g 5,500 / 300g 6,500 에서 뺀다.
+  (중기1의 240g·310g 은 230g·300g 과 같은 값)
+  lib/depositMatch.ts 의 PREPAID_PRICES(입금 금액 → 묶음) 열두 칸이 이 계산과 똑같다.
+*/
+export const PREPAID_DISCOUNT: Record<number, number> = { 20: 200, 30: 250, 50: 300 };
+export function prepaidPrice(label: string | null | undefined, units: number): number | null {
+  const l = String(label || '');
+  const vol = /3[01]0/.test(l) ? 300 : /2[34]0/.test(l) ? 230 : null;
+  const off = PREPAID_DISCOUNT[units];
+  if (!vol || off === undefined) return null;
+  const base = l.includes('완료') ? (vol === 300 ? 6500 : 5500) : (vol === 300 ? 6000 : 5000);
+  return (base - off) * units;
+}

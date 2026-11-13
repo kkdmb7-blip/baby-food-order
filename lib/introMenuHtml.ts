@@ -153,6 +153,49 @@ export function renderIngredients(day: DayMenu | null): string {
 ${panels}`;
 }
 
+// ── 반찬 메뉴 (/banchan) ──────────────────────────────────────
+// 반찬은 수입 재료가 이유식과 다르다 — 페이지 '반찬에 쓰는 수입 재료' 와 같은 목록.
+// 메뉴 프로그램에서 반찬마다 적은 origin 이 있으면 그것을 먼저 쓴다.
+// '소고기' 는 반찬에선 호주산이다 (이유식 한우는 국내산이라 '한우' 는 여기 없다).
+const IMPORTED_IN_BANCHAN: Record<string, string> = {
+  '소고기': '호주', '새우': '베트남', '황태': '러시아', '모짜렐라치즈': '이탈리아', '모짜렐라': '이탈리아',
+  '단호박': '뉴질랜드',
+};
+
+function banchanCard(d: DayMenu): string {
+  const rows = d.banchan.map(b => {
+    const names = splitIngredients(b.ingredients);
+    const tags = names.map(n => {
+      const label = DISPLAY[n] || n;
+      const origin = IMPORTED_IN_BANCHAN[n];
+      return origin
+        ? `<span class="ing-tag" style="color:var(--accent);border-color:var(--accent);">${esc(label)} (${esc(origin)})</span>`
+        : `<span class="ing-tag">${esc(label)}</span>`;
+    }).join('');
+    return `<div style="padding:10px 0;border-top:1px solid var(--rule);">`
+      + `<div style="font-size:15px;font-weight:800;color:var(--fg);">${b.no}. ${b.isSoup ? '국 · ' : ''}${esc(b.name)}</div>`
+      + (tags ? `<div class="ing-tags" style="margin-top:6px;">${tags}</div>` : '')
+      + `</div>`;
+  }).join('');
+  const today = d.isToday ? ' <span style="color:var(--green);">오늘</span>' : '';
+  return `<div class="pack-eco" style="margin-top:14px;">`
+    + `<strong style="display:block;margin-bottom:4px;">${fmtKor(d.date)} (수)${today}</strong>${rows}</div>`;
+}
+
+export function renderBanchanMenu(weeks: WeekMenu[]): string {
+  const days = weeks.flatMap(w => w.days).filter(d => d.isBanchan && d.banchan.length > 0);
+  if (!days.length) {
+    return `    <p class="sub" style="margin-top:-6px;">이번 주 반찬은 문의해 주시면 바로 알려드립니다. 번호는 매장 메뉴표와 같습니다.</p>`;
+  }
+  return `    <p class="sub" style="margin-top:-6px;">번호는 매장 메뉴표와 같습니다. 이 번호로 바꿔 담으실 반찬을 말씀해 주세요.</p>
+    ${days.map(banchanCard).join('\n    ')}
+    <p class="nutr-ref" style="margin-top:10px;">※ 붉은색은 국내산이 아닌 재료입니다. 게맛살·마요네즈처럼 만들어진 재료는 제품 포장 표시를 따릅니다.</p>`;
+}
+
+export function fillBanchanSlots(body: string, data: { weeks: WeekMenu[] }): string {
+  return body.replace('<!--@BANCHAN_MENU-->', () => renderBanchanMenu(data.weeks));
+}
+
 // ── 슬롯 채우기 ───────────────────────────────────────────────
 export function fillIntroSlots(
   body: string,

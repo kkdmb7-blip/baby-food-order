@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Order, Customer, WeeklyMenu, OrderStatus, MenuType } from '@/lib/supabase';
-import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, menuLabel } from '@/lib/supabase';
+import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, prepaidPrice, menuLabel } from '@/lib/supabase';
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
@@ -1045,14 +1045,21 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     setFound(prev => prev.map(x => x.id === id ? { ...x, ...patch } : x));
   }
 
-  async function charge(id: string, units: typeof PREPAID_UNITS[number]) {
+  // 할인표(간판)로 받을 돈을 같이 띄우고, 장부에 금액까지 남긴다 — 입금 대조가 그 금액으로 맞춘다
+  async function charge(id: string, units: typeof PREPAID_UNITS[number], label?: string | null) {
     if (chargingId) return;
+    const won = prepaidPrice(label, units);
+    if (!confirm(won
+      ? `${label} ${units}팩 — ${won.toLocaleString()}원 받으셨나요?
+(간판 할인표 금액, 장부에 같이 남습니다)`
+      : `${units}팩을 넣을까요?
+(선결제 단계가 비어 있어 금액은 안 남습니다 — 기록 보기에서 단계를 먼저 고르시면 금액도 남아요)`)) return;
     setChargingId(id);
     try {
       const r = await fetch(`/api/customers/${id}/prepaid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ units })
+        body: JSON.stringify({ units, amount_won: won || undefined, label: label || undefined })
       });
       const d = await r.json().catch(() => ({}));
       if (d.ok) {
@@ -1109,9 +1116,9 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                       <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
                       <div className="flex gap-2 mt-2">
                         {PREPAID_UNITS.map(u => (
-                          <button key={u} onClick={() => charge(c.id, u)} disabled={chargingId === c.id}
+                          <button key={u} onClick={() => charge(c.id, u, c.prepaid_label)} disabled={chargingId === c.id}
                             className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
-                            +{u}팩
+                            +{u}팩{prepaidPrice(c.prepaid_label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(c.prepaid_label, u)!.toLocaleString()}원</span> : null}
                           </button>
                         ))}
                       </div>
@@ -1161,9 +1168,9 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             )}
             <div className="flex gap-2">
               {PREPAID_UNITS.map(u => (
-                <button key={u} onClick={() => charge(c.id, u)} disabled={chargingId === c.id}
+                <button key={u} onClick={() => charge(c.id, u, c.prepaid_label)} disabled={chargingId === c.id}
                   className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
-                  +{u}팩
+                  +{u}팩{prepaidPrice(c.prepaid_label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(c.prepaid_label, u)!.toLocaleString()}원</span> : null}
                 </button>
               ))}
               <button onClick={() => setOpenLedger(openLedger === c.id ? null : c.id)}

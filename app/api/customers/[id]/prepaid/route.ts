@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   }
 
   // 어떤 단계·용량으로 산 선결제인지 — { label: '완료기 300g' } (빈 값이면 지움)
-  if (body.label !== undefined && body.set === undefined && body.times === undefined) {
+  if (body.label !== undefined && body.set === undefined && body.times === undefined && body.units === undefined) {
     const label = String(body.label || '').trim().slice(0, 30) || null;
     const sb = supabaseService();
     const { error } = await sb.from('baby_food_customers').update({ prepaid_label: label }).eq('id', ctx.params.id);
@@ -121,7 +121,8 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     if (upd && upd.length) {
       await recordPrepaid(sb, {
         customerId: id, phone: c.phone, babyName: c.baby_name,
-        kind: '충전', packs: units, balanceAfter: next, amountWon, memo: `${units}팩 충전`,
+        kind: '충전', packs: units, balanceAfter: next, amountWon,
+        memo: `${units}팩 충전${typeof body.label === 'string' && body.label.trim() ? ` (${body.label.trim().slice(0, 30)})` : ''}`,
       });
       return NextResponse.json({ ok: true, new_balance: next });
     }

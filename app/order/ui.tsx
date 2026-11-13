@@ -17,7 +17,7 @@ export function Wrap({ children }: { children: React.ReactNode }) {
 /**
  * 가게 로고. 브랜드 자리(화면 맨 위, 주문 완료)에 쓴다.
  * 전에는 🍱 이모지였는데, 어느 가게나 쓰는 그림이라 우리 것으로 바꿨다.
- * 원본 logo.png 는 774x891·395KB 라 손님 화면에 올리기엔 무겁다 — 250x288·60KB 로
+ * 원본 logo.png(774x891·395KB)는 아무도 안 써서 2026-11-13 지웠다(git 기록에 남음). 250x288·60KB 로
  * 줄인 logo-sm.png 를 쓴다(화면에서 제일 크게 쓰는 곳이 80px이라 2배까지 감당한다).
  */
 export function Logo({ size = 52, className = '' }: { size?: number; className?: string }) {

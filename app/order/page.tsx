@@ -1013,8 +1013,8 @@ export default function OrderPage() {
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
             <span className="text-2xl">🚫</span>
             <div>
-              <div className="text-sm font-bold text-stone-900">알레르기 메뉴 자동 차단</div>
-              <div className="text-xs text-stone-500 mt-0.5">등록해두신 재료가 들어간 메뉴는 주문 자체가 막혀요. 재료만 빼고 조리해드리는 건 어려워서, 아예 선택되지 않게 해뒀어요 (최종 확인은 보호자님이 함께 해주세요)</div>
+              <div className="text-sm font-bold text-stone-900">알레르기 재료 표시</div>
+              <div className="text-xs text-stone-500 mt-0.5">등록해두신 재료가 들어간 메뉴에는 경고가 뜨고, 알고 주문한다는 확인을 한 번 받은 뒤에 담겨요. 하루 분량을 한 솥에 만들어 재료만 빼고 조리할 수는 없어요 (최종 확인은 보호자님이 함께 해주세요)</div>
             </div>
           </div>
           <div className="bg-white border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
