@@ -14,6 +14,7 @@ import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
 import { defaultArrivalNote } from '@/lib/arrival';
 import { sortBanchanNames } from '@/lib/banchanOrder';
+import { parseKakaoPrepaid } from '@/lib/kakaoPrepaid';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
@@ -963,7 +964,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   const [msg, setMsg] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
-  const prepaid = customers.filter(c => c.prepaid_balance > 0 || (c.prepaid_banchan || 0) > 0 || c.is_regular);
+  const prepaid = customers.filter(c => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0 || c.is_regular);
 
   // 손님은 계속 쌓이므로 화면에 다 들고 있지 않는다 — 찾는 건 서버가 한다.
   // (전부 받아다 걸렀더니 1000명 뒤의 손님은 검색해도 안 나왔다)
@@ -1137,11 +1138,16 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 {c.is_regular && <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
               </div>
               <div className="text-right">
-                {(c.prepaid_balance > 0 || !(c.prepaid_banchan || 0)) && (
+                {(c.prepaid_balance !== 0 || !(c.prepaid_banchan || 0)) && (
                   <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
-                    잔여 {c.prepaid_balance}팩{c.prepaid_label ? <span className="ml-1 text-xs font-normal text-stone-500">{c.prepaid_label}</span> : null}
+                    잔여 {c.prepaid_balance}팩{c.prepaid_balance < 0 ? <span className="ml-1 text-xs">(받을 팩)</span> : null}
+                    {c.prepaid_label ? <span className="ml-1 text-xs font-normal text-stone-500">{c.prepaid_label}</span> : null}
                   </div>
                 )}
+                {/* 카톡 메모에 용량이 다른 묶음이 따로 있으면 그것도 보인다 (마지막 묶음이 위의 잔여) */}
+                {(c.prepaid_tracks || []).slice(0, -1).map((t, i) => (
+                  <div key={i} className={`text-xs ${t.balance < 0 ? 'text-red-600' : 'text-stone-500'}`}>{t.label || '다른 묶음'} {t.balance}팩</div>
+                ))}
                 {(c.prepaid_banchan || 0) > 0 && <div className="font-bold text-lime-700 text-sm">반찬 {c.prepaid_banchan}회 남음</div>}
               </div>
             </div>
@@ -1350,6 +1356,98 @@ type LedgerRow = { created_at: string; kind: string; packs: number; balance_afte
 
 type HistOrder = { id: string; created_at: string; delivery_date: string; stage: string; volume: number; total_qty: number; total_price: number; shipping_fee?: number; status: string; order_type: string; receive_method: string | null; paid?: boolean; paid_note?: string | null; source?: string | null };
 
+// ── 카톡 메모 붙여넣기 ─────────────────────────────────────────────
+// 사장님은 플러스친구 메모장에 손님별 선결제를 이렇게 적어 오셨다:
+//   8/21 중230ᆞ50입 / 8/24 50-3-6-3-6=32 / … / ㅡㅡㅡㅡ후230 (용량이 달라 따로 세는 묶음)
+// 그대로 붙여넣으면 줄마다 읽어서 보여주고, 저장하면 마지막 묶음의 남은 팩이 잔여가 된다.
+// 계산이 틀린 줄(빼기가 안 맞음, 앞 줄 결과와 시작이 다름)은 빨갛게 — 고쳐서 다시 붙이면 된다.
+function KakaoMemoBox({ customerId, initial, savedAt, onSaved }: {
+  customerId: string; initial: string; savedAt: string | null;
+  onSaved: (balance: number, label: string | null, tracks: any[]) => void;
+}) {
+  const [open, setOpen] = useState(!!initial);
+  const [text, setText] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const parsed = parseKakaoPrepaid(text);
+  const live = parsed.tracks.filter(t => t.rows.some(r => r.kind === '입' || r.kind === '사용'));
+  const last = live[live.length - 1];
+
+  async function save() {
+    if (!last) { setInfo('읽을 줄이 없어요'); return; }
+    if (parsed.problems > 0 && !confirm(`계산이 안 맞는 줄이 ${parsed.problems}개 있어요. 그래도 적힌 대로 저장할까요?`)) return;
+    setBusy(true); setInfo(null);
+    try {
+      const r = await fetch(`/api/customers/${customerId}/prepaid`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memo: text }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok) { setInfo(`저장했어요 — 잔여 ${d.new_balance}팩${d.label ? ` (${d.label})` : ''}`); onSaved(d.new_balance, d.label, d.tracks); }
+      else setInfo(`못 저장했어요: ${d.error || r.status}`);
+    } catch (e: any) { setInfo(`못 저장했어요: ${e?.message || '네트워크 오류'}`); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="border border-amber-200 rounded-lg">
+      <button onClick={() => setOpen(!open)} className="w-full flex justify-between items-center px-3 py-2 text-xs font-bold text-amber-800">
+        <span>카톡 메모 붙여넣기{savedAt ? <span className="ml-1 font-normal text-stone-400">마지막 저장 {fmtDateTime(savedAt)}</span> : null}</span>
+        <span>{open ? '∧' : '∨'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={6}
+            placeholder={'메모장 내용을 그대로 붙여넣으세요\n8/21 중230ᆞ50입\n8/24 50-3-6-3-6=32\nㅡㅡㅡㅡㅡ후230  (용량이 다른 묶음은 줄긋기로)'}
+            className="w-full px-2 py-1.5 border border-stone-300 rounded text-xs font-mono outline-none focus:border-amber-400" />
+          {live.length > 0 && (
+            <div className="space-y-2">
+              {parsed.tracks.map((t, ti) => (
+                <div key={ti}>
+                  <p className="text-[11px] font-bold text-stone-700">
+                    {t.label || '단계 표시 없음'} · 입 {t.charged}팩 · 쓴 것 {t.used}팩 ·
+                    <span className={t.balance < 0 ? 'text-red-600' : 'text-amber-700'}> 남은 {t.balance}팩{t.balance < 0 ? ' (받을 팩)' : ''}</span>
+                    {t === last && <span className="ml-1 text-stone-400">← 잔여로 저장</span>}
+                  </p>
+                  <div className="max-h-48 overflow-auto">
+                    <table className="w-full text-[11px]">
+                      <tbody>
+                        {t.rows.filter(r => r.kind !== '구분').map(r => (
+                          <tr key={r.line} className={`border-t border-stone-50 ${r.problem ? 'bg-red-50' : ''}`}>
+                            <td className="py-0.5 pr-1 whitespace-nowrap text-stone-500 w-10">{r.date || ''}</td>
+                            <td className="pr-1 whitespace-nowrap">
+                              {r.kind === '입' ? <span className="text-emerald-700 font-bold">+{r.packs} 입{r.label ? ` ${r.label}` : ''}</span>
+                                : r.kind === '사용' ? <span>{r.before} → {r.packs}</span>
+                                : <span className="text-stone-400">메모</span>}
+                            </td>
+                            <td className={`pr-1 text-right font-bold whitespace-nowrap ${r.after !== null && r.after < 0 ? 'text-red-600' : 'text-stone-700'}`}>{r.after ?? ''}</td>
+                            <td className="text-stone-500">{r.problem ? <span className="text-red-600 font-bold">{r.problem}</span> : r.note}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {text.trim() && live.length === 0 && <p className="text-[11px] text-red-600">읽을 줄이 없어요 — '8/21 중230ᆞ50입', '8/24 50-3-6=41' 모양이어야 해요</p>}
+          <div className="flex items-center gap-2">
+            <button onClick={save} disabled={busy || !last}
+              className="px-4 py-1.5 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs font-bold disabled:opacity-40">
+              이대로 저장{last ? ` (잔여 ${last.balance}팩)` : ''}
+            </button>
+            {parsed.problems > 0 && <span className="text-[11px] text-red-600 font-bold">계산이 안 맞는 줄 {parsed.problems}개</span>}
+          </div>
+          <p className="text-[10px] text-stone-400 leading-relaxed">
+            다시 붙여넣으면 그 내용으로 다시 맞춥니다(더하지 않아요). 메모장에 줄을 더 적은 뒤 통째로 다시 붙이시면 됩니다.
+          </p>
+          {info && <p className="text-[11px] text-amber-700">{info}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 선결제를 어떤 단계·용량으로 샀는지 고르는 칸 (할인표: 중기·후기 230/300, 완료기 230/300)
 const PREPAID_LABELS = ['중기 230g', '중기 300g', '후기 230g', '후기 300g', '완료기 230g', '완료기 300g'];
 
@@ -1371,6 +1469,7 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
   const [payers, setPayers] = useState('');
   const [payersSaved, setPayersSaved] = useState('');
   const [memo, setMemo] = useState<string | null>(null);
+  const [kakao, setKakao] = useState<{ text: string; at: string | null } | null>(null);
 
   async function savePayers() {
     const list = payers.split(/[,\s·]+/).map(s => s.trim()).filter(Boolean);
@@ -1390,6 +1489,7 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
         if (d.ok) {
           setRows(d.rows); setOrders(d.orders || []); setErr(null); setMemo(d.memo || null);
           setLabel(d.label || ''); setBanchan(Number(d.banchan) || 0);
+          setKakao({ text: d.kakao_memo || '', at: d.kakao_memo_at || null });
           const v = (d.payer_names || []).join(', '); setPayers(v); setPayersSaved(v);
         }
         else setErr(d.error || '불러오지 못했어요');
@@ -1481,6 +1581,12 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
         <button onClick={applySet} disabled={busy}
           className="px-3 py-1 border border-amber-300 bg-amber-50 text-amber-800 rounded text-xs font-bold disabled:opacity-40">저장</button>
       </div>
+      {/* 카톡 메모장 정리를 그대로 붙여넣기 — 메모장이 원본 */}
+      {kakao && (
+        <KakaoMemoBox key={kakao.at || 'new'} customerId={customerId} initial={kakao.text} savedAt={kakao.at}
+          onSaved={(n, lbl, tracks) => { onBalance(n); setLabel(lbl || ''); onPatch?.({ prepaid_label: lbl, prepaid_tracks: tracks }); setReload(x => x + 1); }} />
+      )}
+
       {/* 어떤 단계·용량으로 산 선결제인지 */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs font-bold text-stone-600">이유식 선결제 단계</span>

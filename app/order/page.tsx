@@ -1734,7 +1734,7 @@ export default function OrderPage() {
                 </div>
                 <div className={`rounded-xl border p-4 ${lowBalance ? 'bg-rose-50 border-rose-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div className="text-[11px] text-stone-500 font-bold mb-0.5">선결제 잔여</div>
-                  <div className={`text-lg font-black ${lowBalance ? 'text-rose-600' : 'text-amber-700'}`}>{cust.prepaid_balance || 0}팩</div>
+                  <div className={`text-lg font-black ${lowBalance ? 'text-rose-600' : 'text-amber-700'}`}>{Math.max(0, cust.prepaid_balance || 0)}팩</div>
                   {cust.is_regular
                     ? <div className="text-[10px] text-emerald-600 font-bold mt-0.5">🔁 정기배송 이용중</div>
                     : lowBalance
