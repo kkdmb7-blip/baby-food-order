@@ -77,18 +77,18 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
 export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const sb = supabaseService();
-  const { data: c } = await sb.from('baby_food_customers').select('phone').eq('id', ctx.params.id).maybeSingle();
+  const { data: c } = await sb.from('baby_food_customers').select('phone, payer_names, memo').eq('id', ctx.params.id).maybeSingle();
   const [led, ord] = await Promise.all([
     sb.from('baby_food_prepaid_ledger')
       .select('created_at, kind, packs, balance_after, amount_won, order_id, memo')
       .eq('customer_id', ctx.params.id).order('created_at', { ascending: false }).limit(100),
     c?.phone
       ? sb.from('baby_food_orders')
-          .select('id, created_at, delivery_date, stage, volume, total_qty, total_price, status, order_type, receive_method')
+          .select('id, created_at, delivery_date, stage, volume, total_qty, total_price, shipping_fee, status, order_type, receive_method, paid, paid_note, source')
           .eq('customer_phone', c.phone).order('delivery_date', { ascending: false }).limit(200)
       : Promise.resolve({ data: [], error: null } as any),
   ]);
   if (led.error) return NextResponse.json({ error: led.error.message }, { status: 500 });
   if (ord.error) return NextResponse.json({ error: ord.error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, rows: led.data || [], orders: ord.data || [] });
+  return NextResponse.json({ ok: true, rows: led.data || [], orders: ord.data || [], payer_names: c?.payer_names || [], memo: c?.memo || null });
 }

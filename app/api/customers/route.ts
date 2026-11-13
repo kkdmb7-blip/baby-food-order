@@ -43,6 +43,15 @@ export async function PATCH(req: NextRequest) {
   if (!isAdminAuthed()) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const b = await req.json().catch(() => ({}));
   const id = String(b.id || '');
+
+  // 입금자 이름(엄마·아빠 이름 등)만 고치는 경우 — 입금 대조가 이 이름으로도 손님을 찾는다
+  if (id && Array.isArray(b.payer_names)) {
+    const names = [...new Set(b.payer_names.map((x: any) => String(x).replace(/[^가-힣A-Za-z]/g, '').slice(0, 10)).filter((x: string) => x.length >= 2))].slice(0, 10);
+    const { error } = await supabaseService().from('baby_food_customers').update({ payer_names: names }).eq('id', id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, payer_names: names });
+  }
+
   const baby_name = String(b.baby_name || '').trim().slice(0, 20);
   if (!id || !baby_name) return NextResponse.json({ error: '이름이 비었어요' }, { status: 400 });
 

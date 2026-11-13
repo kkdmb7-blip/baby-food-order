@@ -44,6 +44,8 @@ export type Order = {
   status: OrderStatus;
   memo: string | null;
   customer_id: string | null;
+  paid_note?: string | null;      // 입금 근거 ("입금 김예원 11/12 10:56 21,500원 (자동)") 또는 '대조안함 — …'
+  source?: string | null;         // '엑셀 …' 이면 엑셀에서 옮긴 주문
   arrival_note?: string | null;   // 배송 후 사장님이 남긴 도착 메시지 (손님 앱에 보임)
   arrived_at?: string | null;
   allergies?: string[];

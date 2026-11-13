@@ -8,6 +8,7 @@ import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
+import DepositTab from './DepositTab';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
@@ -15,9 +16,12 @@ import { defaultArrivalNote } from '@/lib/arrival';
 
 // '카톡주문' 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에서 붙여넣으면 바로 읽어 채우므로
 // 같은 일을 두 군데서 하게 된다. 컴포넌트(KakaoOrderEntry.tsx)는 남겨 뒀다.
-type Tab = '주문' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
-const TABS: Tab[] = ['주문', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
+type Tab = '주문' | '입금' | '통계' | '배송' | '조리표' | '주소록' | '메뉴관리' | '고객관리' | '후기' | '엑셀';
+const TABS: Tab[] = ['주문', '입금', '통계', '배송', '조리표', '주소록', '메뉴관리', '고객관리', '후기', '엑셀'];
 const TAB_KEY = 'kkdmb-admin-tab';
+
+// 미입금 = 입금확인도 안 됐고, '대조안함'(엑셀 시절 지난 주문 — 대조할 입금내역이 없음)도 아닌 주문
+const isUnpaid = (o: Order) => !o.paid && o.order_type !== '선결제' && !o.paid_note;
 
 const STATUS_CLS: Record<OrderStatus, string> = {
   접수:    'bg-amber-100 text-amber-800 border-amber-200',
@@ -189,6 +193,8 @@ export default function AdminShell({
 
   async function togglePaid(o: Order) {
     const next = !o.paid;
+    // 입금 대조로 확인된 걸 끄면 그 근거가 사라진다 — 한 번 묻는다
+    if (!next && o.paid_note?.startsWith('입금 ') && !confirm(`${o.paid_note}\n\n이 입금확인을 끌까요? (입금 탭의 짝은 그대로 남아요)`)) return;
     setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: next } : x));
     const d = await fetch(`/api/orders/${o.id}/paid`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -196,6 +202,7 @@ export default function AdminShell({
     }).then(r => r.json()).catch(() => ({ ok: false }));
     // 실패하면 되돌림 — 입금 상태가 화면과 DB에서 달라지면 대조가 무의미해짐
     if (!d.ok) setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid: !next } : x));
+    else setOrders(prev => prev.map(x => x.id === o.id ? { ...x, paid_note: d.paid_note ?? null } : x));
   }
 
   // 복합 주문(delivery_sets 구조) 또는 구형(단순 배열) 모두 지원
@@ -337,7 +344,7 @@ export default function AdminShell({
                       <div className="text-xs text-stone-600 mt-0.5">
                         조리일 <span className="font-bold text-amber-700">{o.delivery_date}</span>
                         {' · '}{o.total_qty}팩 · {o.total_price.toLocaleString()}원
-                        {!o.paid && o.order_type !== '선결제' && <span className="ml-1 text-rose-600 font-bold">미입금</span>}
+                        {isUnpaid(o) && <span className="ml-1 text-rose-600 font-bold">미입금</span>}
                       </div>
                     </a>
                   ))}
@@ -348,7 +355,7 @@ export default function AdminShell({
             <div className="text-sm font-bold text-stone-700 flex items-center gap-2 flex-wrap">
               <span>{selectedDate} 조리분 <span className="text-amber-700">{orders.length}건</span></span>
               {(() => {
-                const unpaid = orders.filter(o => !o.paid && o.order_type !== '선결제');
+                const unpaid = orders.filter(o => isUnpaid(o));
                 const amount = unpaid.reduce((s, o) => s + (o.total_price || 0), 0);
                 if (unpaid.length === 0) return orders.length > 0
                   ? <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">입금 전부 확인됨</span>
@@ -364,7 +371,7 @@ export default function AdminShell({
             <div className="flex gap-1.5 flex-wrap">
               {(['전체', '미입금', '접수', '준비중', '배송중', '배송완료'] as const).map(f => {
                 const n = f === '전체' ? orders.length
-                  : f === '미입금' ? orders.filter(o => !o.paid && o.order_type !== '선결제').length
+                  : f === '미입금' ? orders.filter(o => isUnpaid(o)).length
                   : orders.filter(o => o.status === f).length;
                 return (
                   <button key={f} onClick={() => { setFilter(f); setPicked(new Set()); }}
@@ -393,7 +400,7 @@ export default function AdminShell({
             )}
             {orders.filter(o =>
               filter === '전체' ? true
-              : filter === '미입금' ? (!o.paid && o.order_type !== '선결제')
+              : filter === '미입금' ? (isUnpaid(o))
               : o.status === filter
             ).map(o => (
               <div key={o.id} className="bg-white rounded-xl border border-stone-200 p-4">
@@ -482,12 +489,15 @@ export default function AdminShell({
                   {renderOrderDetail(o)}
                   <span className="text-xs font-bold text-amber-700">총 {o.total_qty}팩 / {o.total_price.toLocaleString()}원</span>
                   {/* 입금 확인 — 엑셀·파이썬으로 대조하던 걸 여기서 바로 체크 */}
-                  <button onClick={() => togglePaid(o)}
+                  <button onClick={() => togglePaid(o)} title={o.paid_note || ''}
                     className={`ml-2 text-[11px] px-2 py-0.5 rounded-full border font-bold ${
                       o.paid ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : o.paid_note ? 'bg-stone-100 text-stone-500 border-stone-200'
                              : 'bg-rose-100 text-rose-700 border-rose-200'}`}>
-                    {o.paid ? '입금확인' : '미입금'}
+                    {o.paid ? '입금확인' : o.paid_note ? '대조안함' : '미입금'}
                   </button>
+                  {/* 입금 근거 — 어느 입금으로 확인했는지(자동/사장님) */}
+                  {o.paid_note && <div className="text-[10px] text-stone-400 mt-0.5">{o.paid_note}</div>}
                 </div>
                 {o.customer_request && (
                   <div className="mb-1 text-xs bg-sky-50 border border-sky-200 rounded-lg px-2 py-1 text-sky-800">
@@ -535,6 +545,7 @@ export default function AdminShell({
 
         {/* 카톡주문 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에 붙여넣으면 바로 읽어 채운다 */}
 
+        {tab === '입금' && <DepositTab />}
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
@@ -1201,7 +1212,7 @@ function ArrivalBox({ order, onSent }: { order: Order; onSent: (note: string, at
 // 마지막 줄의 '남은 팩' 이 위의 잔여와 같아야 정상 — 다르면 빨갛게 알린다.
 type LedgerRow = { created_at: string; kind: string; packs: number; balance_after: number; amount_won: number | null; memo: string | null };
 
-type HistOrder = { id: string; created_at: string; delivery_date: string; stage: string; volume: number; total_qty: number; total_price: number; status: string; order_type: string; receive_method: string | null };
+type HistOrder = { id: string; created_at: string; delivery_date: string; stage: string; volume: number; total_qty: number; total_price: number; shipping_fee?: number; status: string; order_type: string; receive_method: string | null; paid?: boolean; paid_note?: string | null; source?: string | null };
 
 function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string; balance: number; onBalance: (n: number) => void }) {
   const [rows, setRows] = useState<LedgerRow[] | null>(null);
@@ -1212,13 +1223,29 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
   const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  const [payers, setPayers] = useState('');
+  const [payersSaved, setPayersSaved] = useState('');
+  const [memo, setMemo] = useState<string | null>(null);
+
+  async function savePayers() {
+    const list = payers.split(/[,\s·]+/).map(s => s.trim()).filter(Boolean);
+    const r = await fetch('/api/customers', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: customerId, payer_names: list }),
+    }).then(r => r.json()).catch(() => ({}));
+    if (r.ok) { const v = (r.payer_names || []).join(', '); setPayers(v); setPayersSaved(v); setInfo('입금자 이름을 저장했어요 — 다음 입금부터 이 이름으로도 찾아요'); }
+    else setInfo(`못 저장했어요: ${r.error || ''}`);
+  }
 
   useEffect(() => {
     let alive = true;
     fetch(`/api/customers/${customerId}/prepaid`).then(r => r.json())
       .then(d => {
         if (!alive) return;
-        if (d.ok) { setRows(d.rows); setOrders(d.orders || []); setErr(null); }
+        if (d.ok) {
+          setRows(d.rows); setOrders(d.orders || []); setErr(null); setMemo(d.memo || null);
+          const v = (d.payer_names || []).join(', '); setPayers(v); setPayersSaved(v);
+        }
         else setErr(d.error || '불러오지 못했어요');
       })
       .catch(e => { if (alive) setErr(e?.message || '불러오지 못했어요'); });
@@ -1253,6 +1280,16 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
 
   return (
     <div className="mt-3 border-t border-stone-100 pt-2 space-y-3">
+      {/* 입금자 이름 — 아기 이름 대신 엄마·아빠 이름으로 보내는 분이 많다. 입금 대조가 이 이름으로도 찾는다 */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs font-bold text-stone-600">입금자 이름</span>
+        <input value={payers} onChange={e => setPayers(e.target.value)} placeholder="엄마·아빠 이름 (쉼표로 여러 개)"
+          className="flex-1 min-w-[160px] px-2 py-1 border border-stone-300 rounded text-xs outline-none focus:border-amber-400" />
+        <button onClick={savePayers} disabled={payers === payersSaved}
+          className="px-3 py-1 border border-stone-300 bg-stone-50 text-stone-700 rounded text-xs font-bold disabled:opacity-40">저장</button>
+      </div>
+      {memo && <p className="text-[11px] text-stone-500 bg-stone-50 rounded px-2 py-1 leading-relaxed">{memo}</p>}
+
       {/* 잔여 직접 고치기 */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs font-bold text-stone-600">잔여 고치기</span>
@@ -1320,7 +1357,8 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
                     <th className="text-left font-normal">구성</th>
                     <th className="text-right font-normal">팩</th>
                     <th className="text-left font-normal pl-3">구분</th>
-                    <th className="text-left font-normal">상태</th>
+                    <th className="text-right font-normal">금액</th>
+                    <th className="text-left font-normal pl-2">입금</th>
                     <th className="text-left font-normal">주문한 날</th>
                   </tr>
                 </thead>
@@ -1331,8 +1369,14 @@ function PrepaidLedger({ customerId, balance, onBalance }: { customerId: string;
                       <td className="whitespace-nowrap">{o.stage?.replace('단계', '')}{o.volume ? ` ${o.volume}` : ''}</td>
                       <td className="text-right">{o.total_qty}</td>
                       <td className="pl-3 whitespace-nowrap">{o.order_type}{o.receive_method === '픽업' ? '·픽' : ''}</td>
-                      <td className="whitespace-nowrap">{o.status}</td>
-                      <td className="whitespace-nowrap text-stone-400">{fmt(o.created_at)}</td>
+                      <td className="text-right whitespace-nowrap">{((o.total_price || 0) + (o.shipping_fee || 0)).toLocaleString()}</td>
+                      <td className="pl-2 whitespace-nowrap" title={o.paid_note || ''}>
+                        {o.order_type === '선결제' ? <span className="text-stone-400">선결제</span>
+                          : o.paid ? <span className="text-emerald-700">확인</span>
+                          : o.paid_note ? <span className="text-stone-400">대조안함</span>
+                          : <span className="text-rose-600">미입금</span>}
+                      </td>
+                      <td className="whitespace-nowrap text-stone-400">{o.source ? '엑셀' : fmt(o.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
