@@ -550,7 +550,11 @@ export default function AdminShell({
 
         {/* 카톡주문 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에 붙여넣으면 바로 읽어 채운다 */}
 
-        {tab === '입금' && <DepositTab dayOrders={orders as any} date={selectedDate} onTogglePaid={togglePaid} />}
+        {tab === '입금' && <DepositTab dayOrders={orders as any} date={selectedDate} customers={customers} onTogglePaid={togglePaid}
+          onPatch={(orderId, p) => {
+            if (orderId && p.order) setOrders(prev => prev.map(x => x.id === orderId ? { ...x, ...(p.order as any) } : x));
+            if (p.customerId && p.customer) setCustomers(prev => prev.map(c => c.id === p.customerId ? { ...c, ...p.customer } : c));
+          }} />}
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}

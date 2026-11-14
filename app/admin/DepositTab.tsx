@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import CookingTable, { type PayState } from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
+import { PREPAID_UNITS, prepaidPrice, type Customer } from '@/lib/supabase';
 
 /*
   입금 대조 화면
@@ -55,13 +56,38 @@ const what = (o: O) => String(o.stage || '').startsWith('반찬') ? '반찬' : `
 */
 type SheetOrder = Parameters<typeof buildCookingSheet>[0][number] & {
   paid?: boolean; paid_note?: string | null; order_type?: string | null; total_price?: number; shipping_fee?: number;
+  customer_id?: string | null;
 };
+const isPrepaidUse = (o: SheetOrder) => String(o.paid_note || '').startsWith('선결제 차감');
 const payState = (o: SheetOrder): PayState =>
-  o.paid ? 'paid' : isOpenworld(o.paid_note) ? 'openworld' : o.order_type === '선결제' ? 'prepaid' : o.paid_note ? 'skip' : 'unpaid';
+  isPrepaidUse(o) || o.order_type === '선결제' ? 'prepaid'
+  : o.paid ? 'paid' : isOpenworld(o.paid_note) ? 'openworld' : o.paid_note ? 'skip' : 'unpaid';
+const hasPrepaid = (c?: Customer) => !!c && (c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0);
 
-function PaySheet({ orders, date, onToggle }: { orders: SheetOrder[]; date: string; onToggle: (o: SheetOrder) => void }) {
+// 주문의 단계·용량 → 선결제 할인표 이름 ('완료기 300g'). 중기1의 240/310 도 230/300 표를 쓴다.
+function labelOf(o: SheetOrder): string | null {
+  const st = String(o.stage || '');
+  const kind = st.startsWith('중기') ? '중기' : st.startsWith('후기') ? '후기' : st.startsWith('완료') ? '완료기' : null;
+  if (!kind) return null;
+  return `${kind} ${Number(o.volume) >= 300 ? 300 : 230}g`;
+}
+
+type Patch = { order?: Partial<SheetOrder>; customer?: Partial<Customer>; customerId?: string };
+
+function PaySheet({ orders, date, customers, onToggle, onPatch }: {
+  orders: SheetOrder[]; date: string; customers: Customer[];
+  onToggle: (o: SheetOrder) => void; onPatch: (orderId: string | null, p: Patch) => void;
+}) {
+  /* 이름을 누르면
+       '입금 체크' 모드 — 선결제가 있는 손님(남은 팩·반찬 회수)은 선결제 판이 열리고, 나머지는 입금확인을 켜고 끈다(전과 같음)
+       '선결제' 모드   — 누구든 선결제 판이 열린다. 선결제를 새로 시작하는 손님(충전)도 여기서
+     2026-11-14 사장님: "체크 기능 살리면서 선결제 시작한 애들 있으면 그것도 거기서 바로 수정" */
+  const [mode, setMode] = useState<'pay' | 'prepaid'>('pay');
+  const [openId, setOpenId] = useState<string | null>(null);
   const sheet = buildCookingSheet(orders as any, date);
   const byId = new Map(orders.map(o => [o.id, o]));
+  const custOf = (o: SheetOrder) =>
+    customers.find(c => (o.customer_id && c.id === o.customer_id)) || customers.find(c => !!o.customer_phone && c.phone === o.customer_phone);
   const count: Record<PayState, number> = { paid: 0, unpaid: 0, openworld: 0, prepaid: 0, skip: 0 };
   let unpaidWon = 0;
   for (const o of orders) {
@@ -69,6 +95,12 @@ function PaySheet({ orders, date, onToggle }: { orders: SheetOrder[]; date: stri
     if (s === 'unpaid') unpaidWon += (o.total_price || 0) + (o.shipping_fee || 0);
   }
   const dow = '일월화수목금토'[new Date(date + 'T00:00:00Z').getUTCDay()];
+  const click = (o: SheetOrder) => {
+    if (mode === 'prepaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
+    else onToggle(o);
+  };
+  const openOrder = openId ? byId.get(openId) : undefined;
+
   return (
     <div className="bg-white rounded-xl border border-stone-200 p-4 overflow-x-auto">
       <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap mb-2 text-[13px]">
@@ -78,24 +110,159 @@ function PaySheet({ orders, date, onToggle }: { orders: SheetOrder[]; date: stri
         {count.openworld > 0 && <span className="font-bold text-sky-800">오픈월드 {count.openworld}</span>}
         {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
         {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
+        <span className="ml-auto flex rounded-lg border border-stone-300 overflow-hidden text-[12px] font-bold">
+          <button onClick={() => setMode('pay')} className={`px-3 py-1 ${mode === 'pay' ? 'bg-emerald-100 text-emerald-800' : 'text-stone-500'}`}>입금 체크</button>
+          <button onClick={() => setMode('prepaid')} className={`px-3 py-1 border-l border-stone-300 ${mode === 'prepaid' ? 'bg-violet-100 text-violet-800' : 'text-stone-500'}`}>선결제</button>
+        </span>
       </div>
       <p className="mb-2 text-[11px] text-stone-500 leading-relaxed">
         <span className="px-1 bg-emerald-200 rounded">초록 ✓</span> 입금확인 ·{' '}
         <span className="px-1 border border-stone-300 rounded text-rose-700">흰 칸 빨간 이름</span> 미입금 ·{' '}
-        <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드(나중에 한꺼번에 정산) ·{' '}
-        <span className="px-1 bg-violet-100 rounded">보라</span> 선결제 ·{' '}
-        <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).
-        이름을 누르면 입금확인이 켜지고 꺼집니다. 배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배 — 돈도 두 날 것을 합쳐 보내실 수 있어요.
+        <span className="px-1 bg-violet-100 rounded">보라</span> 선결제에서 뺌 ·{' '}
+        <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드 ·{' '}
+        <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).{' '}
+        {mode === 'pay'
+          ? <>이름을 누르면 입금확인이 켜지고 꺼집니다. <b>선결제가 남은 손님</b>은 선결제 판이 열립니다.</>
+          : <><b>선결제 모드</b> — 누구든 이름을 누르면 선결제 판이 열립니다(충전·차감·남은 팩 고치기).</>}
+        {' '}배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배.
       </p>
+
+      {openOrder && (
+        <PrepaidPanel key={openOrder.id} o={openOrder} cust={custOf(openOrder)}
+          onClose={() => setOpenId(null)} onToggle={() => { onToggle(openOrder); setOpenId(null); }}
+          onPatch={p => onPatch(openOrder.id, p)} />
+      )}
+
       {sheet.people === 0 && sheet.banchan.length === 0
         ? <p className="text-center text-stone-400 text-sm py-6">이 날짜에 주문이 없어요 — 맨 위에서 날짜를 바꿔 보세요</p>
-        : <CookingTable sheet={sheet} pay={{ state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; }, onToggle: id => { const o = byId.get(id); if (o) onToggle(o); } }} />}
+        : <CookingTable sheet={sheet} pay={{ state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; }, onToggle: id => { const o = byId.get(id); if (o) click(o); } }} />}
     </div>
   );
 }
 
-export default function DepositTab({ dayOrders = [], date, onTogglePaid }: {
-  dayOrders?: SheetOrder[]; date?: string; onTogglePaid?: (o: any) => void;
+function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
+  o: SheetOrder; cust?: Customer; onClose: () => void; onToggle: () => void; onPatch: (p: Patch) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const stage = String(o.stage || '');
+  const banchan = stage.startsWith('반찬');
+  const unit = banchan ? '회' : '팩';
+  const qty = Number(o.total_qty) || 0;
+  const left = banchan ? (cust?.prepaid_banchan || 0) : (cust?.prepaid_balance || 0);
+  const used = /^선결제 차감 \d+(팩|회) \(입금 탭/.test(String(o.paid_note || '')); // 이 화면에서 뺀 것
+  const label = cust?.prepaid_label || labelOf(o);
+  const [edit, setEdit] = useState(String(left));
+
+  async function use(on: boolean) {
+    if (!confirm(on
+      ? `${o.baby_name} — 이 주문 ${qty}${unit}을 선결제에서 뺄까요?\n남은 ${left}${unit} → ${left - qty}${unit}`
+      : `${o.baby_name} — 선결제에서 뺀 ${qty}${unit}을 돌려놓을까요?\n남은 ${left}${unit} → ${left + qty}${unit}, 주문은 미입금으로`)) return;
+    setBusy(true); setInfo(null);
+    const d = await fetch('/api/admin/order-prepaid', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: o.id, use: on }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
+    onPatch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: { [d.field]: d.balance } as any });
+    setEdit(String(d.balance));
+    setInfo(on ? `선결제에서 뺐어요 — 남은 ${d.balance}${unit}` : `돌려놓았어요 — 남은 ${d.balance}${unit}`);
+  }
+
+  async function setLeft() {
+    if (!cust) return;
+    const n = Number(edit.trim() || 0);
+    if (!Number.isInteger(n) || (banchan && n < 0)) { setInfo('숫자로 적어주세요'); return; }
+    if (n === left) return;
+    if (!confirm(`${o.baby_name} — 남은 ${left}${unit} → ${n}${unit}로 고칠까요?`)) { setEdit(String(left)); return; }
+    setBusy(true); setInfo(null);
+    const d = await fetch(`/api/customers/${cust.id}/prepaid`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(banchan ? { item: '반찬', set: n, memo: '입금 탭에서 고침' } : { set: n, memo: '입금 탭에서 고침' }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setInfo(`못 고쳤어요: ${d.error || ''}`); setEdit(String(left)); return; }
+    onPatch({ customerId: cust.id, customer: banchan ? { prepaid_banchan: d.new_balance } : { prepaid_balance: d.new_balance } });
+    setInfo(`남은 ${d.new_balance}${unit}로 고쳤어요`);
+  }
+
+  async function charge(units: number) {
+    if (!cust) return;
+    const wonAmt = prepaidPrice(label, units);
+    if (!confirm(wonAmt ? `${o.baby_name} — ${label} ${units}팩 ${wonAmt.toLocaleString()}원 받으셨나요?` : `${o.baby_name} — ${units}팩을 넣을까요?`)) return;
+    setBusy(true); setInfo(null);
+    const d = await fetch(`/api/customers/${cust.id}/prepaid`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ units, amount_won: wonAmt || undefined, label: label || undefined }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setInfo(`못 넣었어요: ${d.error || ''}`); return; }
+    onPatch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, ...(label ? { prepaid_label: label } : {}) } });
+    setEdit(String(d.new_balance));
+    setInfo(`${units}팩 넣었어요 — 남은 ${d.new_balance}팩. 이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
+  }
+
+  const btn = 'px-2.5 py-1 rounded-lg border text-[12px] font-bold disabled:opacity-40';
+  return (
+    <div className="mb-3 border-2 border-violet-300 bg-violet-50/60 rounded-xl p-3 text-[12px] space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <b className="text-[14px] text-stone-900">{o.baby_name}</b>
+        <span className="text-stone-600">{banchan ? (stage === '반찬낱개' ? `반찬 낱개 ${qty}개` : `반찬 ${qty}세트`) : `${stage.replace('단계', '')} ${o.volume || ''} ${qty}팩`} · {won((o.total_price || 0) + (o.shipping_fee || 0))}</span>
+        <span className={`px-1.5 rounded ${used ? 'bg-violet-200 text-violet-900' : o.paid ? 'bg-emerald-200 text-emerald-900' : 'bg-white border border-stone-300 text-rose-700'}`}>
+          {o.order_type === '선결제' ? '선결제 주문' : used ? '선결제에서 뺌' : o.paid ? '입금확인' : '미입금'}
+        </span>
+        <button onClick={onClose} className="ml-auto text-stone-500 text-[12px] underline">닫기</button>
+      </div>
+      {o.paid_note && <p className="text-[11px] text-stone-500">{o.paid_note}</p>}
+
+      {!cust ? <p className="text-rose-700">손님 카드를 못 찾았어요 — 고객관리에서 이 손님을 먼저 찾아 주세요(카드가 연결돼야 선결제를 씁니다).</p> : (
+        <>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold text-stone-700">남은 {banchan ? '반찬' : '선결제'}</span>
+            <input value={edit} onChange={e => setEdit(e.target.value.replace(banchan ? /\D/g : /[^\d-]/g, ''))} disabled={busy}
+              onBlur={setLeft} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} inputMode="numeric"
+              className={`w-14 px-1.5 py-0.5 border rounded text-right text-[13px] font-black outline-none focus:border-violet-400 ${left < 0 ? 'text-red-600' : 'text-violet-800'} border-violet-300`} />
+            <span>{unit}{!banchan && label ? <span className="ml-1 text-stone-400">{label}</span> : null}</span>
+            <span className="text-[11px] text-stone-400">(고치고 Enter)</span>
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {o.order_type === '선결제' ? (
+              <span className="text-stone-500">주문할 때 이미 선결제로 빠진 주문이에요 — 바꾸려면 주문을 고쳐 주세요</span>
+            ) : used ? (
+              <button disabled={busy} onClick={() => use(false)} className={`${btn} border-stone-300 bg-white text-stone-700`}>선결제 되돌리기 (+{qty}{unit})</button>
+            ) : stage === '반찬낱개' ? (
+              <span className="text-stone-500">반찬 낱개는 선결제(세트 회수)로 뺄 수 없어요</span>
+            ) : (
+              <button disabled={busy || o.paid} onClick={() => use(true)} className={`${btn} border-violet-400 bg-violet-100 text-violet-900`}>
+                선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})
+              </button>
+            )}
+            {!used && o.order_type !== '선결제' && (
+              <button disabled={busy} onClick={onToggle} className={`${btn} ${o.paid ? 'border-stone-300 bg-white text-stone-600' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>
+                {o.paid ? '입금확인 끄기' : '입금확인 (돈으로 받음)'}
+              </button>
+            )}
+          </div>
+          {!banchan && (
+            <div className="flex gap-1.5 flex-wrap items-center">
+              <span className="text-stone-500">선결제 충전{label ? ` (${label})` : ''}</span>
+              {PREPAID_UNITS.map(u => (
+                <button key={u} disabled={busy} onClick={() => charge(u)} className={`${btn} border-amber-200 bg-white text-amber-800`}>
+                  +{u}팩{prepaidPrice(label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(label, u)!.toLocaleString()}원</span> : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {info && <p className="text-[12px] text-violet-800 font-bold">{info}</p>}
+    </div>
+  );
+}
+
+export default function DepositTab({ dayOrders = [], date, customers = [], onTogglePaid, onPatch }: {
+  dayOrders?: SheetOrder[]; date?: string; customers?: Customer[]; onTogglePaid?: (o: any) => void;
+  onPatch?: (orderId: string | null, p: Patch) => void;
 }) {
   const [showBank, setShowBank] = useState(false);
   const [deps, setDeps] = useState<Dep[] | null>(null);
@@ -164,7 +331,8 @@ export default function DepositTab({ dayOrders = [], date, onTogglePaid }: {
 
   return (
     <div className="space-y-4">
-      {date && <PaySheet orders={dayOrders} date={date} onToggle={toggleFromSheet} />}
+      {date && <PaySheet orders={dayOrders} date={date} customers={customers} onToggle={toggleFromSheet}
+        onPatch={(id, p) => onPatch?.(id, p)} />}
 
       <button onClick={() => setShowBank(v => !v)}
         className="w-full flex justify-between items-center px-4 py-3 bg-white rounded-xl border border-stone-200 text-sm font-bold text-stone-700">
