@@ -85,8 +85,23 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
      2026-11-14 사장님: "체크 기능 살리면서 선결제 시작한 애들 있으면 그것도 거기서 바로 수정" */
   const [mode, setMode] = useState<'pay' | 'prepaid'>('pay');
   const [openId, setOpenId] = useState<string | null>(null);
-  const sheet = buildCookingSheet(orders as any, date);
   const byId = new Map(orders.map(o => [o.id, o]));
+  const sheet = buildCookingSheet(orders as any, date);
+  /* 오픈월드는 블록마다 아래쪽으로 (사장님: 엑셀에서도 월·목 표 아래에 따로 적었다).
+     한 단계가 20명 넘어 여러 칸으로 나뉘면 단계 전체를 한 줄로 이어 정렬한 뒤 원래 칸 크기대로 다시 나눈다
+     — 그래야 오픈월드가 칸마다 흩어지지 않고 그 단계 맨 끝에 모인다. 조리표 탭 순서는 그대로다. */
+  {
+    const ow = (id: string) => isOpenworld(byId.get(id)?.paid_note) ? 1 : 0;
+    for (const stage of new Set(sheet.sections.map(s => s.stage))) {
+      const parts = sheet.sections.filter(s => s.stage === stage);
+      const all = parts.flatMap(s => s.list).map((p, i) => ({ p, i }))
+        .sort((a, b) => ow(a.p.orderId) - ow(b.p.orderId) || a.i - b.i).map(x => x.p);
+      let k = 0;
+      for (const s of parts) { const n = s.list.length; s.list = all.slice(k, k + n); k += n; }
+    }
+    sheet.banchan = sheet.banchan.map((b, i) => ({ b, i }))
+      .sort((x, y) => ow(x.b.orderId) - ow(y.b.orderId) || x.i - y.i).map(x => x.b);
+  }
   const custOf = (o: SheetOrder) =>
     customers.find(c => (o.customer_id && c.id === o.customer_id)) || customers.find(c => !!o.customer_phone && c.phone === o.customer_phone);
   const count: Record<PayState, number> = { paid: 0, unpaid: 0, openworld: 0, prepaid: 0, skip: 0 };
