@@ -69,12 +69,14 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
             <button onClick={() => pay.onOpen!(orderId)} title="판 열기 — 선결제·택배비·정보"
               className="absolute inset-y-0 right-0 w-5 flex items-center justify-center text-[16px] leading-none text-violet-400 hover:text-violet-800 hover:bg-violet-100/80 print:hidden">▸</button>
           )}
+          {/* 마이너스(입금 요청)는 이름 줄 밖, 왼쪽 위 모서리에 작게 — ▸ 와 겹쳐 안 보이고, '추가' 와 같이 있으면 두 줄이 되던 것
+              (사장님 2026-11-14 "화살표랑 마이너스 겹치면 안 보여", "황도현은 추가랑 마이너스가 같이 있어 2줄") */}
+          {tag && <span className="absolute top-0 left-0 z-10 px-[2px] rounded-br bg-red-500 text-white text-[9px] leading-[11px] font-black pointer-events-none">{tag}</span>}
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
-            className="w-full text-center hover:underline">
+            className="w-full text-center whitespace-nowrap hover:underline">
             {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}
             {/* 선결제에서 뺀 것도 체크 — 사장님 2026-11-14 "선결제도 체크 표기 넣어줘" */}
             {st === 'prepaid' && <span className="text-violet-700 font-black">✓</span>}{node}
-            {tag && <span className="ml-0.5 px-0.5 rounded bg-red-500 text-white text-[10px] font-black">{tag}</span>}
           </button>
         </td>
       );
