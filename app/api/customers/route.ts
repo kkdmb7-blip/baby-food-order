@@ -13,6 +13,40 @@ export async function GET(req: NextRequest) {
   const sb = supabaseService();
   const q = (req.nextUrl.searchParams.get('q') || '').trim().slice(0, 40);
 
+  // ?all=1 — 손님 전부 + 마지막 주문일(취소 빼고). 고객관리 목록을 ㄱㄴ순으로 다 띄우고
+  // 3개월 넘게 주문이 없는 손님을 아래로 따로 뺄 때 쓴다. 1000행 절단을 피하려고 나눠 받는다.
+  if (req.nextUrl.searchParams.get('all') === '1') {
+    const page = async (t: string, cols: string, f?: (x: any) => any) => {
+      const out: any[] = [];
+      for (let from = 0; ; from += 1000) {
+        let qq: any = sb.from(t).select(cols).order('id').range(from, from + 999);
+        if (f) qq = f(qq);
+        const { data, error } = await qq;
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < 1000) break;
+      }
+      return out;
+    };
+    try {
+      const custs = await page('baby_food_customers', '*');
+      const orders = await page('baby_food_orders', 'customer_id, customer_phone, delivery_date', x => x.neq('status', '취소'));
+      const byId: Record<string, string> = {}, byPhone: Record<string, string> = {};
+      for (const o of orders) {
+        const d = String(o.delivery_date || '');
+        if (o.customer_id && (!byId[o.customer_id] || byId[o.customer_id] < d)) byId[o.customer_id] = d;
+        if (o.customer_phone && (!byPhone[o.customer_phone] || byPhone[o.customer_phone] < d)) byPhone[o.customer_phone] = d;
+      }
+      const customers = custs.map(c => {
+        const a = byId[c.id] || '', b = c.phone ? byPhone[c.phone] || '' : '';
+        return { ...c, last_order: (a > b ? a : b) || null };
+      });
+      return NextResponse.json({ customers });
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+    }
+  }
+
   let query = sb.from('baby_food_customers').select('*');
   if (q) {
     // ilike 특수문자(% _ ,)가 들어오면 패턴이 깨지거나 or() 구문이 쪼개진다
