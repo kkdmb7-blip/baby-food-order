@@ -124,6 +124,43 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                     'bg-violet-100', 'bg-lime-100', 'bg-orange-100', 'bg-cyan-100'];
   const groupBg = (c?: number) => (c === undefined ? '' : GROUP_BG[c % GROUP_BG.length]);
 
+  // ── 반찬 자리별 표 (1회 · 정기 · 오픈월드) ──
+  type BRow = CookingSheet['banchan'][number];
+  const bGroup = (g: BRow['group']) => sheet.banchan.filter(b => b.group === g);
+  const shipCls = (s: string) => (s === '픽' ? 'text-emerald-700' : s === '택' ? 'text-stone-900' : 'text-sky-700');
+  const bName = (b: BRow) => <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}{b.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print">정보?</span>}</>;
+  const banchanTable = (title: string, rows: BRow[], withAdd: boolean) => (
+    <table className="table-fixed border-collapse text-[14px] leading-tight">
+      <colgroup><col style={{ width: 78 }} /><col style={{ width: 22 }} /><col style={{ width: 26 }} /></colgroup>
+      <thead>
+        <tr>
+          <th colSpan={3} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+            {title}<span className="ml-1 font-normal text-[10px] text-stone-600">{rows.length}명</span>
+          </th>
+        </tr>
+        <tr className="bg-stone-200">
+          <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
+          <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
+          <th className="border border-black px-0 py-[2px] text-[10px]">세트</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((b, i) => (
+          <tr key={i}>
+            {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
+            <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
+            <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>
+          </tr>
+        ))}
+        <tr className="bg-stone-100">
+          <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">세트</td>
+          <td className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + b.qty, 0)}</td>
+        </tr>
+        {withAdd && add && <AddRow stage="반찬" date={add.date} onAdded={add.onAdded} cols={3} />}
+      </tbody>
+    </table>
+  );
+
   const cell = (v: number, red: boolean) =>
     v ? <span className={red ? 'text-red-600 font-black' : 'font-black'}>{v}</span>
       : <span className="text-stone-200">·</span>;
@@ -256,52 +293,15 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           </div>
         ))}
 
+        {/* 반찬 — 엑셀 '수반찬 주문내역' 자리 그대로: 왼쪽 1회 주문 | 오른쪽 위 정기배송, 그 아래 오픈월드 | 뒷장 메뉴변경
+            (사장님 2026-11-14 "엑셀 파일에는 다 이유가 있어"). 나누는 규칙은 lib/cookingSheet banchanGroupsOf */}
         {sheet.banchan.length > 0 && (
-          <div className="break-inside-avoid">
-          <table className="table-fixed border-collapse text-[14px] leading-tight">
-            <colgroup>
-              <col style={{ width: 78 }} />
-              <col style={{ width: 22 }} />
-              <col style={{ width: 26 }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th colSpan={3} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
-                  반찬 세트<span className="ml-1 font-normal text-[10px] text-stone-600">{sheet.banchan.length}명</span>
-                </th>
-              </tr>
-              <tr className="bg-stone-200">
-                <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
-                <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
-                <th className="border border-black px-0 py-[2px] text-[10px]">수</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sheet.banchan.map((b, i) => {
-                const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}{b.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print">정보?</span>}</>;
-                return (
-                <tr key={i}>
-                  {nameCell(b.orderId, b.phone, b.color, bn, 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
-                  <td className={`border border-black text-center py-[2px] text-[12px] font-black ${b.ship === '픽' ? 'text-emerald-700' : b.ship === '택' ? 'text-stone-900' : 'text-sky-700'}`}>{b.ship}</td>
-                  {/* 낱개는 세트가 아니라 개수다 — 이름 옆 '낱개' 꼬리표로 구분한다 */}
-                  <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>
-                </tr>
-                );
-              })}
-              <tr className="bg-stone-100">
-                <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">
-                  세트{sheet.banchanSingleTotal > 0 && <span className="text-amber-700"> · 낱개</span>}
-                </td>
-                <td className="border-2 border-black text-center py-[2px] font-black">
-                  {sheet.banchanTotal}
-                  {sheet.banchanSingleTotal > 0 && (
-                    <span className="block text-[10px] text-amber-700 leading-none">{sheet.banchanSingleTotal}개</span>
-                  )}
-                </td>
-              </tr>
-              {add && <AddRow stage="반찬" date={add.date} onAdded={add.onAdded} cols={3} />}
-            </tbody>
-          </table>
+          <div className="break-inside-avoid">{banchanTable('1회 주문', bGroup('1회'), true)}</div>
+        )}
+        {(bGroup('정기').length > 0 || bGroup('오픈월드').length > 0) && (
+          <div className="break-inside-avoid flex flex-col gap-2">
+            {bGroup('정기').length > 0 && banchanTable('정기배송', bGroup('정기'), false)}
+            {bGroup('오픈월드').length > 0 && banchanTable('오픈월드', bGroup('오픈월드'), false)}
           </div>
         )}
 
@@ -337,6 +337,57 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           </div>
         )}
       </div>
+
+      {/* 뒷장 — 세트 그대로가 아닌 아이(메뉴 변경·낱개). 엑셀 '주문변경' 시트처럼 반찬마다 몇 개인지 칸으로 */}
+      {bGroup('메뉴변경').length > 0 && (
+        <div className="mt-3 print:break-before-page break-inside-avoid">
+          {(() => {
+            const rows = bGroup('메뉴변경');
+            const items = sheet.banchanByItem.map(x => x.name);
+            const cols = items.length + 4;
+            return (
+              <table className="table-fixed border-collapse text-[14px] leading-tight">
+                <colgroup>
+                  <col style={{ width: 78 }} /><col style={{ width: 22 }} />
+                  {items.map(n => <col key={n} style={{ width: 34 }} />)}
+                  <col style={{ width: 28 }} /><col style={{ width: 52 }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th colSpan={cols} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                      메뉴 변경<span className="ml-1 font-normal text-[10px] text-stone-600">{rows.length}명 · 세트 그대로가 아닌 아이</span>
+                    </th>
+                  </tr>
+                  <tr className="bg-stone-200">
+                    <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
+                    <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
+                    {items.map(n => <th key={n} className="border border-black px-0 py-[2px] text-[10px] leading-none break-all">{n}</th>)}
+                    <th className="border border-black px-0 py-[2px] text-[10px]">합계</th>
+                    <th className="border border-black px-0 py-[2px] text-[10px]">비고</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((b, i) => (
+                    <tr key={i}>
+                      {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
+                      <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
+                      {items.map(n => <td key={n} className="border border-black text-center py-[2px] font-black">{b.menus[n] || <span className="text-stone-200">·</span>}</td>)}
+                      <td className="border border-black text-center py-[2px] font-black">{Object.values(b.menus).reduce((a, v) => a + (v || 0), 0)}</td>
+                      <td className="border border-black text-center py-[2px] text-[10px] font-bold">{b.note || ''}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-stone-100">
+                    <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
+                    {items.map(n => <td key={n} className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + (b.menus[n] || 0), 0) || <span className="text-stone-300">·</span>}</td>)}
+                    <td className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + Object.values(b.menus).reduce((x, v) => x + (v || 0), 0), 0)}</td>
+                    <td className="border-2 border-black" />
+                  </tr>
+                </tbody>
+              </table>
+            );
+          })()}
+        </div>
+      )}
 
       {/* '합쳐 담기' 상자는 뺐다 (사장님: "이 칸은 없애도 돼"). 다른 칸에 줄이 더 있다는 건
           이름 칸 배경색(같은 사람 = 같은 색)으로 보이고, 어느 칸인지는 사장님이 직접 보신다. */}

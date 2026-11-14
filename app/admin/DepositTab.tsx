@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CookingTable, { type PayState } from './CookingTable';
-import { buildCookingSheet } from '@/lib/cookingSheet';
+import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
@@ -101,7 +101,7 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
       .then(d => { if (alive && d.ok && d.printed) setPrintedAt(d.printedAt || null); }).catch(() => { /* 못 읽어도 표는 나온다 */ });
     return () => { alive = false; };
   }, [date]);
-  const sheet = buildCookingSheet(orders as any, date, printedAt);
+  const sheet = buildCookingSheet(orders as any, date, printedAt, { isBanchanRegular: banchanRegularMatcher(customers) });
   /* 오픈월드는 블록마다 아래쪽으로 (사장님: 엑셀에서도 월·목 표 아래에 따로 적었다).
      한 단계가 20명 넘어 여러 칸으로 나뉘면 단계 전체를 한 줄로 이어 정렬한 뒤 원래 칸 크기대로 다시 나눈다
      — 그래야 오픈월드가 칸마다 흩어지지 않고 그 단계 맨 끝에 모인다. 조리표 탭 순서는 그대로다. */

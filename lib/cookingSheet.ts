@@ -94,7 +94,9 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string; isNew?: boolean; createdAt?: string; needInfo?: boolean }[];
+  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string; isNew?: boolean; createdAt?: string; needInfo?: boolean;
+    /** 엑셀 반찬 시트 자리 — 1회(왼쪽) · 정기(오른쪽 위) · 오픈월드(그 아래) · 메뉴변경(뒷장). note = 메뉴변경 줄의 비고(정기·오픈월드) */
+    group: BanchanGroup; note?: string }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
@@ -114,7 +116,44 @@ type OrderLike = {
   created_at?: string;
   address?: string | null;
   source?: string | null;
+  order_type?: string | null;
+  paid_note?: string | null;
+  customer_id?: string | null;
 };
+
+/* 반찬 자리 — 사장님 엑셀 '수반찬 주문내역' 그대로 (2026-11-14 "엑셀 파일에는 다 이유가 있어")
+     주문 시트 왼쪽 = 1회 주문, 오른쪽 위 = 정기배송, 그 아래 = 오픈월드, 뒷장(주문변경 시트) = 세트 그대로가 아닌 아이(메뉴 변경·낱개).
+     이름표 시트도 같은 순서로 칸을 채운다. 조리표·입금 표·종이·이름표가 모두 이 함수 하나로 나눈다.
+     정기 = 정기 주문(order_type) 이거나 손님 카드 '반찬 정기'(banchan_regular). 오픈월드 = 주문 표시나 엑셀 비고. */
+export const BANCHAN_GROUPS = ['1회', '정기', '오픈월드', '메뉴변경'] as const;
+/** 손님 카드 목록에서 '반찬 정기' 판정 함수를 만든다 — 주문의 카드(customer_id)나 연락처로 찾는다 */
+export function banchanRegularMatcher(customers: { id: string; phone?: string | null; banchan_regular?: boolean | null }[]) {
+  const ids = new Set<string>(), phones = new Set<string>();
+  for (const c of customers) if (c.banchan_regular) { ids.add(c.id); if (c.phone) phones.add(c.phone); }
+  return (o: { customer_id?: string | null; customer_phone?: string | null }) =>
+    (!!o.customer_id && ids.has(o.customer_id)) || (!!o.customer_phone && phones.has(o.customer_phone));
+}
+export type BanchanGroup = typeof BANCHAN_GROUPS[number];
+export function banchanGroupsOf(
+  rows: { orderId: string; qty: number; menus: Record<string, number>; single?: boolean }[],
+  orderOf: (id: string) => OrderLike | undefined,
+  isRegular?: (o: OrderLike) => boolean,
+): Map<string, { group: BanchanGroup; note?: string }> {
+  // 그날 세트 메뉴(모든 세트 주문에 나온 반찬) — 이것을 세트 수만큼 똑같이 받으면 '세트 그대로'
+  const items = new Set<string>();
+  for (const r of rows) if (!r.single) for (const [k, v] of Object.entries(r.menus || {})) if (v) items.add(k);
+  const out = new Map<string, { group: BanchanGroup; note?: string }>();
+  for (const r of rows) {
+    const o = orderOf(r.orderId);
+    const ow = !!o && (String(o.paid_note || '').startsWith('오픈월드') || /오픈월드/.test(String(o.memo || '')));
+    const reg = !!o && (o.order_type === '정기' || !!isRegular?.(o));
+    const m = r.menus || {};
+    const plain = !r.single && (Object.values(m).every(v => !v) || [...items].every(k => (m[k] || 0) === r.qty));
+    if (!plain) out.set(r.orderId, { group: '메뉴변경', note: ow ? '오픈월드' : reg ? '정기' : r.single ? '낱개' : undefined });
+    else out.set(r.orderId, { group: ow ? '오픈월드' : reg ? '정기' : '1회' });
+  }
+  return out;
+}
 
 /** 받는 방법을 종이에 적을 한 글자로 — 픽(픽업) · 택(택배) · 당(두발 당일배송).
  *  직배송(강서·양천 자체배송)이 기본이라 그건 비워 둔다.
@@ -147,6 +186,7 @@ const CHUNK = 20;
 
 export function buildCookingSheet(
   orders: OrderLike[], date: string, printedAt?: string | null,
+  opts?: { isBanchanRegular?: (o: OrderLike) => boolean },
 ): CookingSheet {
   const dispName = disambiguateNames(orders as any);
   /* '추가' = 조리표를 뽑은 뒤 들어온 줄. 뽑은 기록이 없는 날(엑셀 시절·안 뽑은 날)은 그날 오전 7시 뒤에 넣은 줄.
@@ -165,7 +205,7 @@ export function buildCookingSheet(
         banchan.push({
           orderId: o.id, name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage), ship: shipTag(o),
-          isNew: isNewOrder(o), createdAt: o.created_at, needInfo: needInfo(o),
+          isNew: isNewOrder(o), createdAt: o.created_at, needInfo: needInfo(o), group: '1회',
         });
         continue;
       }
@@ -274,10 +314,13 @@ export function buildCookingSheet(
       || a.name.localeCompare(b.name, 'ko') || a.volume - b.volume);
   }
   {
-    const keep = banchan.map((b, i) => ({ b, i }));
-    keep.sort((x, y) => Number(x.b.isNew) - Number(y.b.isNew)
-      || (x.b.isNew ? String(x.b.createdAt || '').localeCompare(String(y.b.createdAt || '')) : 0) || x.i - y.i);
-    banchan.splice(0, banchan.length, ...keep.map(x => x.b));
+    // 반찬 자리 나누기(1회·정기·오픈월드·메뉴변경) → 자리마다 이름 ㄱㄴ순, 나중에 넣은 아이는 그 자리 맨 아래
+    const byId = new Map(orders.map(o => [o.id, o]));
+    const g = banchanGroupsOf(banchan, id => byId.get(id), opts?.isBanchanRegular);
+    for (const b of banchan) { const x = g.get(b.orderId); if (x) { b.group = x.group; b.note = x.note; } }
+    banchan.sort((x, y) => BANCHAN_GROUPS.indexOf(x.group) - BANCHAN_GROUPS.indexOf(y.group)
+      || Number(!!x.isNew) - Number(!!y.isNew)
+      || (x.isNew ? String(x.createdAt || '').localeCompare(String(y.createdAt || '')) : x.name.localeCompare(y.name, 'ko')));
   }
 
   const sections: Section[] = STAGES.filter(s => (byStage.get(s) || []).length > 0).flatMap(stage => {
@@ -326,8 +369,11 @@ export function buildCookingSheet(
       // 손님 메뉴표와 같은 번호 순서로 (lib/banchanOrder) — 국은 맨 뒤
       return sortBanchanNames([...m.entries()].map(([name, qty]) => ({ name, qty })));
     })(),
+    // 엑셀에서 옮길 때 남긴 자리 표시('주문변경 시트'·'비고 오픈월드'·'내')는 이제 표 자리·배송 칸으로 보이니 메모에선 뺀다
     memos: orders
-      .filter(o => o.memo)
-      .map(o => ({ name: dispName.get(o.id) || o.baby_name, memo: String(o.memo) })),
+      .map(o => ({ name: dispName.get(o.id) || o.baby_name,
+        memo: String(o.memo || '').split(' · ').map(s => s.trim())
+          .filter(s => s && !/^엑셀 주문변경 시트$|^엑셀 비고 '오픈월드'$|^엑셀 표시 '내'$/.test(s)).join(' · ') }))
+      .filter(m => m.memo),
   };
 }

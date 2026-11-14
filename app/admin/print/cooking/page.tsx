@@ -3,7 +3,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, MENU_TYPES, type Order } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
 import { orderDates, shiftDate } from '@/lib/orderItems';
-import { buildCookingSheet, shortIngredients } from '@/lib/cookingSheet';
+import { buildCookingSheet, shortIngredients, banchanRegularMatcher } from '@/lib/cookingSheet';
 import CookingTable from '../../CookingTable';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
@@ -58,7 +58,9 @@ export default async function CookingPrint({ searchParams }: { searchParams: { d
     }));
   } catch { /* 메뉴를 못 불러와도 조리표 자체는 나와야 함 */ }
 
-  const sheet = buildCookingSheet(orders as any, date);
+  // 반찬 정기 손님 — 반찬을 엑셀 자리(1회 · 정기 · 오픈월드 · 뒷장 메뉴변경)로 나눈다
+  const { data: regs } = await sb.from('baby_food_customers').select('id, phone, banchan_regular').eq('banchan_regular', true);
+  const sheet = buildCookingSheet(orders as any, date, null, { isBanchanRegular: banchanRegularMatcher(regs || []) });
   const dow = DOW_KOR[new Date(date + 'T00:00:00Z').getUTCDay()];
 
   return (

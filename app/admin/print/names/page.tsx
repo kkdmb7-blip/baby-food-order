@@ -4,6 +4,7 @@ import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday } from '@/lib/dates';
 import { orderDates, shiftDate, disambiguateNames } from '@/lib/orderItems';
 import NameTagSheet, { type Tag } from './NameTagSheet';
+import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,10 +37,17 @@ export default async function NamesPage({ searchParams }: { searchParams: { date
   const orders: Order[] = (data || []).filter(o => orderDates(o as any).includes(date));
   const disp = disambiguateNames(orders as any);
 
+  /* 반찬 이름표는 엑셀 '이름' 시트 순서 — 1회 주문 → 정기배송 → 오픈월드 → 메뉴변경, 칸을 위에서 아래로 채운다
+     (사장님 2026-11-14 "이름표도 마찬가지"). 자리 나누기는 조리표와 같은 함수(lib/cookingSheet). */
+  const { data: regs } = await sb.from('baby_food_customers').select('id, phone, banchan_regular').eq('banchan_regular', true);
+  const sheet = buildCookingSheet(orders as any, date, null, { isBanchanRegular: banchanRegularMatcher(regs || []) });
+  const groupOf = new Map(sheet.banchan.map(b => [b.orderId, b.group]));
+  const rankOf = new Map(sheet.banchan.map((b, i) => [b.orderId, i]));
+
   const tags: Tag[] = orders.map(o => ({
     key: o.id,
     name: disp.get(o.id) || o.baby_name,
-    kind: String(o.stage || '').startsWith('반찬') ? '반찬' : '이유식',
+    kind: String(o.stage || '').startsWith('반찬') ? `반찬 ${groupOf.get(o.id) || ''}`.trim() : '이유식',
     pickup: (o as any).receive_method === '픽업',
     parcel: o.delivery_method === '택배익일배송',
   }));
@@ -49,7 +57,10 @@ export default async function NamesPage({ searchParams }: { searchParams: { date
     if (!n || have.has(n)) continue; // 이미 주문이 들어온 이름은 두 번 뽑지 않는다
     tags.push({ key: 'p:' + p.id, name: n, kind: '적어둔 이름', pickup: false, parcel: false });
   }
-  tags.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  // 이유식·적어둔 이름은 ㄱㄴ순, 반찬은 조리표 반찬 자리 순서 그대로(뒤에)
+  const isB = (t: Tag) => t.kind.startsWith('반찬');
+  tags.sort((a, b) => Number(isB(a)) - Number(isB(b))
+    || (isB(a) ? (rankOf.get(a.key) ?? 0) - (rankOf.get(b.key) ?? 0) : a.name.localeCompare(b.name, 'ko')));
 
-  return <NameTagSheet date={date} tags={tags} />;
+  return <NameTagSheet date={date} tags={tags} columnFirst={tags.some(isB)} />;
 }

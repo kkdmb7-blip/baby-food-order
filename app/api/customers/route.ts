@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     if (digits.length >= 2) conds.push(`phone.ilike.%${digits}%`);
     query = query.or(conds.join(',')).order('baby_name').limit(80);
   } else {
-    query = query.or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true,prepaid_split.not.is.null,prepaid_ship.not.is.null').order('baby_name').limit(1000);
+    query = query.or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true,prepaid_split.not.is.null,prepaid_ship.not.is.null,banchan_regular.eq.true').order('baby_name').limit(1000);
   }
 
   const { data, error } = await query;
@@ -97,6 +97,13 @@ export async function PATCH(req: NextRequest) {
     const { error } = await supabaseService().from('baby_food_customers').update({ payer_names: names }).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, payer_names: names });
+  }
+
+  // 반찬 정기 표시 — 조리표·이름표에서 반찬 '정기배송' 자리에 놓는다 (돈·주문은 안 건드림)
+  if (id && typeof b.banchan_regular === 'boolean') {
+    const { error } = await supabaseService().from('baby_food_customers').update({ banchan_regular: b.banchan_regular }).eq('id', id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, banchan_regular: b.banchan_regular });
   }
 
   // 오픈월드(후원사업) 표시 — 켜면 이 손님의 아직 입금 안 된 주문을 대조에서 빼고, 끄면 되돌린다.

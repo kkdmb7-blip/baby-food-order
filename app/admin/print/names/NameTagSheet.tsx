@@ -9,7 +9,8 @@ const COLS = 5;
 const ROWS = 14;
 const PER_PAGE = COLS * ROWS;
 
-export default function NameTagSheet({ date, tags }: { date: string; tags: Tag[] }) {
+// columnFirst — 반찬 날: 엑셀 '이름' 시트처럼 칸을 위에서 아래로(한 줄 다 차면 옆 줄) 채운다. 1회→정기→오픈월드→메뉴변경 순서가 세로로 이어진다
+export default function NameTagSheet({ date, tags, columnFirst = false }: { date: string; tags: Tag[]; columnFirst?: boolean }) {
   const [off, setOff] = useState<Record<string, boolean>>({});
   const [extra, setExtra] = useState('');
   const [skip, setSkip] = useState(0);         // 이미 쓴 칸 — 앞에서부터 비운다
@@ -87,7 +88,7 @@ export default function NameTagSheet({ date, tags }: { date: string; tags: Tag[]
 
       {pages.map((pg, pi) => (
         <div key={pi} className="tag-page">
-          <div className="tag-grid">
+          <div className="tag-grid" style={columnFirst ? { gridAutoFlow: 'column' } : undefined}>
             {pg.map((n, i) => (
               <div key={i} className="tag-cell" style={{ fontSize: n ? fontFor(n) : undefined }}>{n || ''}</div>
             ))}

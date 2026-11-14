@@ -12,7 +12,7 @@ import DepositTab from './DepositTab';
 import ChargeBar from './ChargeBar';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
-import { buildCookingSheet } from '@/lib/cookingSheet';
+import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 import { isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
 import { SHIP_CHARGE } from '@/lib/prepaidShipRules';
 import { AddMissing, LaterInfo } from './InlineAdd';
@@ -658,7 +658,8 @@ function CookingSheet({ orders, today, customers, onChanged, onAdded, onReplace 
 
   // 화면 조리표도 종이 조리표와 같은 표를 쓴다(CookingTable) — 전에는 따로 그려져서
   // 담는 사람이 보는 숫자가 두 모양이었다. 계산은 lib/cookingSheet.ts 한 곳에서 한다.
-  const sheet = buildCookingSheet(orders as any, today, printInfo?.printedAt ?? null);
+  // 반찬은 손님 카드 '반찬 정기' 로 1회/정기를 나눈다 (엑셀 자리 그대로)
+  const sheet = buildCookingSheet(orders as any, today, printInfo?.printedAt ?? null, { isBanchanRegular: banchanRegularMatcher(customers) });
 
   return (
     <div>
@@ -1112,6 +1113,18 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     setMsg(`${c.baby_name} — ${next ? '오픈월드로 표시' : '오픈월드 표시 뺌'} (주문 ${r.orders}건 같이 바뀜)`);
   }
 
+  async function toggleBanchanRegular(c: Customer) {
+    const next = !c.banchan_regular;
+    setSavingId(c.id);
+    const r = await fetch('/api/customers', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, banchan_regular: next }),
+    }).then(x => x.json()).catch(() => ({}));
+    setSavingId(null);
+    if (!r.ok) { setMsg(`못 바꿨어요: ${r.error || ''}`); return; }
+    patchCustomer(c.id, { banchan_regular: next });
+    setMsg(`${c.baby_name} — 반찬 ${next ? '정기배송으로' : '정기 아님으로'} 표시했어요`);
+  }
+
   function patchCustomer(id: string, patch: Partial<Customer>) {
     setTouched(s => s.has(id) ? s : new Set(s).add(id));
     const inList = customers.some(c => c.id === id);
@@ -1321,6 +1334,12 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             title="나라 후원사업 아이 — 입금 대조에서 빼고, 나중에 한꺼번에 정산"
             className={`text-[10px] px-1.5 rounded-full border ${c.openworld ? 'bg-sky-100 text-sky-800 border-sky-300 font-bold' : 'border-stone-200 text-stone-300'}`}>
             오픈월드
+          </button>
+          {/* 반찬 정기 — 조리표·이름표에서 반찬을 엑셀처럼 '정기배송' 자리(오른쪽 위)에 놓는다 */}
+          <button onClick={() => toggleBanchanRegular(c)} disabled={busy}
+            title="반찬 정기배송 손님 — 조리표·이름표에서 정기배송 자리에"
+            className={`text-[10px] px-1.5 rounded-full border ${c.banchan_regular ? 'bg-lime-100 text-lime-800 border-lime-300 font-bold' : 'border-stone-200 text-stone-300'}`}>
+            반찬정기
           </button>
 
           {isSplit(c) ? (
