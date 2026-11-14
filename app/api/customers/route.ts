@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, PREPAID_UNITS } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
-import { OPENWORLD_NOTE } from '@/lib/openworld';
+import { OPENWORLD_NOTE, OPENWORLD_LAST_DATE } from '@/lib/openworld';
 
 // GET /api/customers — 고객 목록 (admin)
 //
@@ -107,6 +107,7 @@ export async function PATCH(req: NextRequest) {
     if (e1 || !c) return NextResponse.json({ error: e1?.message || '손님 없음' }, { status: 500 });
     let q = sb.from('baby_food_orders').update(b.openworld ? { paid_note: OPENWORLD_NOTE } : { paid_note: null })
       .eq('paid', false).neq('status', '취소');
+    if (b.openworld) q = q.lte('delivery_date', OPENWORLD_LAST_DATE); // 지원 끝난 뒤 주문은 오픈월드로 안 돌린다
     q = c.phone ? q.or(`customer_id.eq.${c.id},customer_phone.eq.${c.phone}`) : q.eq('customer_id', c.id);
     q = b.openworld ? q.is('paid_note', null) : q.like('paid_note', '오픈월드%');
     const { data: changed, error: e2 } = await q.select('id');

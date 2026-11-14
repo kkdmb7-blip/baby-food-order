@@ -13,7 +13,7 @@ import { menuKindsFor } from '@/lib/menuDays';
 import { looksDirectDelivery } from '@/lib/routeCode';
 import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
-import { OPENWORLD_NOTE } from '@/lib/openworld';
+import { OPENWORLD_NOTE, openworldApplies } from '@/lib/openworld';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -343,7 +343,7 @@ export async function POST(req: NextRequest) {
 
     // 오픈월드(후원사업) 손님이면 미입금으로 세지 않게 처음부터 표시한다 — 정산은 나중에 한꺼번에
     let openworldNote: string | undefined;
-    if (customer_id || customer_phone) {
+    if ((customer_id || customer_phone) && openworldApplies(delivery_date)) {
       const { data: ow } = await sb.from('baby_food_customers').select('openworld')
         .eq(customer_id ? 'id' : 'phone', customer_id || customer_phone).limit(1).maybeSingle();
       if (ow?.openworld) openworldNote = OPENWORLD_NOTE;

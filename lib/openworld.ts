@@ -9,4 +9,8 @@
 */
 export const OPENWORLD_NOTE = '오픈월드 — 나중에 한꺼번에 정산';
 
+// 후원사업은 2026-11-19 배송분까지만. 그 뒤 주문은 손님 카드에 표시가 있어도 일반 주문(입금 대조 대상)으로 받는다.
+export const OPENWORLD_LAST_DATE = '2026-11-19';
+export const openworldApplies = (deliveryDate?: string | null) => !!deliveryDate && deliveryDate <= OPENWORLD_LAST_DATE;
+
 export const isOpenworld = (note?: string | null) => String(note || '').startsWith('오픈월드');
