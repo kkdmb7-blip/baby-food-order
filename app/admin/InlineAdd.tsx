@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MENU_TYPES, STAGES, menuLabel } from '@/lib/supabase';
 import { BIG_VOLUME, SMALL_VOLUME } from '@/lib/cookingSheet';
+import { parseKakaoInfo } from '@/lib/kakaoInfo';
 
 /*
   조리표·입금 표 단계 블록 맨 아래 한 줄 — 프린트 뒤 종이에 손으로 적은 아이를 그 자리에서 넣는다.
@@ -208,6 +209,22 @@ export function LaterInfo({ order, onSaved, onClose }: {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { if (/강서구|양천구/.test(address)) setZone('직배송'); }, [address]);
+  // 카톡 붙여넣기 → 읽힌 칸만 채운다 (못 읽은 칸은 그대로). lib/kakaoInfo
+  const [paste, setPaste] = useState('');
+  const [got, setGot] = useState<string | null>(null);
+  function fromKakao(text: string) {
+    setPaste(text);
+    const k = parseKakaoInfo(text);
+    if (k.phone) setPhone(k.phone);
+    if (k.months) setMonths(k.months);
+    if (k.address) setAddress(k.address);
+    if (k.detail) setDetail(k.detail);
+    if (k.door) setDoor(k.door);
+    if (k.receive) setReceive(k.receive);
+    if (k.zone) setZone(k.zone);
+    const n = ['phone', 'months', 'address', 'detail', 'door', 'receive'].filter(x => (k as any)[x]).length;
+    setGot(text.trim() ? (n ? `카톡에서 ${n}칸 읽었어요 — 맞는지 보고 '정보 넣기'` : '읽은 칸이 없어요 — 직접 적어 주세요') : null);
+  }
   async function save() {
     setBusy(true); setMsg(null);
     try {
@@ -227,6 +244,10 @@ export function LaterInfo({ order, onSaved, onClose }: {
         <span className="text-stone-600">정보 넣기 — 이름·팩수만 먼저 넣은 아이예요</span>
         {onClose && <button onClick={onClose} className="ml-auto text-stone-500 underline">닫기</button>}
       </div>
+      <textarea value={paste} onChange={e => fromKakao(e.target.value)} rows={2}
+        placeholder="카톡 내용을 그대로 붙여넣으면 연락처·주소·동호수·현관 비번·개월을 읽어 채워요"
+        className={` w-full resize-y text-[12px]`} />
+      {got && <p className="text-[11px] font-bold text-amber-800">{got}</p>}
       <div className="flex gap-1.5 flex-wrap">
         <input value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="연락처" className={`${inp} w-32`} />
         <input value={months} onChange={e => setMonths(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="개월" className={`${inp} w-14`} />

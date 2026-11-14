@@ -232,6 +232,52 @@ function PostpaidBox({ onSettled }: { onSettled: (ids: string[], note: string) =
 /* 단계 변경 — 중기·후기 선결제를 완료기로 (차액 팩당 500원). 사장님 2026-11-14 안시은:
    "완료기로 바꾸고 싶으면 차액 추가 입금하면 해 줘. 표기가 필요하고 입금 받았는지 확인, 입금했다면 진행"
    차액과 같은 금액의 은행 입금이 있으면 골라서 바로, 현금 등은 '따로 받았어요'. 서버: app/api/admin/prepaid-convert */
+/* 손님 카드 없는 아이(정보 없이 먼저 넣은 아이) — 이름이 같은 카드에 잇거나, 이름만으로 새 카드를 만들어 바로 선결제를 쓴다.
+   2026-11-14 사장님: "택배는 정보 없어도, 정보 넣기 안 넣어도 선결제한 거 넣을 수 있게"
+   연락처는 나중에 정보 넣기에서 넣으면 이 카드에 붙는다(app/api/orders/[id] info). */
+function CardLink({ o, onLinked }: { o: SheetOrder; onLinked: (row: any) => void }) {
+  const [list, setList] = useState<Customer[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const q = String(o.baby_name || '').replace(/\d+$/, '').trim();
+    if (!q) { setList([]); return; }
+    fetch(`/api/customers?q=${encodeURIComponent(q)}`).then(r => r.json()).then(d => { if (alive) setList((d.customers || []).slice(0, 6)); }).catch(() => setList([]));
+    return () => { alive = false; };
+  }, [o.baby_name]);
+  async function link(target: string) {
+    if (target === 'new' && !confirm(`${o.baby_name} — 이름만으로 손님 카드를 만들까요?\n연락처·주소는 나중에 정보 넣기에서 넣으면 이 카드에 붙어요.`)) return;
+    setBusy(true); setErr(null);
+    const d = await fetch(`/api/orders/${o.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link_customer: target }) })
+      .then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setErr(d.error || '못 했어요'); return; }
+    onLinked(d.row);
+  }
+  const btn = 'px-2.5 py-1 rounded-lg border text-[12px] font-bold disabled:opacity-40';
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[12px] text-stone-700">손님 카드가 아직 없어요 — 카드를 이으면 정보 없이도 선결제를 쓸 수 있어요.</p>
+      {list === null ? <p className="text-stone-400 text-[12px]">같은 이름 카드 찾는 중…</p> : list.length > 0 && (
+        <div className="space-y-1">
+          {list.map(c => (
+            <div key={c.id} className="flex items-center gap-2 text-[12px]">
+              <b>{c.baby_name}</b>
+              <span className="text-stone-500">{c.phone ? `…${String(c.phone).slice(-4)}` : '연락처 없음'}</span>
+              {(Number(c.prepaid_balance) !== 0 || isSplit(c)) && <span className="text-violet-700 font-bold">선결제 {partsOf(c).map(p => `${shortKind(p.kind)} ${p.balance}`).join(' · ')}</span>}
+              {c.prepaid_ship !== null && c.prepaid_ship !== undefined && <span className="text-sky-700">택배비 {c.prepaid_ship}회</span>}
+              <button disabled={busy} onClick={() => link(c.id)} className={`${btn} ml-auto border-violet-300 bg-white text-violet-800`}>이 카드에 잇기</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button disabled={busy} onClick={() => link('new')} className={`${btn} border-amber-300 bg-amber-50 text-amber-900`}>이름만으로 새 카드 만들기</button>
+      {err && <p className="text-[12px] font-bold text-rose-700">{err}</p>}
+    </div>
+  );
+}
+
 const kstDay = (iso: string) => new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 10);
 function ConvertBox({ cust, to, onDone }: { cust: Customer; to: string; onDone: (c: any, msg: string) => void }) {
   const [p, setP] = useState<any>(null);
@@ -491,7 +537,7 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
       )}
 
       {/* ② 선결제 — 새로 시작하면 충전 → 이 주문 빼기 순서로 */}
-      {!cust && loaded === undefined && !custProp ? <p className="text-stone-400">손님 카드 불러오는 중…</p> : !cust ? <p className="text-rose-700">손님 카드를 못 찾았어요 — 고객관리에서 이 손님을 먼저 찾아 주세요(카드가 연결돼야 선결제를 씁니다).</p> : (
+      {!cust && loaded === undefined && !custProp ? <p className="text-stone-400">손님 카드 불러오는 중…</p> : !cust ? <CardLink o={o} onLinked={row => { patch({ order: row }); setLoaded(undefined); }} /> : (
         <>
           <p className="pt-1 text-[11px] font-bold text-violet-800 border-t border-violet-200">선결제 {left === 0 && !used ? '— 새로 시작하면 ① 충전 ② 이 주문 빼기' : ''}</p>
           {(() => {

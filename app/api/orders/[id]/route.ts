@@ -75,15 +75,45 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
         patch.shipping_fee = shippingFeeFor(tier, Number(o.total_qty) || 0, patch.total_price);
       }
     }
-    // 손님 카드 — 연락처로 찾고 없으면 만든다
+    // 손님 카드 — 연락처로 찾고, 없으면 이미 이어 둔 카드(이름만으로 만든 카드·연락처 없는 카드)에 연락처를 붙이고, 그것도 없으면 만든다
     const { data: c0 } = await sb.from('baby_food_customers').select('id').eq('phone', phone).maybeSingle();
     let cid = c0?.id as string | undefined;
+    if (!cid && o.customer_id) {
+      const { data: up } = await sb.from('baby_food_customers').update({ phone }).eq('id', o.customer_id).is('phone', null).select('id');
+      if (up?.length) cid = o.customer_id;
+    }
     if (!cid) {
       const { data: cn } = await sb.from('baby_food_customers').insert({ baby_name: o.baby_name, phone, points: 0 }).select('id').single();
       cid = cn?.id;
     }
     if (cid) patch.customer_id = cid;
     const { data: row, error } = await sb.from('baby_food_orders').update(patch).eq('id', id).select('*').single();
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, row });
+  }
+
+  // 손님 카드 잇기 — 정보(연락처·주소) 없이 먼저 넣은 아이도 선결제를 쓰게
+  // 2026-11-14 사장님: "택배는 정보 없어도, 정보 넣기 안 넣어도 선결제한 거 넣을 수 있게"
+  // { link_customer: '<카드 id>' } 있는 카드에 잇기 / { link_customer: 'new' } 이름만으로 새 카드
+  if (status === undefined && typeof body.link_customer === 'string') {
+    const { data: o } = await sb.from('baby_food_orders').select('id, baby_name, customer_id, customer_phone, status').eq('id', id).single();
+    if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
+    if (o.status === '취소') return NextResponse.json({ ok: false, error: '취소된 주문이에요' }, { status: 409 });
+    if (o.customer_id) return NextResponse.json({ ok: false, error: '이미 손님 카드가 이어져 있어요' }, { status: 409 });
+    let cid: string, cphone: string | null = null;
+    if (body.link_customer === 'new') {
+      const { data: cn, error: e1 } = await sb.from('baby_food_customers').insert({ baby_name: o.baby_name, phone: null, points: 0, memo: '입금 탭에서 이름만으로 만든 카드 — 정보 넣기에서 연락처를 넣으면 이 카드에 붙는다' }).select('id').single();
+      if (e1 || !cn) return NextResponse.json({ ok: false, error: e1?.message || '카드를 못 만들었어요' }, { status: 500 });
+      cid = cn.id;
+    } else {
+      if (!/^[0-9a-f-]{36}$/i.test(body.link_customer)) return NextResponse.json({ ok: false, error: 'invalid' }, { status: 400 });
+      const { data: c } = await sb.from('baby_food_customers').select('id, phone').eq('id', body.link_customer).maybeSingle();
+      if (!c) return NextResponse.json({ ok: false, error: '카드를 못 찾았어요' }, { status: 404 });
+      cid = c.id; cphone = c.phone || null;
+    }
+    const patch: Record<string, any> = { customer_id: cid };
+    if (cphone && !o.customer_phone) patch.customer_phone = cphone;
+    const { data: row, error } = await sb.from('baby_food_orders').update(patch).eq('id', id).is('customer_id', null).select('*').single();
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, row });
   }
