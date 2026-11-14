@@ -161,6 +161,80 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
     </table>
   );
 
+  // 반찬 종류별로 몇 개를 만들지 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다.
+  // 손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다.
+  const itemTotals = () => (
+    <table className="table-fixed border-collapse text-[14px] leading-tight">
+      <colgroup><col style={{ width: 170 }} /><col style={{ width: 34 }} /></colgroup>
+      <thead>
+        <tr>
+          <th colSpan={2} className="border border-black px-1 py-[2px] text-[13px] text-center">
+            반찬 종류별<span className="ml-1 font-normal text-[10px] text-stone-600">이만큼 만듭니다</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {sheet.banchanByItem.map((it, i) => (
+          <tr key={it.name}>
+            <td className="border border-black px-1 py-[2px] font-bold leading-tight break-words text-[12px]">{i + 1}. {it.name}</td>
+            <td className="border border-black text-center py-[2px] font-black">{it.qty}</td>
+          </tr>
+        ))}
+        <tr className="bg-stone-100">
+          <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
+          <td className="border-2 border-black text-center py-[2px] font-black">{sheet.banchanByItem.reduce((a, b) => a + b.qty, 0)}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+
+  // 메뉴 변경 — 세트 그대로가 아닌 아이(메뉴 변경·낱개). 엑셀 '주문변경' 시트처럼 반찬마다 몇 개인지 칸으로
+  const menuChangeTable = () => {
+    const rows = bGroup('메뉴변경');
+    const items = sheet.banchanByItem.map(x => x.name);
+    const cols = items.length + 4;
+    return (
+      <table className="table-fixed border-collapse text-[14px] leading-tight">
+        <colgroup>
+          <col style={{ width: 78 }} /><col style={{ width: 22 }} />
+          {items.map(n => <col key={n} style={{ width: 34 }} />)}
+          <col style={{ width: 28 }} /><col style={{ width: 52 }} />
+        </colgroup>
+        <thead>
+          <tr>
+            <th colSpan={cols} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+              메뉴 변경<span className="ml-1 font-normal text-[10px] text-stone-600">{rows.length}명 · 세트 그대로가 아닌 아이</span>
+            </th>
+          </tr>
+          <tr className="bg-stone-200">
+            <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
+            <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
+            {items.map(n => <th key={n} className="border border-black px-0 py-[2px] text-[10px] leading-none break-all">{n}</th>)}
+            <th className="border border-black px-0 py-[2px] text-[10px]">합계</th>
+            <th className="border border-black px-0 py-[2px] text-[10px]">비고</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((b, i) => (
+            <tr key={i}>
+              {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
+              <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
+              {items.map(n => <td key={n} className="border border-black text-center py-[2px] font-black">{b.menus[n] || <span className="text-stone-200">·</span>}</td>)}
+              <td className="border border-black text-center py-[2px] font-black">{Object.values(b.menus).reduce((a, v) => a + (v || 0), 0)}</td>
+              <td className="border border-black text-center py-[2px] text-[10px] font-bold">{b.note || ''}</td>
+            </tr>
+          ))}
+          <tr className="bg-stone-100">
+            <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
+            {items.map(n => <td key={n} className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + (b.menus[n] || 0), 0) || <span className="text-stone-300">·</span>}</td>)}
+            <td className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + Object.values(b.menus).reduce((x, v) => x + (v || 0), 0), 0)}</td>
+            <td className="border-2 border-black" />
+          </tr>
+        </tbody>
+      </table>
+    );
+  };
+
   const cell = (v: number, red: boolean) =>
     v ? <span className={red ? 'text-red-600 font-black' : 'font-black'}>{v}</span>
       : <span className="text-stone-200">·</span>;
@@ -305,88 +379,17 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           </div>
         )}
 
-        {/* 반찬 종류별로 몇 개를 만들지 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다.
-            손님마다 종류별 개수가 달라서(국 둘, 어느 반찬 셋 …) 세트 수만으로는 알 수 없다. */}
-        {sheet.banchanByItem.length > 0 && (
-          <div className="break-inside-avoid">
-            <table className="table-fixed border-collapse text-[14px] leading-tight">
-              <colgroup><col style={{ width: 170 }} /><col style={{ width: 34 }} /></colgroup>
-              <thead>
-                <tr>
-                  <th colSpan={2} className="border border-black px-1 py-[2px] text-[13px] text-center">
-                    반찬 종류별
-                    <span className="ml-1 font-normal text-[10px] text-stone-600">이만큼 만듭니다</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sheet.banchanByItem.map((it, i) => (
-                  <tr key={it.name}>
-                    <td className="border border-black px-1 py-[2px] font-bold leading-tight break-words text-[12px]">{i + 1}. {it.name}</td>
-                    <td className="border border-black text-center py-[2px] font-black">{it.qty}</td>
-                  </tr>
-                ))}
-                <tr className="bg-stone-100">
-                  <td className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
-                  <td className="border-2 border-black text-center py-[2px] font-black">
-                    {sheet.banchanByItem.reduce((a, b) => a + b.qty, 0)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
+        {/* 입금 표는 셋째 칸에 메뉴 변경을 나란히 (사장님 2026-11-14 "한 줄로 적지 말고 3등분으로") */}
+        {pay && bGroup('메뉴변경').length > 0 && <div className="break-inside-avoid">{menuChangeTable()}</div>}
+        {!pay && sheet.banchanByItem.length > 0 && <div className="break-inside-avoid">{itemTotals()}</div>}
       </div>
 
+      {/* 입금 표 — 반찬 종류별 합계는 맨 아래로 */}
+      {pay && sheet.banchanByItem.length > 0 && <div className="mt-3 break-inside-avoid">{itemTotals()}</div>}
+
       {/* 뒷장 — 세트 그대로가 아닌 아이(메뉴 변경·낱개). 엑셀 '주문변경' 시트처럼 반찬마다 몇 개인지 칸으로 */}
-      {bGroup('메뉴변경').length > 0 && (
-        <div className="mt-3 print:break-before-page break-inside-avoid">
-          {(() => {
-            const rows = bGroup('메뉴변경');
-            const items = sheet.banchanByItem.map(x => x.name);
-            const cols = items.length + 4;
-            return (
-              <table className="table-fixed border-collapse text-[14px] leading-tight">
-                <colgroup>
-                  <col style={{ width: 78 }} /><col style={{ width: 22 }} />
-                  {items.map(n => <col key={n} style={{ width: 34 }} />)}
-                  <col style={{ width: 28 }} /><col style={{ width: 52 }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th colSpan={cols} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
-                      메뉴 변경<span className="ml-1 font-normal text-[10px] text-stone-600">{rows.length}명 · 세트 그대로가 아닌 아이</span>
-                    </th>
-                  </tr>
-                  <tr className="bg-stone-200">
-                    <th className="border border-black px-0 py-[2px] text-[11px]">이 름</th>
-                    <th className="border border-black px-0 py-[2px] text-[10px]">배송</th>
-                    {items.map(n => <th key={n} className="border border-black px-0 py-[2px] text-[10px] leading-none break-all">{n}</th>)}
-                    <th className="border border-black px-0 py-[2px] text-[10px]">합계</th>
-                    <th className="border border-black px-0 py-[2px] text-[10px]">비고</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((b, i) => (
-                    <tr key={i}>
-                      {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
-                      <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
-                      {items.map(n => <td key={n} className="border border-black text-center py-[2px] font-black">{b.menus[n] || <span className="text-stone-200">·</span>}</td>)}
-                      <td className="border border-black text-center py-[2px] font-black">{Object.values(b.menus).reduce((a, v) => a + (v || 0), 0)}</td>
-                      <td className="border border-black text-center py-[2px] text-[10px] font-bold">{b.note || ''}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-stone-100">
-                    <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px]">합계</td>
-                    {items.map(n => <td key={n} className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + (b.menus[n] || 0), 0) || <span className="text-stone-300">·</span>}</td>)}
-                    <td className="border-2 border-black text-center py-[2px] font-black">{rows.reduce((a, b) => a + Object.values(b.menus).reduce((x, v) => x + (v || 0), 0), 0)}</td>
-                    <td className="border-2 border-black" />
-                  </tr>
-                </tbody>
-              </table>
-            );
-          })()}
-        </div>
+      {!pay && bGroup('메뉴변경').length > 0 && (
+        <div className="mt-3 print:break-before-page break-inside-avoid">{menuChangeTable()}</div>
       )}
 
       {/* '합쳐 담기' 상자는 뺐다 (사장님: "이 칸은 없애도 돼"). 다른 칸에 줄이 더 있다는 건
