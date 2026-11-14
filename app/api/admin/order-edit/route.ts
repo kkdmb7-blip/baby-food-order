@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { recordPrepaid } from '@/lib/prepaidLedger';
+import { movePrepaid, kindOf, kindTag } from '@/lib/prepaidSplit';
 import {
   supabaseService, MENU_TYPES, STAGE_OPTIONS, getPrice, shippingFeeFor, tierOf,
   type StageType, type PriceTier,
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   const { data: o } = await sb
     .from('baby_food_orders')
-    .select('id, status, order_type, customer_phone, baby_name, stage, volume, items, total_qty, total_price, shipping_fee, points_earned, delivery_method, receive_method, delivery_date')
+    .select('id, status, order_type, customer_phone, customer_id, baby_name, stage, volume, items, total_qty, total_price, shipping_fee, points_earned, delivery_method, receive_method, delivery_date, paid_note')
     .eq('id', id).single();
   if (!o) return bad('주문 없음', 404);
   if (o.status === '취소') return bad('취소된 주문이에요');
@@ -100,25 +101,22 @@ export async function POST(req: NextRequest) {
   const pointDelta = newEarned - oldEarned;  // 적립이 늘면 +
 
   // ── 1) 선결제 잔여 맞추기 (CAS, 모자라면 중단)
+  // 입금 탭에서 선결제로 뺀 주문도 팩이 걸려 있다 — 팩수가 바뀌면 같이 맞추고 표시 문구의 팩수도 고친다
+  const panel = String(o.paid_note || '').match(/^선결제 차감 (\d+)팩 \(입금 탭 ([^,]+), 남은 (-?\d+)팩\)/);
+  const kind = kindOf(stage, volume);
   let prepaidMoved = 0;
-  let prepaidCust: { id: string; after: number } | null = null;
-  if (o.order_type === '선결제' && qtyDelta !== 0) {
-    const { data: cust } = await sb
-      .from('baby_food_customers').select('id, prepaid_balance')
-      .eq('phone', o.customer_phone).maybeSingle();
-    if (!cust) return bad('선결제 고객을 찾을 수 없어요');
-    const base = Number(cust.prepaid_balance) || 0;
-    if (qtyDelta > 0 && base < qtyDelta) {
-      return bad(`잔여 ${base}팩 — ${qtyDelta}팩 더 빠져야 해서 모자라요. 충전 후 고쳐주세요`);
-    }
-    const { data: upd } = await sb
-      .from('baby_food_customers').update({ prepaid_balance: Math.max(0, base - qtyDelta) })
-      .eq('id', cust.id).eq('prepaid_balance', base).select('id');
-    if (!upd || upd.length === 0) {
-      return bad('잔여가 그 사이 바뀌었어요 — 새로고침 후 다시 고쳐주세요', 409);
-    }
+  let prepaidCust: { id: string; after: number; tag: string } | null = null;
+  let newPaidNote: string | null = null;
+  if ((o.order_type === '선결제' || panel) && qtyDelta !== 0) {
+    const cid = o.customer_id || (o.customer_phone
+      ? (await sb.from('baby_food_customers').select('id').eq('phone', o.customer_phone).maybeSingle()).data?.id : null);
+    if (!cid) return bad('선결제 고객을 찾을 수 없어요');
+    // 주문할 때 선결제는 잔여 안에서만(모자라면 거절, 예전 그대로). 입금 탭으로 뺀 건 마이너스도 그대로 둔다(입금 요청 대상)
+    const mv = await movePrepaid(sb, cid, { delta: -qtyDelta, kind, requireEnough: o.order_type === '선결제' });
+    if (!mv.ok) return bad(mv.status === 400 ? `${mv.error} — 충전 후 고쳐주세요` : mv.error, mv.status);
     prepaidMoved = qtyDelta;
-    prepaidCust = { id: cust.id, after: Math.max(0, base - qtyDelta) };
+    prepaidCust = { id: cid, after: mv.after, tag: kindTag(mv) };
+    if (panel) newPaidNote = `선결제 차감 ${newQty}팩 (입금 탭 ${panel[2]}, 남은 ${mv.partAfter}팩)`;
   }
 
   // ── 2) 주문 줄 고치기. items 안쪽 팩수·메뉴도 같이 고쳐야 조리표가 바뀐다.
@@ -133,19 +131,13 @@ export async function POST(req: NextRequest) {
     total_price: newPrice,
     shipping_fee: newShipping,
     points_earned: newEarned,
+    ...(newPaidNote ? { paid_note: newPaidNote } : {}),
   }).eq('id', id);
 
   if (error) {
     // 잔액을 이미 옮겼으면 되돌린다 — 고치지도 못했는데 팩이 빠져 있으면 안 된다
-    if (prepaidMoved !== 0) {
-      const { data: c2 } = await sb
-        .from('baby_food_customers').select('id, prepaid_balance')
-        .eq('phone', o.customer_phone).maybeSingle();
-      if (c2) {
-        await sb.from('baby_food_customers')
-          .update({ prepaid_balance: Math.max(0, (Number(c2.prepaid_balance) || 0) + prepaidMoved) })
-          .eq('id', c2.id);
-      }
+    if (prepaidMoved !== 0 && prepaidCust) {
+      await movePrepaid(sb, prepaidCust.id, { delta: prepaidMoved, kind });
     }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
@@ -155,7 +147,7 @@ export async function POST(req: NextRequest) {
     await recordPrepaid(sb, {
       customerId: prepaidCust.id, phone: o.customer_phone, babyName: o.baby_name,
       kind: '수정', packs: -prepaidMoved, balanceAfter: prepaidCust.after, orderId: id,
-      memo: `조리표에서 ${oldQty}→${newQty}팩`,
+      memo: `${prepaidCust.tag}조리표에서 ${oldQty}→${newQty}팩`,
     });
   }
 

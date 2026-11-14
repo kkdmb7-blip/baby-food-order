@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordPrepaid } from './prepaidLedger';
+import { movePrepaid, kindOf, kindTag } from './prepaidSplit';
 
 type CancelableOrder = {
   id?: string;
@@ -9,7 +10,14 @@ type CancelableOrder = {
   points_used: number | null;
   points_earned: number | null;
   customer_phone: string;
+  customer_id?: string | null;
+  stage?: string | null;
+  volume?: number | null;
+  paid_note?: string | null;
 };
+
+// 입금 탭 '선결제에서 빼기'가 남긴 표시 — app/api/admin/order-prepaid 와 같은 모양
+const PANEL_RE = /^선결제 차감 (\d+)(팩|회) \(입금 탭/;
 
 // 취소(+1)/취소복구(-1) 시 선결제 잔여팩·포인트 사용·포인트 적립을 정확히 되돌림.
 // 취소: 썼던 포인트 환불(+), 적립됐던 포인트 회수(-) / 복구: 반대.
@@ -18,27 +26,57 @@ type CancelableOrder = {
 // 동시에 두 번 취소 처리되면 잔액/포인트가 두 번 환불되는 문제가 있었음 — 선결제 차감 때 쓰던
 // "내가 읽은 값 그대로일 때만" 갱신하는 CAS 패턴을 여기도 적용하고, 값이 그 사이 바뀌었으면
 // 최신값으로 다시 읽어 재시도함(취소 복구는 반드시 반영돼야 하므로 실패해도 포기하지 않음).
+// 손님 카드 — 주문에 이어진 카드(customer_id)가 먼저, 없으면 연락처. 번호 없는 손님(택배·픽업)도 찾게.
+async function custIdOf(sb: SupabaseClient, order: CancelableOrder): Promise<string | null> {
+  if (order.customer_id) return order.customer_id;
+  if (!order.customer_phone) return null;
+  return (await sb.from('baby_food_customers').select('id').eq('phone', order.customer_phone).maybeSingle()).data?.id ?? null;
+}
+
 export async function applyCancelReversal(sb: SupabaseClient, order: CancelableOrder, sign: 1 | -1) {
   try {
+    const panel = String(order.paid_note || '').match(PANEL_RE);
     if (order.order_type === '선결제') {
-      let cust = (await sb
-        .from('baby_food_customers').select('id, prepaid_balance').eq('phone', order.customer_phone).maybeSingle()).data;
-      for (let attempt = 0; cust && attempt < 3; attempt++) {
-        const base = cust.prepaid_balance || 0;
-        const next = Math.max(0, base + sign * order.total_qty);
-        const { data: updated } = await sb
-          .from('baby_food_customers').update({ prepaid_balance: next })
-          .eq('id', cust.id).eq('prepaid_balance', base).select('id');
-        if (updated && updated.length > 0) {
+      const cid = await custIdOf(sb, order);
+      if (cid) {
+        // 여러 단계 선결제면 그 주문 단계·용량의 묶음으로 돌려준다 (lib/prepaidSplit)
+        const r = await movePrepaid(sb, cid, { delta: sign * order.total_qty, kind: kindOf(order.stage, order.volume) });
+        if (r.ok) {
           // 장부 — 취소면 팩이 돌아오고(환불), 취소를 되돌리면 다시 빠진다(사용)
           await recordPrepaid(sb, {
-            customerId: cust.id, phone: order.customer_phone, babyName: order.baby_name,
-            kind: sign > 0 ? '환불' : '사용', packs: next - base, balanceAfter: next,
-            orderId: order.id ?? null, memo: sign > 0 ? '주문 취소' : '취소한 주문을 되살림',
+            customerId: cid, phone: order.customer_phone, babyName: order.baby_name,
+            kind: sign > 0 ? '환불' : '사용', packs: r.after - r.before, balanceAfter: r.after,
+            orderId: order.id ?? null, memo: `${kindTag(r)}${sign > 0 ? '주문 취소' : '취소한 주문을 되살림'}`,
           });
-          break;
         }
-        cust = (await sb.from('baby_food_customers').select('id, prepaid_balance').eq('id', cust.id).maybeSingle()).data;
+      }
+    } else if (panel && sign > 0 && order.id) {
+      // 입금 탭에서 선결제로 뺀 주문(paid_note '선결제 차감 N팩 (입금 탭 …') 을 취소 → 그 팩·회를 돌려주고 표시를 지운다.
+      // 취소를 되살리면 미입금 주문으로 돌아온다 — 다시 빼려면 입금 탭에서 '선결제에서 빼기'.
+      const qty = Number(panel[1]); const banchan = panel[2] === '회';
+      const cid = await custIdOf(sb, order);
+      if (cid && qty > 0) {
+        let after: number | null = null; let tag = '';
+        if (banchan) {
+          for (let i = 0; i < 3 && after === null; i++) {
+            const { data: c } = await sb.from('baby_food_customers').select('prepaid_banchan').eq('id', cid).maybeSingle();
+            if (!c) break;
+            const base = Number(c.prepaid_banchan) || 0;
+            const { data: up } = await sb.from('baby_food_customers').update({ prepaid_banchan: base + qty }).eq('id', cid).eq('prepaid_banchan', base).select('id');
+            if (up?.length) after = base + qty;
+          }
+        } else {
+          const r = await movePrepaid(sb, cid, { delta: qty, kind: kindOf(order.stage, order.volume) });
+          if (r.ok) { after = r.after; tag = kindTag(r); }
+        }
+        if (after !== null) {
+          await sb.from('baby_food_orders').update({ paid: false, paid_at: null, paid_note: `선결제 돌려놓음 ${qty}${banchan ? '회' : '팩'} (주문 취소)` }).eq('id', order.id);
+          await recordPrepaid(sb, {
+            customerId: cid, phone: order.customer_phone, babyName: order.baby_name,
+            kind: '환불', packs: qty, balanceAfter: after, orderId: order.id, item: banchan ? '반찬' : '이유식',
+            memo: `${tag}주문 취소 — 입금 탭에서 뺀 ${qty}${banchan ? '회' : '팩'} 돌려놓음`,
+          });
+        }
       }
     } else if ((order.points_used || 0) > 0 || (order.points_earned || 0) > 0) {
       let cust = (await sb

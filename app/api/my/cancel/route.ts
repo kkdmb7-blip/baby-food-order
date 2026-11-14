@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     const sb = supabaseService();
     const { data: order } = await sb
       .from('baby_food_orders')
-      .select('id, status, order_type, total_qty, points_used, points_earned, customer_phone, baby_name, delivery_date')
+      .select('id, status, order_type, total_qty, points_used, points_earned, customer_phone, baby_name, delivery_date, customer_id, stage, volume, paid_note')
       .eq('id', orderId).single();
     if (!order) return bad('주문을 찾을 수 없어요');
     if (order.customer_phone !== phone || norm(order.baby_name) !== name) return bad('본인 주문만 취소할 수 있어요');

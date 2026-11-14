@@ -13,6 +13,7 @@ import ChargeBar from './ChargeBar';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
 import { buildCookingSheet, SMALL_VOLUME } from '@/lib/cookingSheet';
+import { isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
 import CookingEntry from './CookingEntry';
 import { defaultArrivalNote } from '@/lib/arrival';
 import { sortBanchanNames } from '@/lib/banchanOrder';
@@ -1014,7 +1015,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     || (!!c.last_order && c.last_order >= cutoff)
     || (allLoaded === 'ok' && c.last_order === undefined); // 방금 새로 생긴 손님(목록 받은 뒤 추가됨)
   // 선결제가 남은(또는 받을 팩이 있는) 손님은 맨 위에 따로 — 사장님: "선결제한 사람들은 위로 모으자"
-  const hasPrepaid = (c: Customer) => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0;
+  const hasPrepaid = (c: Customer) => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0 || isSplit(c);
   const prepaidList = customers.filter(hasPrepaid).sort(byName);
   const activeList = customers.filter(c => !hasPrepaid(c) && isActive(c)).sort(byName);
   const dormant = customers.filter(c => !hasPrepaid(c) && !isActive(c)).sort(byName);
@@ -1136,8 +1137,9 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       const d = await r.json().catch(() => ({}));
       if (d.ok) {
         // 고른 종류(단계·용량)를 손님 표시에도 남긴다 — 서버도 같이 저장한다
-        patchCustomer(id, { prepaid_balance: d.new_balance, ...(label ? { prepaid_label: label } : {}) });
-        setMsg(`${label ? label + ' ' : ''}${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
+        // 다른 종류로 충전하면 묶음이 따로 생긴다(후기230 + 완료기230) — 서버가 돌려준 묶음으로 맞춘다
+        patchCustomer(id, { prepaid_balance: d.new_balance, prepaid_split: d.split ?? null, ...(d.label || label ? { prepaid_label: d.label || label } : {}) });
+        setMsg(`${label ? label + ' ' : ''}${units}팩 충전됐어요 (${d.split ? `${label} 묶음 ${d.part}팩 · 합계 ` : '잔여 '}${d.new_balance}팩)`);
         const open = openLedger;
         if (open === id || open === 'f:' + id) { setOpenLedger(null); setTimeout(() => setOpenLedger(open), 0); }
       } else {
@@ -1195,7 +1197,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                       <div className="mt-2">
                         <ChargeBar label={c.prepaid_label} disabled={chargingId === c.id} onCharge={(u, l) => charge(c.id, u as any, l)} />
                       </div>
-                      <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
+                      <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} split={isSplit(c)} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
                     </div>
                   )}
                 </div>
@@ -1242,22 +1244,23 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   }
 
   // 팩·회수 칸 저장 — 장부(선결제 기록)에 '목록에서 바로 고침' 으로 남는다
-  async function saveCount(c: Customer, kind: '팩' | '반찬', raw: string, el: HTMLInputElement) {
-    const cur = kind === '팩' ? c.prepaid_balance : (c.prepaid_banchan || 0);
+  // part = 여러 단계 선결제 손님의 묶음 하나('완료기 230g') — 그 묶음 잔여만 고친다
+  async function saveCount(c: Customer, kind: '팩' | '반찬', raw: string, el: HTMLInputElement, part?: string) {
+    const cur = kind === '팩' ? (part ? balanceFor(c, part) : c.prepaid_balance) : (c.prepaid_banchan || 0);
     const t = raw.trim();
     const n = t === '' ? 0 : Number(t);
     if (n === cur) { el.value = cur ? String(cur) : ''; return; }
     if (!Number.isInteger(n) || (kind === '반찬' && n < 0)) { setMsg('숫자로 적어주세요'); el.value = cur ? String(cur) : ''; return; }
-    if (!confirm(`${c.baby_name} — ${kind === '팩' ? `남은 팩 ${cur} → ${n}팩` : `반찬 선결제 ${cur} → ${n}회`}\n이대로 고칠까요?`)) { el.value = cur ? String(cur) : ''; return; }
+    if (!confirm(`${c.baby_name} — ${kind === '팩' ? `${part ? part + ' ' : ''}남은 팩 ${cur} → ${n}팩` : `반찬 선결제 ${cur} → ${n}회`}\n이대로 고칠까요?`)) { el.value = cur ? String(cur) : ''; return; }
     setSavingId(c.id);
     const d = await fetch(`/api/customers/${c.id}/prepaid`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(kind === '팩' ? { set: n, memo: '목록에서 바로 고침' } : { item: '반찬', set: n, memo: '목록에서 바로 고침' }),
+      body: JSON.stringify(kind === '팩' ? { set: n, memo: '목록에서 바로 고침', ...(part ? { kind: part } : {}) } : { item: '반찬', set: n, memo: '목록에서 바로 고침' }),
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setSavingId(null);
     if (!d.ok) { setMsg(`못 고쳤어요: ${d.error || ''}`); el.value = cur ? String(cur) : ''; return; }
-    patchCustomer(c.id, kind === '팩' ? { prepaid_balance: d.new_balance } : { prepaid_banchan: d.new_balance });
-    setMsg(`${c.baby_name} — ${kind === '팩' ? `남은 팩 ${d.new_balance}팩` : `반찬 ${d.new_balance}회`}로 고쳤어요`);
+    patchCustomer(c.id, kind === '팩' ? { prepaid_balance: d.new_balance, prepaid_split: d.split ?? null } : { prepaid_banchan: d.new_balance });
+    setMsg(`${c.baby_name} — ${kind === '팩' ? `${part ? part + ' ' : ''}남은 팩 ${d.part ?? d.new_balance}팩` : `반찬 ${d.new_balance}회`}로 고쳤어요`);
   }
 
   async function savePayersInline(c: Customer, raw: string, el: HTMLInputElement) {
@@ -1291,15 +1294,32 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             오픈월드
           </button>
 
-          <label className="flex items-center gap-0.5 text-stone-500" title="남은 이유식 선결제 팩 (마이너스 = 받을 팩)">
-            남은
-            <input key={`b${c.id}:${bal}`} defaultValue={bal ? String(bal) : ''} placeholder="0" inputMode="numeric" disabled={busy}
-              onBlur={e => saveCount(c, '팩', e.target.value.replace(/[^\d-]/g, ''), e.target)} onKeyDown={enter}
-              className={`w-10 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-amber-400 ${bal < 0 ? 'text-red-600 border-red-200' : bal > 0 ? (bal <= 5 ? 'text-red-600 border-amber-200' : 'text-amber-700 border-amber-200') : 'border-stone-200'}`} />
-            팩<span className="inline-block w-[58px] text-[10px] text-stone-400 whitespace-nowrap">{c.prepaid_label || ''}</span>
-          </label>
-          {/* 마이너스 = 선결제보다 더 먹음 → 입금 요청 톡 보낼 손님 (사장님 2026-11-14) */}
-          {bal < 0 && <span className="text-[10px] font-black text-white bg-red-500 px-1.5 rounded-full whitespace-nowrap">입금요청 {-bal}팩</span>}
+          {isSplit(c) ? (
+            // 여러 단계 선결제 — 묶음마다 칸 (사장님 2026-11-14: "후기230 이랑 완료기230 두 개 해두고 같이 주문하는 아이들")
+            partsOf(c).map(p => (
+              <label key={p.kind} className="flex items-center gap-0.5 text-stone-500" title={`${p.kind} 남은 팩 (마이너스 = 받을 팩)`}>
+                <span className="text-[10px] font-bold text-stone-600">{shortKind(p.kind)}</span>
+                <input key={`b${c.id}:${p.kind}:${p.balance}`} defaultValue={p.balance ? String(p.balance) : ''} placeholder="0" inputMode="numeric" disabled={busy}
+                  onBlur={e => saveCount(c, '팩', e.target.value.replace(/[^\d-]/g, ''), e.target, p.kind)} onKeyDown={enter}
+                  className={`w-9 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-amber-400 ${p.balance < 0 ? 'text-red-600 border-red-200' : p.balance <= 5 ? 'text-red-600 border-amber-200' : 'text-amber-700 border-amber-200'}`} />
+                팩
+              </label>
+            ))
+          ) : (
+            <label className="flex items-center gap-0.5 text-stone-500" title="남은 이유식 선결제 팩 (마이너스 = 받을 팩)">
+              남은
+              <input key={`b${c.id}:${bal}`} defaultValue={bal ? String(bal) : ''} placeholder="0" inputMode="numeric" disabled={busy}
+                onBlur={e => saveCount(c, '팩', e.target.value.replace(/[^\d-]/g, ''), e.target)} onKeyDown={enter}
+                className={`w-10 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-amber-400 ${bal < 0 ? 'text-red-600 border-red-200' : bal > 0 ? (bal <= 5 ? 'text-red-600 border-amber-200' : 'text-amber-700 border-amber-200') : 'border-stone-200'}`} />
+              팩<span className="inline-block w-[58px] text-[10px] text-stone-400 whitespace-nowrap">{c.prepaid_label || ''}</span>
+            </label>
+          )}
+          {/* 마이너스 = 선결제보다 더 먹음 → 입금 요청 톡 보낼 손님 (사장님 2026-11-14). 여러 묶음이면 묶음마다 */}
+          {partsOf(c).filter(p => p.balance < 0).map(p => (
+            <span key={'m' + p.kind} className="text-[10px] font-black text-white bg-red-500 px-1.5 rounded-full whitespace-nowrap">
+              입금요청 {isSplit(c) ? shortKind(p.kind) + ' ' : ''}{-p.balance}팩
+            </span>
+          ))}
 
           <label className="flex items-center gap-0.5 text-stone-500" title="반찬 선결제 남은 회수">
             반찬
@@ -1345,7 +1365,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
               <ChargeBar size="sm" label={c.prepaid_label} disabled={chargingId === c.id} onCharge={(u, l) => charge(c.id, u as any, l)} />
             </div>
             <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
-            <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
+            <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} split={isSplit(c)} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
           </div>
         )}
       </div>
@@ -1602,8 +1622,8 @@ function KakaoMemoBox({ text, setText, savedAt }: {
 // 선결제를 어떤 단계·용량으로 샀는지 고르는 칸 (할인표: 중기·후기 230/300, 완료기 230/300)
 const PREPAID_LABELS = ['중기 230g', '중기 300g', '후기 230g', '후기 300g', '완료기 230g', '완료기 300g'];
 
-function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
-  customerId: string; balance: number; onBalance: (n: number) => void; onPatch?: (p: Partial<Customer>) => void;
+function PrepaidLedger({ customerId, balance, split = false, onBalance, onPatch }: {
+  customerId: string; balance: number; split?: boolean; onBalance: (n: number) => void; onPatch?: (p: Partial<Customer>) => void;
 }) {
   const [label, setLabel] = useState('');
   const [banchan, setBanchan] = useState(0);
@@ -1668,7 +1688,7 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
       }
       if (k) {
         const d = await post({ memo: kakaoText });
-        if (d.ok) { onBalance(d.new_balance); setLabel(d.label || ''); onPatch?.({ prepaid_label: d.label, prepaid_tracks: d.tracks }); done.push(`카톡 메모(잔여 ${d.new_balance}팩)`); }
+        if (d.ok) { onBalance(d.new_balance); setLabel(d.label || ''); onPatch?.({ prepaid_label: d.label, prepaid_tracks: d.tracks, prepaid_split: null }); done.push(`카톡 메모(잔여 ${d.new_balance}팩)`); }
         else fail.push(`카톡 메모(${d.error || '실패'})`);
       }
       if (n !== null) {
@@ -1749,7 +1769,10 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
       </div>
       {memo && <p className="text-[11px] text-stone-500 bg-stone-50 rounded px-2 py-1 leading-relaxed">{memo}</p>}
 
-      {/* 잔여 직접 고치기 */}
+      {/* 잔여 직접 고치기 — 여러 단계 선결제 손님은 묶음마다 위 줄 칸에서 */}
+      {split ? (
+        <p className="text-[11px] text-stone-500">여러 단계 선결제 손님이에요 — 묶음별 남은 팩은 위 줄의 칸(중후230·완230 …)에서 고치세요. 카톡 메모를 붙여 저장하면 한 묶음으로 다시 맞춰집니다.</p>
+      ) : (
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs font-bold text-stone-600">잔여 고치기</span>
         <input value={setTo} onChange={e => setSetTo(e.target.value.replace(/\D/g, '').slice(0, 3))}
@@ -1760,6 +1783,7 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
         <input value={why} onChange={e => setWhy(e.target.value)} maxLength={100} placeholder="사유 (예: 카톡 선결제 옮김)"
           className="flex-1 min-w-[120px] px-2 py-1 border border-stone-300 rounded text-xs outline-none focus:border-amber-400" />
       </div>
+      )}
       {/* 카톡 메모장 정리를 그대로 붙여넣기 — 메모장이 원본 */}
       {kakao && (
         <KakaoMemoBox key={kakao.at || 'new'} text={kakaoText} setText={setKakaoText} savedAt={kakao.at} />

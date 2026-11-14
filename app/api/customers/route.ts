@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     if (digits.length >= 2) conds.push(`phone.ilike.%${digits}%`);
     query = query.or(conds.join(',')).order('baby_name').limit(80);
   } else {
-    query = query.or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true').order('baby_name').limit(1000);
+    query = query.or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true,prepaid_split.not.is.null').order('baby_name').limit(1000);
   }
 
   const { data, error } = await query;

@@ -5,6 +5,7 @@ import { buildCookingSheet } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
+import { kindOf, isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
 
 /*
   입금 대조 화면
@@ -63,7 +64,7 @@ const isPrepaidUse = (o: SheetOrder) => String(o.paid_note || '').startsWith('�
 const payState = (o: SheetOrder): PayState =>
   isPrepaidUse(o) || o.order_type === '선결제' ? 'prepaid'
   : o.paid ? 'paid' : isOpenworld(o.paid_note) ? 'openworld' : o.paid_note ? 'skip' : 'unpaid';
-const hasPrepaid = (c?: Customer) => !!c && (c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0);
+const hasPrepaid = (c?: Customer) => !!c && (c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0 || isSplit(c));
 
 // 주문의 단계·용량 → 선결제 할인표 이름 ('완료기 300g'). 중기1의 240/310 도 230/300 표를 쓴다.
 function labelOf(o: SheetOrder): string | null {
@@ -161,9 +162,11 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
             state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; },
             onToggle: id => { const o = byId.get(id); if (o) click(o); },
             // 선결제가 마이너스 = 더 먹은 만큼 입금 요청할 손님 (사장님 2026-11-14)
+            // 여러 단계 선결제 손님은 이 주문 단계·용량의 묶음 잔액으로 본다
             tag: id => {
               const o = byId.get(id); if (!o) return null;
-              const c = custOf(o); const b = Number(c?.prepaid_balance) || 0;
+              const c = custOf(o); if (!c) return null;
+              const b = balanceFor(c, kindOf(o.stage, (o as any).volume));
               return !String(o.stage || '').startsWith('반찬') && b < 0 ? `${b}` : null;
             },
           }} />}
@@ -196,9 +199,12 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   const banchan = stage.startsWith('반찬');
   const unit = banchan ? '회' : '팩';
   const qty = Number(o.total_qty) || 0;
-  const left = banchan ? (cust?.prepaid_banchan || 0) : (cust?.prepaid_balance || 0);
+  // 여러 단계 선결제 손님은 이 주문 단계·용량의 묶음 (lib/prepaidSplit)
+  const okind = banchan ? null : kindOf(stage, (o as any).volume);
+  const split = !banchan && isSplit(cust);
+  const left = banchan ? (cust?.prepaid_banchan || 0) : balanceFor(cust, okind);
   const used = /^선결제 차감 \d+(팩|회) \(입금 탭/.test(String(o.paid_note || '')); // 이 화면에서 뺀 것
-  const label = cust?.prepaid_label || labelOf(o);
+  const label = split ? okind : (cust?.prepaid_label || labelOf(o));
   const [edit, setEdit] = useState(String(left));
   // 손님 카드를 늦게 불러오면 그때의 남은 팩으로 칸을 맞춘다
   useEffect(() => { setEdit(String(left)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cust?.id]);
@@ -213,9 +219,9 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
-    patch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: { [d.field]: d.balance } as any });
-    setEdit(String(d.balance));
-    setInfo(on ? `선결제에서 뺐어요 — 남은 ${d.balance}${unit}` : `돌려놓았어요 — 남은 ${d.balance}${unit}`);
+    patch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: (banchan ? { prepaid_banchan: d.balance } : { prepaid_balance: d.balance, prepaid_split: d.split ?? null }) as any });
+    setEdit(String(d.part ?? d.balance));
+    setInfo(on ? `선결제에서 뺐어요 — 남은 ${d.part ?? d.balance}${unit}` : `돌려놓았어요 — 남은 ${d.part ?? d.balance}${unit}`);
   }
 
   async function setLeft() {
@@ -227,12 +233,12 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     setBusy(true); setInfo(null);
     const d = await fetch(`/api/customers/${cust.id}/prepaid`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(banchan ? { item: '반찬', set: n, memo: '입금 탭에서 고침' } : { set: n, memo: '입금 탭에서 고침' }),
+      body: JSON.stringify(banchan ? { item: '반찬', set: n, memo: '입금 탭에서 고침' } : { set: n, memo: '입금 탭에서 고침', ...(split && okind ? { kind: okind } : {}) }),
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 고쳤어요: ${d.error || ''}`); setEdit(String(left)); return; }
-    patch({ customerId: cust.id, customer: banchan ? { prepaid_banchan: d.new_balance } : { prepaid_balance: d.new_balance } });
-    setInfo(`남은 ${d.new_balance}${unit}로 고쳤어요`);
+    patch({ customerId: cust.id, customer: banchan ? { prepaid_banchan: d.new_balance } : { prepaid_balance: d.new_balance, prepaid_split: d.split ?? null } });
+    setInfo(`남은 ${d.part ?? d.new_balance}${unit}로 고쳤어요`);
   }
 
   async function charge(units: number, pick: string) {
@@ -246,9 +252,10 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 넣었어요: ${d.error || ''}`); return; }
-    patch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, prepaid_label: pick } });
-    setEdit(String(d.new_balance));
-    setInfo(`${units}팩 넣었어요 — 남은 ${d.new_balance}팩. 이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
+    const nc = { prepaid_balance: d.new_balance, prepaid_split: d.split ?? null, prepaid_label: d.label || pick };
+    patch({ customerId: cust.id, customer: nc });
+    setEdit(String(balanceFor(nc as any, okind)));
+    setInfo(`${units}팩 넣었어요 — ${d.split ? `묶음이 나뉘었어요(${(d.split as any[]).map(p => `${p.kind} ${p.balance}`).join(' · ')}). ` : `남은 ${d.new_balance}팩. `}이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
   }
 
   /* 이 날부터 뒤로 한꺼번에 — 사장님 2026-11-14: "2일 페이지에서 갯수 정하면 그 뒤로 체크 안 된 것들 자동 차감"
@@ -266,7 +273,7 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     setBusy(false);
     if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
     if (!apply) { setPreview({ lines: d.lines, final: d.final, current: d.current }); return; }
-    patch({ customerId: d.customer_id, customer: { [d.field]: d.final } as any });
+    patch({ customerId: d.customer_id, customer: (banchan ? { prepaid_banchan: d.final } : { prepaid_balance: d.total ?? d.final, prepaid_split: d.split ?? null }) as any });
     for (const x of d.done || []) {
       const p: Patch = { order: { paid: true, paid_note: x.paid_note } };
       if (x.id === o.id) patch(p); else onPatchOrder(x.id, p);
@@ -312,6 +319,13 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
               onBlur={setLeft} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} inputMode="numeric"
               className={`w-14 px-1.5 py-0.5 border rounded text-right text-[13px] font-black outline-none focus:border-violet-400 ${left < 0 ? 'text-red-600' : 'text-violet-800'} border-violet-300`} />
             <span>{unit}{!banchan && label ? <span className="ml-1 text-stone-400">{label}</span> : null}</span>
+            {split && (
+              <span className="text-[11px] text-stone-500">
+                · 다른 묶음 {partsOf(cust).filter(p => p.kind !== okind).map(p => (
+                  <b key={p.kind} className={`ml-1 ${p.balance < 0 ? 'text-red-600' : 'text-stone-700'}`}>{shortKind(p.kind)} {p.balance}</b>
+                ))}
+              </span>
+            )}
             <span className="text-[11px] text-stone-400">(고치고 Enter)</span>
           </div>
           <div className="flex gap-1.5 flex-wrap">
@@ -434,8 +448,9 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
   }
   const need = (groups['확인필요'] || []).length + (groups['모름'] || []).length;
   // 선결제보다 더 먹은 손님 — 입금 요청 톡 보낼 명단 (사장님 2026-11-14)
-  const minus = customers.filter(c => (Number(c.prepaid_balance) || 0) < 0)
-    .sort((a, b) => a.prepaid_balance - b.prepaid_balance || String(a.baby_name).localeCompare(String(b.baby_name), 'ko'));
+  // 여러 단계 선결제 손님은 묶음 하나만 마이너스여도 (예: 완료기 230 −3, 후기 230 +12)
+  const minus = customers.map(c => ({ c, neg: partsOf(c).filter(p => p.balance < 0) })).filter(x => x.neg.length > 0)
+    .sort((a, b) => Math.min(...a.neg.map(p => p.balance)) - Math.min(...b.neg.map(p => p.balance)) || String(a.c.baby_name).localeCompare(String(b.c.baby_name), 'ko'));
 
   return (
     <div className="space-y-4">
@@ -443,11 +458,13 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <p className="text-[13px] font-black text-red-700">입금 요청 — 선결제 마이너스 {minus.length}명</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {minus.map(c => (
+            {minus.map(({ c, neg }) => (
               <span key={c.id} className="px-2 py-0.5 rounded-lg bg-white border border-red-200 text-[12px]">
                 <b className="text-stone-900">{c.baby_name}</b>
-                <b className="ml-1 text-red-600">{c.prepaid_balance}팩</b>
-                {c.prepaid_label && <span className="ml-1 text-[11px] text-stone-400">{c.prepaid_label}</span>}
+                {neg.map(p => (
+                  <span key={p.kind}><b className="ml-1 text-red-600">{p.balance}팩</b><span className="ml-0.5 text-[11px] text-stone-400">{p.kind}</span></span>
+                ))}
+                {isSplit(c) && <span className="ml-1 text-[11px] text-stone-400">(다른 묶음 {partsOf(c).filter(p => p.balance >= 0).map(p => `${shortKind(p.kind)} ${p.balance}`).join(' · ')})</span>}
                 {c.phone && <span className="ml-1 text-[11px] text-stone-500">{c.phone.replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3')}</span>}
               </span>
             ))}

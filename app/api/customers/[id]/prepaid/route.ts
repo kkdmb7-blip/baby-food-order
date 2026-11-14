@@ -3,6 +3,7 @@ import { supabaseService, PREPAID_UNITS } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { parseKakaoPrepaid, memoSummary } from '@/lib/kakaoPrepaid';
+import { movePrepaid, kindOfLabel, isSplit, kindTag } from '@/lib/prepaidSplit';
 
 // POST /api/customers/[id]/prepaid — 선결제 충전 (admin)
 // body { units: 20|30|50, amount_won?: 받은 돈 }
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       const { data: upd, error } = await sb.from('baby_food_customers').update({
         prepaid_balance: last.balance, prepaid_label: last.label, prepaid_memo: memo,
         prepaid_memo_at: new Date().toISOString(), prepaid_tracks: tracks,
+        prepaid_split: null, // 카톡 메모는 한 묶음으로 다시 맞춘다 (여러 단계면 고객관리에서 묶음별로 고치기)
       }).eq('id', ctx.params.id).eq('prepaid_balance', base).select('id');
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       if (upd && upd.length) {
@@ -80,6 +82,23 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     const memo = String(body.memo || '').trim().slice(0, 100);
     const amountWon = Number(body.amount_won) > 0 ? Math.floor(Number(body.amount_won)) : null;
     const sb = supabaseService();
+    // 이유식 잔여 고치기 — 여러 단계 손님은 어느 묶음인지(kind) 같이 온다 (lib/prepaidSplit)
+    if (!isBanchan) {
+      const kind = body.kind ? kindOfLabel(String(body.kind)) : null;
+      const { data: c0 } = await sb.from('baby_food_customers').select('prepaid_balance, prepaid_label, prepaid_split').eq('id', ctx.params.id).maybeSingle();
+      if (!c0) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
+      if (isSplit(c0 as any) && !kind) return NextResponse.json({ error: '여러 단계 선결제 손님이에요 — 어느 묶음을 고칠지 골라 주세요' }, { status: 400 });
+      const r = await movePrepaid(sb, ctx.params.id, { set: target0, kind });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+      if (r.before !== r.after || r.partBefore !== r.partAfter) {
+        await recordPrepaid(sb, {
+          customerId: ctx.params.id, phone: r.phone, babyName: r.babyName,
+          kind: '수정', packs: r.after - r.before, balanceAfter: r.after, item,
+          memo: `${kindTag(r)}사장님이 직접 고침 ${r.partBefore}→${r.partAfter}${unit}${memo ? ` · ${memo}` : ''}`,
+        });
+      }
+      return NextResponse.json({ ok: true, new_balance: r.after, part: r.partAfter, split: r.split, item });
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       const { data: c } = await sb.from('baby_food_customers')
         .select(`${col}, phone, baby_name`).eq('id', ctx.params.id).single();
@@ -111,29 +130,18 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   const id = ctx.params.id;
   const sb = supabaseService();
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: c } = await sb.from('baby_food_customers')
-      .select('prepaid_balance, phone, baby_name').eq('id', id).single();
-    if (!c) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
-    const base = Number(c.prepaid_balance) || 0;
-    const next = base + units;
-    // 충전할 때 고른 종류(예: '완료기 300g')를 손님의 선결제 단계로 남긴다 — 다음 충전·입금 대조가 이 값을 쓴다
-    const pickLabel = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 30) : null;
-    const { data: upd, error } = await sb.from('baby_food_customers')
-      .update({ prepaid_balance: next, ...(pickLabel ? { prepaid_label: pickLabel } : {}) })
-      .eq('id', id).eq('prepaid_balance', base).select('id');
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (upd && upd.length) {
-      await recordPrepaid(sb, {
-        customerId: id, phone: c.phone, babyName: c.baby_name,
-        kind: '충전', packs: units, balanceAfter: next, amountWon,
-        memo: `${units}팩 충전${typeof body.label === 'string' && body.label.trim() ? ` (${body.label.trim().slice(0, 30)})` : ''}`,
-      });
-      return NextResponse.json({ ok: true, new_balance: next });
-    }
-    // 그 사이 잔액이 바뀌었다 — 새 값으로 다시
-  }
-  return NextResponse.json({ error: '잔액이 계속 바뀌어 충전하지 못했어요 — 다시 눌러주세요' }, { status: 409 });
+  // 충전할 때 고른 종류(예: '완료기 300g')를 손님의 선결제 단계로 남긴다 — 다음 충전·입금 대조가 이 값을 쓴다.
+  // 지금 남은 팩과 다른 종류면 묶음이 따로 생긴다(후기230 + 완료기230 처럼) — lib/prepaidSplit
+  const pickLabel = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 30) : null;
+  const kind = kindOfLabel(pickLabel) || pickLabel;
+  const r = await movePrepaid(sb, id, { delta: units, charge: true, kind });
+  if (!r.ok) return NextResponse.json({ error: r.error === '손님 카드를 못 찾았어요' ? '고객 없음' : r.error }, { status: r.status });
+  await recordPrepaid(sb, {
+    customerId: id, phone: r.phone, babyName: r.babyName,
+    kind: '충전', packs: units, balanceAfter: r.after, amountWon,
+    memo: `${kindTag(r)}${units}팩 충전${pickLabel ? ` (${pickLabel})` : ''}`,
+  });
+  return NextResponse.json({ ok: true, new_balance: r.after, part: r.partAfter, split: r.split, label: r.kind || kind });
 }
 
 // GET /api/customers/[id]/prepaid — 그 손님의 선결제 장부(최근 100줄) + 주문 내역(최근 200건)

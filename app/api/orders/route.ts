@@ -14,6 +14,7 @@ import { looksDirectDelivery } from '@/lib/routeCode';
 import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { OPENWORLD_NOTE, openworldApplies } from '@/lib/openworld';
+import { movePrepaid, kindOf } from '@/lib/prepaidSplit';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -265,6 +266,7 @@ export async function POST(req: NextRequest) {
     // 선결제 고객이면 잔여 차감
     let customer_id: string | null = null;
     let prepaidAfter: number | null = null;   // 장부에 남길 차감 뒤 잔액
+    let prepaidKind: string | null = null;    // 여러 묶음 손님이면 뺀 묶음
     if (order_type === '선결제') {
       const { data: cust } = await sb
         .from('baby_food_customers')
@@ -280,24 +282,13 @@ export async function POST(req: NextRequest) {
       if (norm(cust.baby_name) !== norm(baby_name)) {
         return bad('선결제 고객 정보와 아기 이름이 일치하지 않습니다');
       }
-      if (cust.prepaid_balance < total_qty)
-        return bad(`잔여 팩이 부족합니다 (잔여: ${cust.prepaid_balance}팩, 필요: ${total_qty}팩)`);
-      // ⚠️ "읽은 값 - 수량"을 그냥 덮어쓰면, 같은 고객이 거의 동시에 두 번 주문(중복클릭 등)했을 때
-      // 둘 다 같은 잔액을 읽어서 각자 계산 → 마지막에 쓴 값만 남아 실제로는 1번만 차감되거나
-      // 잔액 부족인데도 통과되는 경쟁조건이 생김. eq('prepaid_balance', cust.prepaid_balance)로
-      // "내가 읽은 값 그대로일 때만" 갱신되게 해서, 동시 요청 중 하나는 매칭 실패로 안전하게 막는다.
-      const { data: updated, error: ue } = await sb
-        .from('baby_food_customers')
-        .update({ prepaid_balance: cust.prepaid_balance - total_qty })
-        .eq('id', cust.id)
-        .eq('prepaid_balance', cust.prepaid_balance)
-        .select('id');
-      if (ue) return NextResponse.json({ ok: false, error: '잔여 차감 실패' }, { status: 500 });
-      if (!updated || updated.length === 0) {
-        return bad('처리 중 잔액이 변경됐어요 — 다시 시도해주세요 (중복 제출 방지)');
-      }
+      // 잔여 차감 — 여러 단계 선결제면 이 주문 단계·용량의 묶음에서 뺀다 (lib/prepaidSplit).
+      // "읽은 값 그대로일 때만" 갱신(CAS)이라 중복 클릭에도 두 번 빠지지 않는다. 모자라면 거절.
+      const mv = await movePrepaid(sb, cust.id, { delta: -total_qty, kind: kindOf(stage, volume), requireEnough: true });
+      if (!mv.ok) return mv.status === 400 ? bad(`잔여 팩이 부족합니다 (${mv.error})`) : bad('처리 중 잔액이 변경됐어요 — 다시 시도해주세요 (중복 제출 방지)');
       customer_id = cust.id;
-      prepaidAfter = cust.prepaid_balance - total_qty;
+      prepaidAfter = mv.after;
+      prepaidKind = mv.kind;
     }
 
     // G. 포인트 사용/적립 — 일반·정기 주문만 (선결제 제외). 고객 1회 조회
@@ -374,9 +365,7 @@ export async function POST(req: NextRequest) {
       });
       // ⚠️ 선결제 팩은 이미 뺐다 — 주문이 안 들어갔으면 돌려놔야 한다(전에는 빠진 채 남았다)
       if (customer_id && prepaidAfter !== null) {
-        await sb.from('baby_food_customers')
-          .update({ prepaid_balance: prepaidAfter + total_qty })
-          .eq('id', customer_id).eq('prepaid_balance', prepaidAfter);
+        await movePrepaid(sb, customer_id, { delta: total_qty, kind: prepaidKind || kindOf(stage, volume) });
       }
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     }
@@ -386,7 +375,7 @@ export async function POST(req: NextRequest) {
       await recordPrepaid(sb, {
         customerId: customer_id, phone: customer_phone, babyName: baby_name,
         kind: '사용', packs: -total_qty, balanceAfter: prepaidAfter, orderId: data.id,
-        memo: `조리일 ${delivery_date}`,
+        memo: `${prepaidKind ? `[${prepaidKind}] ` : ''}조리일 ${delivery_date}`,
       });
     }
 

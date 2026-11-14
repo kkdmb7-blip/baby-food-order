@@ -3,6 +3,7 @@ import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { isOpenworld } from '@/lib/openworld';
+import { movePrepaid, kindOf, isSplit, balanceFor } from '@/lib/prepaidSplit';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: '숫자를 확인해 주세요' }, { status: 400 });
   const sb = supabaseService();
 
-  const { data: o } = await sb.from('baby_food_orders').select('id, baby_name, stage, delivery_date, customer_id, customer_phone')
+  const { data: o } = await sb.from('baby_food_orders').select('id, baby_name, stage, volume, delivery_date, customer_id, customer_phone')
     .eq('id', id).single();
   if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
   const banchan = String(o.stage || '').startsWith('반찬');
@@ -38,14 +39,17 @@ export async function POST(req: NextRequest) {
   const field = banchan ? 'prepaid_banchan' : 'prepaid_balance';
   const unit = banchan ? '회' : '팩';
 
-  const cq = sb.from('baby_food_customers').select(`id, phone, baby_name, ${field}`);
+  const cq = sb.from('baby_food_customers').select(`id, phone, baby_name, ${field}, prepaid_split`);
   const { data: c } = o.customer_id ? await cq.eq('id', o.customer_id).maybeSingle()
     : o.customer_phone ? await cq.eq('phone', o.customer_phone).maybeSingle() : { data: null };
   if (!c) return NextResponse.json({ ok: false, error: '손님 카드를 못 찾았어요' }, { status: 404 });
-  const cur = Number((c as any)[field]) || 0;
+  // 여러 단계 선결제 손님 — 이 주문 단계·용량의 묶음만 본다 (start 도 그 묶음 숫자). lib/prepaidSplit
+  const split = !banchan && isSplit(c as any);
+  const kind = banchan ? null : kindOf(o.stage, o.volume);
+  const cur = banchan ? (Number((c as any)[field]) || 0) : balanceFor(c as any, kind);
 
   let q = sb.from('baby_food_orders')
-    .select('id, delivery_date, created_at, stage, total_qty, paid, paid_note, order_type, status')
+    .select('id, delivery_date, created_at, stage, volume, total_qty, paid, paid_note, order_type, status')
     .gte('delivery_date', o.delivery_date).neq('status', '취소')
     .order('delivery_date').order('created_at').limit(500);
   q = c.phone ? q.or(`customer_id.eq.${c.id},customer_phone.eq.${c.phone}`) : q.eq('customer_id', c.id);
@@ -58,6 +62,7 @@ export async function POST(req: NextRequest) {
   for (const r of rows || []) {
     const st = String(r.stage || '');
     if (!same(st)) continue;
+    if (split && kindOf(st, r.volume) !== kind) continue; // 다른 묶음(예: 완료기)은 그 묶음 판에서
     const qty = Number(r.total_qty) || 0;
     const note = String(r.paid_note || '');
     if (r.order_type === '선결제' || note.startsWith('선결제 차감')) { bal -= qty; lines.push({ id: r.id, date: r.delivery_date, qty, action: '이미 뺌', after: bal }); continue; }
@@ -68,13 +73,23 @@ export async function POST(req: NextRequest) {
     lines.push({ id: r.id, date: r.delivery_date, qty, action: '뺌', after: bal });
   }
   const take = lines.filter(l => l.action === '뺌');
-  const out = { ok: true, customer_id: c.id, field, unit, current: cur, final: bal, lines };
+  const out = { ok: true, customer_id: c.id, field, unit, current: cur, final: bal, lines, kind: split ? kind : null };
   if (banchan && bal < 0) return NextResponse.json({ ...out, ok: false, error: `반찬 선결제가 모자라요 (끝에 ${bal}회)` }, { status: 409 });
   if (!b.apply) return NextResponse.json(out);
 
   // 잔액: 읽은 값 그대로일 때만 바꾼다(그 사이 다른 데서 바뀌었으면 멈춤)
-  const { data: up } = await sb.from('baby_food_customers').update({ [field]: bal }).eq('id', c.id).eq(field, cur).select('id');
-  if (!up?.length) return NextResponse.json({ ok: false, error: '잔액이 그 사이 바뀌었어요 — 새로고침 후 다시' }, { status: 409 });
+  let totBefore = cur, totAfter = bal, newSplit: any = null;
+  if (banchan) {
+    const { data: up } = await sb.from('baby_food_customers').update({ [field]: bal }).eq('id', c.id).eq(field, cur).select('id');
+    if (!up?.length) return NextResponse.json({ ok: false, error: '잔액이 그 사이 바뀌었어요 — 새로고침 후 다시' }, { status: 409 });
+  } else {
+    const mv = await movePrepaid(sb, c.id, { set: bal, kind, expectPart: cur });
+    if (!mv.ok) return NextResponse.json({ ok: false, error: mv.error }, { status: mv.status });
+    totBefore = mv.before; totAfter = mv.after; newSplit = mv.split;
+  }
+  const rollback = async () => banchan
+    ? sb.from('baby_food_customers').update({ [field]: cur }).eq('id', c.id).eq(field, bal)
+    : movePrepaid(sb, c.id, { set: cur, kind });
 
   const k = new Date(Date.now() + 9 * 3600e3).toISOString();
   const stamp = `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
@@ -86,23 +101,25 @@ export async function POST(req: NextRequest) {
     if (error || !u?.length) {
       // 하나라도 못 바꾸면 여기까지 바꾼 주문을 되돌리고 잔액도 되돌린다
       if (done.length) await sb.from('baby_food_orders').update({ paid: false, paid_at: null, paid_note: null }).in('id', done.map(d => d.id));
-      await sb.from('baby_food_customers').update({ [field]: cur }).eq('id', c.id).eq(field, bal);
+      await rollback();
       return NextResponse.json({ ok: false, error: `${l.date} 주문을 못 바꿔서 전부 되돌렸어요${error ? ': ' + error.message : ''}` }, { status: 500 });
     }
     done.push({ id: l.id, paid_note });
   }
 
   // 장부: 기준 맞춤(수정) 한 줄 + 뺀 주문마다 사용 한 줄 → 마지막 잔액이 지금 잔액과 같다
+  // 장부의 balance_after 는 전체 잔액 기준 — 여러 묶음이면 [묶음] 을 메모 앞에
   const item = banchan ? '반찬' : '이유식';
+  const tag = split && kind ? `[${kind}] ` : '';
   const takenSum = take.reduce((s, l) => s + l.qty, 0);
-  const adjust = (bal + takenSum) - cur;
-  let run = cur + adjust;
+  const adjust = (totAfter + takenSum) - totBefore;
+  let run = totBefore + adjust;
   await recordPrepaid(sb, { customerId: c.id, phone: c.phone, babyName: c.baby_name, kind: '수정', packs: adjust, balanceAfter: run, item,
-    memo: `입금 탭: ${Number(o.delivery_date.slice(5, 7))}/${Number(o.delivery_date.slice(8, 10))} 주문 전 남은 ${start}${unit} 기준으로 맞춤` });
+    memo: `${tag}입금 탭: ${Number(o.delivery_date.slice(5, 7))}/${Number(o.delivery_date.slice(8, 10))} 주문 전 남은 ${start}${unit} 기준으로 맞춤` });
   for (const l of take) {
     run -= l.qty;
     await recordPrepaid(sb, { customerId: c.id, phone: c.phone, babyName: c.baby_name, kind: '사용', packs: -l.qty, balanceAfter: run, orderId: l.id, item,
-      memo: '입금 탭에서 선결제로 처리 (뒤 주문 한꺼번에)' });
+      memo: `${tag}입금 탭에서 선결제로 처리 (뒤 주문 한꺼번에)` });
   }
-  return NextResponse.json({ ...out, done });
+  return NextResponse.json({ ...out, done, total: totAfter, split: newSplit });
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
+import { movePrepaid, kindOf, kindTag } from '@/lib/prepaidSplit';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
   const sb = supabaseService();
 
   const { data: o } = await sb.from('baby_food_orders')
-    .select('id, baby_name, stage, total_qty, customer_id, customer_phone, paid, paid_note, status, order_type')
+    .select('id, baby_name, stage, volume, total_qty, customer_id, customer_phone, paid, paid_note, status, order_type')
     .eq('id', id).single();
   if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
   if (o.status === '취소') return NextResponse.json({ ok: false, error: '취소된 주문이에요' }, { status: 409 });
@@ -55,34 +56,44 @@ export async function POST(req: NextRequest) {
   if (!c) return NextResponse.json({ ok: false, error: '손님 카드를 못 찾았어요' }, { status: 404 });
 
   const delta = b.use ? -qty : qty;
+  const kind = banchan ? null : kindOf(o.stage, o.volume);
   // 읽은 값 그대로일 때만 바꾼다(두 번 눌림 방지) — 그 사이 바뀌었으면 다시 읽어 세 번까지
-  let next = 0, ok = false;
-  for (let i = 0; i < 3 && c; i++) {
-    const base = Number(c[field]) || 0;
-    next = base + delta;
-    if (banchan && next < 0) return NextResponse.json({ ok: false, error: `반찬 선결제가 ${base}회뿐이에요 (${qty}회 필요)` }, { status: 409 });
-    const { data: up } = await sb.from('baby_food_customers').update({ [field]: next }).eq('id', c.id).eq(field, base).select('id');
-    if (up && up.length) { ok = true; break; }
-    c = (await sb.from('baby_food_customers').select(`id, phone, ${field}`).eq('id', c.id).maybeSingle()).data;
+  // 이유식은 여러 단계 선결제면 이 주문 단계·용량의 묶음에서 (lib/prepaidSplit)
+  let next = 0, partNext = 0, ok = false, tag = '', split: any = undefined;
+  if (banchan) {
+    for (let i = 0; i < 3 && c; i++) {
+      const base = Number(c[field]) || 0;
+      next = base + delta;
+      if (next < 0) return NextResponse.json({ ok: false, error: `반찬 선결제가 ${base}회뿐이에요 (${qty}회 필요)` }, { status: 409 });
+      const { data: up } = await sb.from('baby_food_customers').update({ [field]: next }).eq('id', c.id).eq(field, base).select('id');
+      if (up && up.length) { ok = true; break; }
+      c = (await sb.from('baby_food_customers').select(`id, phone, ${field}`).eq('id', c.id).maybeSingle()).data;
+    }
+    partNext = next;
+  } else {
+    const r = await movePrepaid(sb, c.id, { delta, kind });
+    if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: r.status });
+    ok = true; next = r.after; partNext = r.partAfter; tag = kindTag(r); split = r.split;
   }
   if (!ok) return NextResponse.json({ ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시' }, { status: 409 });
 
   const k = new Date(Date.now() + 9 * 3600e3).toISOString();
   const stamp = `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
   const patch = b.use
-    ? { paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${next}${unit})` }
+    ? { paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${partNext}${unit})` }
     : { paid: false, paid_at: null, paid_note: null };
   const { error } = await sb.from('baby_food_orders').update(patch).eq('id', id);
   if (error) {
     // 주문 표시를 못 바꿨으면 잔액을 되돌린다 — 잔액만 빠지고 주문은 미입금으로 남으면 안 된다
-    await sb.from('baby_food_customers').update({ [field]: next - delta }).eq('id', c.id).eq(field, next);
+    if (banchan) await sb.from('baby_food_customers').update({ [field]: next - delta }).eq('id', c.id).eq(field, next);
+    else await movePrepaid(sb, c.id, { delta: -delta, kind });
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
   await recordPrepaid(sb, {
     customerId: c.id, phone: c.phone, babyName: o.baby_name,
     kind: b.use ? '사용' : '환불', packs: delta, balanceAfter: next, orderId: id,
-    memo: b.use ? '입금 탭에서 선결제로 처리' : '입금 탭에서 선결제 처리 되돌림',
+    memo: `${tag}${b.use ? '입금 탭에서 선결제로 처리' : '입금 탭에서 선결제 처리 되돌림'}`,
     item: banchan ? '반찬' : '이유식',
   });
-  return NextResponse.json({ ok: true, customer_id: c.id, field, balance: next, paid: patch.paid, paid_note: patch.paid_note });
+  return NextResponse.json({ ok: true, customer_id: c.id, field, balance: next, part: partNext, kind, split: split ?? null, paid: patch.paid, paid_note: patch.paid_note });
 }
