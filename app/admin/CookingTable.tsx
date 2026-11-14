@@ -128,7 +128,9 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
   type BRow = CookingSheet['banchan'][number];
   const bGroup = (g: BRow['group']) => sheet.banchan.filter(b => b.group === g);
   const shipCls = (s: string) => (s === '픽' ? 'text-emerald-700' : s === '택' ? 'text-stone-900' : 'text-sky-700');
-  const bName = (b: BRow) => <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}{b.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print">정보?</span>}</>;
+  const bName = (b: BRow) => <>{b.needInfo
+    ? <span className="underline decoration-yellow-400 decoration-[3px] underline-offset-2" title="연락처·주소를 아직 안 넣었어요 — 이름을 눌러 넣기">{b.name}</span>
+    : b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}</>;
   const banchanTable = (title: string, rows: BRow[], withAdd: boolean) => (
     <table className="table-fixed border-collapse text-[14px] leading-tight">
       <colgroup><col style={{ width: 78 }} /><col style={{ width: 22 }} /><col style={{ width: 26 }} /></colgroup>
@@ -300,9 +302,11 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                 // 픽업·추가·미지정은 작은 꼬리표로 옆에 붙인다.
                 const nameNode = (
                   <>
-                    {p.name}
+                    {/* 연락처·주소를 아직 안 넣은 아이는 이름 밑 노란 줄 — '정보?' 글자는 칸이 두 줄로 터져서 뺐다(사장님 2026-11-14) */}
+                    {p.needInfo
+                      ? <span className="underline decoration-yellow-400 decoration-[3px] underline-offset-2" title="연락처·주소를 아직 안 넣었어요 — 이름을 눌러 넣기">{p.name}</span>
+                      : p.name}
                     {p.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}
-                    {p.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print" title="연락처·주소를 아직 안 넣었어요 — 이름을 눌러 넣기">정보?</span>}
                     {p.unspec > 0 && <span className="ml-0.5 text-[10px] font-bold text-red-600">미지정{p.unspec}</span>}
                   </>
                 );
