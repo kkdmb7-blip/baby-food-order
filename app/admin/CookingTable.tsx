@@ -31,7 +31,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
   sheet: CookingSheet;
   /** 입금 체크판으로 쓸 때 — 이름 칸 색이 입금 상태가 되고, 이름을 누르면 입금확인을 켜고 끈다.
       tag: 이름 옆 작은 빨간 꼬리표(선결제 마이너스 '−7' 등) */
-  pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void; tag?: (orderId: string) => string | null };
+  pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void; onOpen?: (orderId: string) => void; tag?: (orderId: string) => string | null };
   /** 화면에서만 — 단계 블록 맨 아래 추가 줄(이름·230/300·팩수 → Enter). 종이에 손으로 적은 아이를 그 자리에서 넣는다 */
   add?: { date: string; onAdded: (row: any) => void };
   /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
@@ -63,7 +63,12 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
       const st = pay.state(orderId);
       const tag = pay.tag?.(orderId);
       return (
-        <td className={`${base} ${PAY_BG[st]}`}>
+        <td className={`${base} ${PAY_BG[st]} relative`}>
+          {/* 이름 = 입금확인 켜고 끄기, 오른쪽 끝 ▸ = 판 열기 — 둘 다 한 번에 (사장님 2026-11-14) */}
+          {pay.onOpen && (
+            <button onClick={() => pay.onOpen!(orderId)} title="판 열기 — 선결제·택배비·정보"
+              className="absolute inset-y-0 right-0 w-4 flex items-center justify-center text-[10px] text-stone-400 hover:text-violet-700 hover:bg-violet-100/70 print:hidden">▸</button>
+          )}
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
             className="w-full text-center hover:underline">
             {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}

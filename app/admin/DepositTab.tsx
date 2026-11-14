@@ -88,9 +88,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
      2026-11-14 사장님: "체크 기능 살리면서 선결제 시작한 애들 있으면 그것도 거기서 바로 수정" */
   // 'panel' = 미입금·선결제 손님은 판이 열린다(기본) / 'quick' = 누구든 누르면 바로 입금확인 켜고 끄기
   // 2026-11-14 사장님: 미입금 아이도 새로 선결제를 시작했으면 강이한처럼 판에서 넣을 수 있게
-  const [mode, setModeState] = useState<'panel' | 'quick'>('panel');
-  useEffect(() => { try { if (localStorage.getItem('kkdmb-pay-mode') === 'quick') setModeState('quick'); } catch { /* 기억 못 해도 기본값 */ } }, []);
-  const setMode = (m: 'panel' | 'quick') => { setModeState(m); try { localStorage.setItem('kkdmb-pay-mode', m); } catch { /* */ } };
+  // 2026-11-14 사장님: "회색일 때 한 번 누르면 체크, 다시 풀고 또 누르면 입력창 — 둘 다 원클릭으로"
+  // → 모드 전환 없앰. 이름 = 바로 입금확인 켜고 끄기, 이름 칸 오른쪽 끝 ▸ = 판 열기
   const [openId, setOpenId] = useState<string | null>(null);
   const byId = new Map(orders.map(o => [o.id, o]));
   // 조리표를 뽑은 시각 — 그 뒤에 들어온 아이는 조리표처럼 단계 맨 아래('추가')에
@@ -130,12 +129,6 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
     if (s === 'unpaid') unpaidWon += (o.total_price || 0) + (o.shipping_fee || 0);
   }
   const dow = '일월화수목금토'[new Date(date + 'T00:00:00Z').getUTCDay()];
-  const click = (o: SheetOrder) => {
-    if (mode === 'quick') { onToggle(o); return; }
-    // 미입금이거나 선결제와 얽힌 손님은 판을 연다(판 맨 앞이 '입금확인'). 이미 확인된·오픈월드·엑셀 시절은 바로 켜고 끈다
-    if (stateOf(o) === 'unpaid' || stateOf(o) === 'postpaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
-    else onToggle(o);
-  };
   const openOrder = openId ? byId.get(openId) : undefined;
 
   return (
@@ -148,10 +141,6 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
         {count.postpaid > 0 && <span className="font-bold text-orange-700">후불 {count.postpaid}</span>}
         {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
         {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
-        <span className="ml-auto flex rounded-lg border border-stone-300 overflow-hidden text-[12px] font-bold">
-          <button onClick={() => setMode('panel')} className={`px-3 py-1 ${mode === 'panel' ? 'bg-violet-100 text-violet-800' : 'text-stone-500'}`}>판 열기</button>
-          <button onClick={() => setMode('quick')} className={`px-3 py-1 border-l border-stone-300 ${mode === 'quick' ? 'bg-emerald-100 text-emerald-800' : 'text-stone-500'}`}>바로 체크</button>
-        </span>
       </div>
       <p className="mb-2 text-[11px] text-stone-500 leading-relaxed">
         <span className="px-1 bg-emerald-200 rounded">초록 ✓</span> 입금확인 ·{' '}
@@ -159,9 +148,7 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
         <span className="px-1 bg-violet-100 rounded">보라</span> 선결제에서 뺌 ·{' '}
         <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드 ·{' '}
         <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).{' '}
-        {mode === 'panel'
-          ? <><b>미입금(빨간 이름)·선결제 손님</b>을 누르면 판이 열립니다 — 입금확인, 선결제 충전·빼기, 남은 팩 고치기. 초록 이름을 누르면 입금확인이 꺼집니다.</>
-          : <><b>바로 체크</b> — 누구든 이름을 누르면 입금확인이 바로 켜지고 꺼집니다.</>}
+<b>이름</b>을 누르면 입금확인이 바로 켜지고 꺼집니다. 이름 칸 <b>오른쪽 끝 ▸</b>를 누르면 판이 열립니다 — 선결제 충전·빼기, 남은 팩, 택배비, 정보 넣기.
         {' '}배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배.
       </p>
 
@@ -175,7 +162,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
         ? <p className="text-center text-stone-400 text-sm py-6">이 날짜에 주문이 없어요 — 맨 위에서 날짜를 바꿔 보세요</p>
         : <CookingTable sheet={sheet} pay={{
             state: id => { const o = byId.get(id); return o ? stateOf(o) : 'skip'; },
-            onToggle: id => { const o = byId.get(id); if (o) click(o); },
+            onToggle: id => { const o = byId.get(id); if (o) onToggle(o); },
+            onOpen: id => setOpenId(id),
             // 선결제가 마이너스 = 더 먹은 만큼 입금 요청할 손님 (사장님 2026-11-14)
             // 여러 단계 선결제 손님은 이 주문 단계·용량의 묶음 잔액으로 본다
             tag: id => {
