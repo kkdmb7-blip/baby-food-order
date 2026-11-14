@@ -249,6 +249,27 @@ export async function setPrepaidParts(sb: SupabaseClient, customerId: string, se
   return { ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시', status: 409 };
 }
 
+/* 단계 변경(중기·후기 → 완료기) — 2026-11-14 사장님(안시은): "완료기로 바꾸고 싶으면 남은 팩만큼 차액을 추가 입금하면 해 줘.
+   예: 24팩 남았으면 12,000원". 선결제 값은 완료기가 팩당 500원 더 비싸다(20·30·50팩 할인폭이 같아서 늘 500원).
+   이 주문 묶음(to)이 없는데 같은 용량 중기·후기 묶음(from)이 남아 있으면 → 바꿔야 할 손님.
+   종류 기록이 없는 옛 한 묶음(라벨 없음)은 중기·후기로 본다. */
+export const CONVERT_PER_PACK = 500;
+export function convertNeed(c: C | null | undefined, toKind: string | null): { from: string; to: string; fromBalance: number } | null {
+  if (!c || !toKind || !toKind.startsWith('완료기')) return null;
+  const from = toKind.replace('완료기', '중기·후기');
+  if (isSplit(c)) {
+    const parts = c.prepaid_split as Part[];
+    if (parts.some(p => p.kind === toKind)) return null;
+    const f = parts.find(p => p.kind === from);
+    return f && Number(f.balance) !== 0 ? { from, to: toKind, fromBalance: Number(f.balance) } : null;
+  }
+  const total = Number(c.prepaid_balance) || 0;
+  const cur = kindOfLabel(c.prepaid_label) || null;
+  if (cur === toKind || total === 0) return null;
+  if (cur && cur !== from) return null;
+  return { from, to: toKind, fromBalance: total };
+}
+
 /** 표시용 '남은' — 섞인 주문을 여러 묶음에서 뺐으면 '중후300 2·중후230 5', 아니면 숫자 */
 export const leftText = (r: { partAfter: number; moved?: Part[] }) =>
   r.moved && r.moved.length > 1 ? r.moved.map(p => `${shortKind(p.kind)} ${p.balance}`).join('·') : String(r.partAfter);

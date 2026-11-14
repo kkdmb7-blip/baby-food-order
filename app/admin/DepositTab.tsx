@@ -5,7 +5,7 @@ import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
-import { kindOf, isSplit, partsOf, balanceFor, shortKind, orderKinds, partBalance } from '@/lib/prepaidSplit';
+import { kindOf, isSplit, partsOf, balanceFor, shortKind, orderKinds, partBalance, convertNeed } from '@/lib/prepaidSplit';
 import { AddMissing, LaterInfo } from './InlineAdd';
 
 /*
@@ -171,7 +171,10 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
               const c = custOf(o); if (!c) return null;
               // 230g·300g 섞인 주문은 묶음 중 가장 모자란 쪽
               const b = Math.min(...orderKinds(o as any).map(k => balanceFor(c, k.kind)));
-              return !String(o.stage || '').startsWith('반찬') && b < 0 ? `${b}` : null;
+              if (String(o.stage || '').startsWith('반찬')) return null;
+              if (b < 0) return `${b}`;
+              // 완료기 주문인데 선결제가 아직 중기·후기 묶음 — 차액 받고 바꿔야 할 손님 (사장님 2026-11-14 안시은)
+              return orderKinds(o as any).some(k => convertNeed(c, k.kind)) ? '전환' : null;
             },
           }} printedAt={printedAt} add={onAdded ? { date, onAdded } : undefined} />}
       {onAdded && <AddMissing sheet={sheet} date={date} onAdded={onAdded} />}
@@ -223,6 +226,68 @@ function PostpaidBox({ onSettled }: { onSettled: (ids: string[], note: string) =
       </div>
       {msg && <p className="mt-1 text-[12px] font-bold text-orange-800">{msg}</p>}
       <p className="mt-1 text-[11px] text-stone-500">표에서는 주황 이름이 후불 주문이에요. 일부만 받았으면 그 날짜 이름을 눌러 하나씩 입금확인하세요. (엑셀) = 앱 이전 주문이라 이미 받으셨을 수도 있어요.</p>
+    </div>
+  );
+}
+
+/* 단계 변경 — 중기·후기 선결제를 완료기로 (차액 팩당 500원). 사장님 2026-11-14 안시은:
+   "완료기로 바꾸고 싶으면 차액 추가 입금하면 해 줘. 표기가 필요하고 입금 받았는지 확인, 입금했다면 진행"
+   차액과 같은 금액의 은행 입금이 있으면 골라서 바로, 현금 등은 '따로 받았어요'. 서버: app/api/admin/prepaid-convert */
+const kstDay = (iso: string) => new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 10);
+function ConvertBox({ cust, to, onDone }: { cust: Customer; to: string; onDone: (c: any, msg: string) => void }) {
+  const [p, setP] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [units, setUnits] = useState('');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/admin/prepaid-convert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customer_id: cust.id, to }) })
+      .then(r => r.json()).then(d => { if (alive) { setP(d); if (d.units) setUnits(String(d.units)); } }).catch(() => { /* 못 읽으면 상자를 안 보인다 */ });
+    return () => { alive = false; };
+  }, [cust.id, cust.prepaid_balance, to]);
+  if (!p?.ok || !p.need) return null;
+  const n = Number(units) || 0;
+  const won = n * p.per;
+  const sameWon = won === p.won;
+  async function apply(dep?: { id: string; depositor: string; deposited_at: string }) {
+    if (n < p.need.fromBalance) { setErr(`남은 ${p.need.fromBalance}팩보다 적게는 못 바꿔요`); return; }
+    if (!confirm(`${cust.baby_name} — ${p.need.from} ${p.need.fromBalance}팩을 ${p.need.to}로 바꿀까요?\n차액 ${won.toLocaleString()}원 (${n}팩×${p.per}원) — ${dep ? `입금 ${dep.depositor} ${md(kstDay(dep.deposited_at))}` : '따로 받음'}`)) return;
+    setBusy(true); setErr(null);
+    const d = await fetch('/api/admin/prepaid-convert', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: cust.id, to, apply: true, units: n, expect_from: p.need.fromBalance, ...(dep ? { deposit_id: dep.id } : { cash: true }) }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setErr(`못 바꿨어요: ${d.error || ''}`); return; }
+    onDone(d.customer, `${p.need.to}로 바꿨어요 — 차액 ${d.won.toLocaleString()}원 (${d.how})`);
+  }
+  const btn = 'px-2.5 py-1 rounded-lg border text-[12px] font-bold disabled:opacity-40';
+  return (
+    <div className="border-2 border-amber-300 bg-amber-50 rounded-lg p-2 space-y-1.5">
+      <p className="text-[12px] text-amber-900">
+        <b>단계 변경 필요</b> — 선결제는 <b>{p.need.from} {p.need.fromBalance}팩</b>인데 이 주문은 <b>{p.need.to}</b>예요. 바꾸기 전까지는 중기·후기 묶음에서 같이 빠집니다.
+      </p>
+      <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+        <span>바꿀 팩</span>
+        <input value={units} onChange={e => setUnits(e.target.value.replace(/\D/g, ''))} disabled={busy} inputMode="numeric"
+          className="w-12 px-1.5 py-0.5 border border-amber-300 rounded text-right font-black text-amber-900 outline-none" />
+        <span className="text-stone-500">(남은 {p.need.fromBalance}{p.usedTo ? ` + 이미 먹은 완료기 ${p.usedTo}` : ''})</span>
+        <span>× {p.per}원 = <b className="text-amber-900">{won.toLocaleString()}원</b> 차액</span>
+      </div>
+      {sameWon && p.deposits?.length > 0 ? (
+        <div className="space-y-1">
+          {p.deposits.map((d: any) => (
+            <div key={d.id} className="flex items-center gap-2 text-[12px]">
+              <span className={d.match ? 'font-bold text-emerald-800' : 'text-stone-500'}>{md(kstDay(String(d.deposited_at)))} {d.depositor} {Number(d.amount).toLocaleString()}원{d.match ? ' (이름 맞음)' : ''}</span>
+              <button disabled={busy} onClick={() => apply(d)} className={`${btn} ml-auto border-emerald-400 bg-emerald-100 text-emerald-900`}>이 입금으로 확인하고 바꾸기</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[12px] font-bold text-rose-700">아직 {won.toLocaleString()}원 입금이 안 보여요 — 차액 입금 요청을 보내 주세요. (은행 파일을 올리면 여기 뜹니다)</p>
+      )}
+      <button disabled={busy} onClick={() => apply()} className={`${btn} border-amber-300 bg-white text-amber-900`}>따로 받았어요(현금 등) — 바꾸기</button>
+      {err && <p className="text-[12px] font-bold text-rose-700">{err}</p>}
     </div>
   );
 }
@@ -430,6 +495,13 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
       {!cust && loaded === undefined && !custProp ? <p className="text-stone-400">손님 카드 불러오는 중…</p> : !cust ? <p className="text-rose-700">손님 카드를 못 찾았어요 — 고객관리에서 이 손님을 먼저 찾아 주세요(카드가 연결돼야 선결제를 씁니다).</p> : (
         <>
           <p className="pt-1 text-[11px] font-bold text-violet-800 border-t border-violet-200">선결제 {left === 0 && !used ? '— 새로 시작하면 ① 충전 ② 이 주문 빼기' : ''}</p>
+          {(() => {
+            const to = ks.map(k => k.kind).find(k => convertNeed(cust, k));
+            return to ? <ConvertBox cust={cust} to={to} onDone={(nc, msg) => {
+              patch({ customerId: cust.id, customer: nc });
+              setEdits({}); setEdit(String(nc?.prepaid_balance ?? left)); setInfo(msg);
+            }} /> : null;
+          })()}
           {!banchan && (
             <div className="flex gap-1.5 flex-wrap items-center">
               <span className="text-stone-500">충전</span>
