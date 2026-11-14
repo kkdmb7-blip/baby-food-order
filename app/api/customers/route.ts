@@ -13,6 +13,18 @@ export async function GET(req: NextRequest) {
   const sb = supabaseService();
   const q = (req.nextUrl.searchParams.get('q') || '').trim().slice(0, 40);
 
+  // ?id= 또는 ?phone= — 손님 한 명 (입금 탭 선결제 판이 목록에 없는 손님을 열 때)
+  const oneId = req.nextUrl.searchParams.get('id');
+  const onePhone = req.nextUrl.searchParams.get('phone');
+  if (oneId || onePhone) {
+    if (oneId && !/^[0-9a-f-]{36}$/i.test(oneId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 });
+    const qq = oneId ? sb.from('baby_food_customers').select('*').eq('id', oneId)
+      : sb.from('baby_food_customers').select('*').eq('phone', String(onePhone).replace(/\D/g, ''));
+    const { data, error } = await qq.limit(1).maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ customer: data || null });
+  }
+
   // ?all=1 — 손님 전부 + 마지막 주문일(취소 빼고). 고객관리 목록을 ㄱㄴ순으로 다 띄우고
   // 3개월 넘게 주문이 없는 손님을 아래로 따로 뺄 때 쓴다. 1000행 절단을 피하려고 나눠 받는다.
   if (req.nextUrl.searchParams.get('all') === '1') {

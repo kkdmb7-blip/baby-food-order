@@ -83,7 +83,11 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
        '입금 체크' 모드 — 선결제가 있는 손님(남은 팩·반찬 회수)은 선결제 판이 열리고, 나머지는 입금확인을 켜고 끈다(전과 같음)
        '선결제' 모드   — 누구든 선결제 판이 열린다. 선결제를 새로 시작하는 손님(충전)도 여기서
      2026-11-14 사장님: "체크 기능 살리면서 선결제 시작한 애들 있으면 그것도 거기서 바로 수정" */
-  const [mode, setMode] = useState<'pay' | 'prepaid'>('pay');
+  // 'panel' = 미입금·선결제 손님은 판이 열린다(기본) / 'quick' = 누구든 누르면 바로 입금확인 켜고 끄기
+  // 2026-11-14 사장님: 미입금 아이도 새로 선결제를 시작했으면 강이한처럼 판에서 넣을 수 있게
+  const [mode, setModeState] = useState<'panel' | 'quick'>('panel');
+  useEffect(() => { try { if (localStorage.getItem('kkdmb-pay-mode') === 'quick') setModeState('quick'); } catch { /* 기억 못 해도 기본값 */ } }, []);
+  const setMode = (m: 'panel' | 'quick') => { setModeState(m); try { localStorage.setItem('kkdmb-pay-mode', m); } catch { /* */ } };
   const [openId, setOpenId] = useState<string | null>(null);
   const byId = new Map(orders.map(o => [o.id, o]));
   const sheet = buildCookingSheet(orders as any, date);
@@ -112,7 +116,9 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
   }
   const dow = '일월화수목금토'[new Date(date + 'T00:00:00Z').getUTCDay()];
   const click = (o: SheetOrder) => {
-    if (mode === 'prepaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
+    if (mode === 'quick') { onToggle(o); return; }
+    // 미입금이거나 선결제와 얽힌 손님은 판을 연다(판 맨 앞이 '입금확인'). 이미 확인된·오픈월드·엑셀 시절은 바로 켜고 끈다
+    if (payState(o) === 'unpaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
     else onToggle(o);
   };
   const openOrder = openId ? byId.get(openId) : undefined;
@@ -127,8 +133,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
         {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
         {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
         <span className="ml-auto flex rounded-lg border border-stone-300 overflow-hidden text-[12px] font-bold">
-          <button onClick={() => setMode('pay')} className={`px-3 py-1 ${mode === 'pay' ? 'bg-emerald-100 text-emerald-800' : 'text-stone-500'}`}>입금 체크</button>
-          <button onClick={() => setMode('prepaid')} className={`px-3 py-1 border-l border-stone-300 ${mode === 'prepaid' ? 'bg-violet-100 text-violet-800' : 'text-stone-500'}`}>선결제</button>
+          <button onClick={() => setMode('panel')} className={`px-3 py-1 ${mode === 'panel' ? 'bg-violet-100 text-violet-800' : 'text-stone-500'}`}>판 열기</button>
+          <button onClick={() => setMode('quick')} className={`px-3 py-1 border-l border-stone-300 ${mode === 'quick' ? 'bg-emerald-100 text-emerald-800' : 'text-stone-500'}`}>바로 체크</button>
         </span>
       </div>
       <p className="mb-2 text-[11px] text-stone-500 leading-relaxed">
@@ -137,9 +143,9 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
         <span className="px-1 bg-violet-100 rounded">보라</span> 선결제에서 뺌 ·{' '}
         <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드 ·{' '}
         <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).{' '}
-        {mode === 'pay'
-          ? <>이름을 누르면 입금확인이 켜지고 꺼집니다. <b>선결제가 남은 손님</b>은 선결제 판이 열립니다.</>
-          : <><b>선결제 모드</b> — 누구든 이름을 누르면 선결제 판이 열립니다(충전·차감·남은 팩 고치기).</>}
+        {mode === 'panel'
+          ? <><b>미입금(빨간 이름)·선결제 손님</b>을 누르면 판이 열립니다 — 입금확인, 선결제 충전·빼기, 남은 팩 고치기. 초록 이름을 누르면 입금확인이 꺼집니다.</>
+          : <><b>바로 체크</b> — 누구든 이름을 누르면 입금확인이 바로 켜지고 꺼집니다.</>}
         {' '}배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배.
       </p>
 
@@ -156,11 +162,24 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
   );
 }
 
-function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
+function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch }: {
   o: SheetOrder; cust?: Customer; onClose: () => void; onToggle: () => void; onPatch: (p: Patch) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  // 입금 탭은 선결제·정기·오픈월드 손님만 들고 있다 — 목록에 없으면 이 손님 카드를 직접 불러온다
+  const [loaded, setLoaded] = useState<Customer | null | undefined>(undefined);
+  useEffect(() => {
+    if (custProp) return;
+    const q = o.customer_id ? `id=${o.customer_id}` : o.customer_phone ? `phone=${encodeURIComponent(o.customer_phone)}` : '';
+    if (!q) { setLoaded(null); return; }
+    fetch(`/api/customers?${q}`).then(r => r.json()).then(d => setLoaded(d.customer || null)).catch(() => setLoaded(null));
+  }, [custProp, o.customer_id, o.customer_phone]);
+  const cust = custProp || loaded || undefined;
+  const patch = (p: Patch) => {
+    onPatch(p);
+    if (loaded && p.customer && p.customerId === loaded.id) setLoaded({ ...loaded, ...p.customer });
+  };
   const stage = String(o.stage || '');
   const banchan = stage.startsWith('반찬');
   const unit = banchan ? '회' : '팩';
@@ -169,6 +188,8 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
   const used = /^선결제 차감 \d+(팩|회) \(입금 탭/.test(String(o.paid_note || '')); // 이 화면에서 뺀 것
   const label = cust?.prepaid_label || labelOf(o);
   const [edit, setEdit] = useState(String(left));
+  // 손님 카드를 늦게 불러오면 그때의 남은 팩으로 칸을 맞춘다
+  useEffect(() => { setEdit(String(left)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cust?.id]);
 
   async function use(on: boolean) {
     if (!confirm(on
@@ -180,7 +201,7 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
-    onPatch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: { [d.field]: d.balance } as any });
+    patch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: { [d.field]: d.balance } as any });
     setEdit(String(d.balance));
     setInfo(on ? `선결제에서 뺐어요 — 남은 ${d.balance}${unit}` : `돌려놓았어요 — 남은 ${d.balance}${unit}`);
   }
@@ -198,7 +219,7 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 고쳤어요: ${d.error || ''}`); setEdit(String(left)); return; }
-    onPatch({ customerId: cust.id, customer: banchan ? { prepaid_banchan: d.new_balance } : { prepaid_balance: d.new_balance } });
+    patch({ customerId: cust.id, customer: banchan ? { prepaid_banchan: d.new_balance } : { prepaid_balance: d.new_balance } });
     setInfo(`남은 ${d.new_balance}${unit}로 고쳤어요`);
   }
 
@@ -213,7 +234,7 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 넣었어요: ${d.error || ''}`); return; }
-    onPatch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, prepaid_label: pick } });
+    patch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, prepaid_label: pick } });
     setEdit(String(d.new_balance));
     setInfo(`${units}팩 넣었어요 — 남은 ${d.new_balance}팩. 이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
   }
@@ -231,8 +252,24 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
       </div>
       {o.paid_note && <p className="text-[11px] text-stone-500">{o.paid_note}</p>}
 
-      {!cust ? <p className="text-rose-700">손님 카드를 못 찾았어요 — 고객관리에서 이 손님을 먼저 찾아 주세요(카드가 연결돼야 선결제를 씁니다).</p> : (
+      {/* ① 돈으로 받았으면 이것 하나 — 판 맨 앞 */}
+      {!used && o.order_type !== '선결제' && (
+        <button disabled={busy} onClick={onToggle}
+          className={`w-full py-2 rounded-lg border-2 text-[14px] font-black disabled:opacity-40 ${o.paid ? 'border-stone-300 bg-white text-stone-600' : 'border-emerald-400 bg-emerald-100 text-emerald-900'}`}>
+          {o.paid ? '입금확인 끄기' : '✓ 입금확인 (돈으로 받음)'}
+        </button>
+      )}
+
+      {/* ② 선결제 — 새로 시작하면 충전 → 이 주문 빼기 순서로 */}
+      {!cust && loaded === undefined && !custProp ? <p className="text-stone-400">손님 카드 불러오는 중…</p> : !cust ? <p className="text-rose-700">손님 카드를 못 찾았어요 — 고객관리에서 이 손님을 먼저 찾아 주세요(카드가 연결돼야 선결제를 씁니다).</p> : (
         <>
+          <p className="pt-1 text-[11px] font-bold text-violet-800 border-t border-violet-200">선결제 {left === 0 && !used ? '— 새로 시작하면 ① 충전 ② 이 주문 빼기' : ''}</p>
+          {!banchan && (
+            <div className="flex gap-1.5 flex-wrap items-center">
+              <span className="text-stone-500">충전</span>
+              <ChargeBar label={label} disabled={busy} onCharge={(u, l) => charge(u, l)} />
+            </div>
+          )}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-bold text-stone-700">남은 {banchan ? '반찬' : '선결제'}</span>
             <input value={edit} onChange={e => setEdit(e.target.value.replace(banchan ? /\D/g : /[^\d-]/g, ''))} disabled={busy}
@@ -253,18 +290,7 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
                 선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})
               </button>
             )}
-            {!used && o.order_type !== '선결제' && (
-              <button disabled={busy} onClick={onToggle} className={`${btn} ${o.paid ? 'border-stone-300 bg-white text-stone-600' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>
-                {o.paid ? '입금확인 끄기' : '입금확인 (돈으로 받음)'}
-              </button>
-            )}
           </div>
-          {!banchan && (
-            <div className="flex gap-1.5 flex-wrap items-center">
-              <span className="text-stone-500">선결제 충전</span>
-              <ChargeBar label={label} disabled={busy} onCharge={(u, l) => charge(u, l)} />
-            </div>
-          )}
         </>
       )}
       {info && <p className="text-[12px] text-violet-800 font-bold">{info}</p>}
