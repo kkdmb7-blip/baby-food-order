@@ -61,7 +61,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
   const nameCell = (orderId: string, phone: string, color: number | undefined, node: ReactNode, base: string) => {
     if (pay) {
       const st = pay.state(orderId);
-      const tag = pay.tag?.(orderId);
       return (
         <td className={`${base} ${PAY_BG[st]} relative`}>
           {/* 이름 = 입금확인 켜고 끄기, 오른쪽 끝 ▸ = 판 열기 — 둘 다 한 번에 (사장님 2026-11-14) */}
@@ -71,7 +70,6 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           )}
           {/* 마이너스(입금 요청)는 이름 줄 밖, 왼쪽 위 모서리에 작게 — ▸ 와 겹쳐 안 보이고, '추가' 와 같이 있으면 두 줄이 되던 것
               (사장님 2026-11-14 "화살표랑 마이너스 겹치면 안 보여", "황도현은 추가랑 마이너스가 같이 있어 2줄") */}
-          {tag && <span className="absolute top-0 left-0 z-10 px-[2px] rounded-br bg-red-500 text-white text-[9px] leading-[11px] font-black pointer-events-none">{tag}</span>}
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
             className="w-full text-center whitespace-nowrap hover:underline">
             {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}
@@ -307,10 +305,11 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
               <col style={{ width: 78 }} />
               <col style={{ width: 22 }} />
               {MENU_TYPES.map(m => <col key={m} style={{ width: 22 }} />)}
+              {pay && <col style={{ width: 26 }} />}
             </colgroup>
             <thead>
               <tr>
-                <th colSpan={MENU_TYPES.length + 2} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
+                <th colSpan={MENU_TYPES.length + 2 + (pay ? 1 : 0)} className="border border-black px-0.5 py-[2px] text-[13px] text-center whitespace-nowrap">
                   {sec.stage.replace('단계', '')}{sec.parts > 1 && <span className="text-[10px] font-normal"> {sec.part}/{sec.parts}</span>}
                   <span className="ml-1 font-normal text-[10px] text-stone-600">
                     {SMALL_VOLUME[sec.stage]}/<span className="text-red-600">{BIG_VOLUME[sec.stage]}</span> · {sec.total}명
@@ -323,6 +322,8 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                 {MENU_TYPES.map(m => (
                   <th key={m} className="border border-black px-0 py-[2px] text-[10px]">{menuLabel(m)}</th>
                 ))}
+                {/* 입금 탭: 선결제 마이너스(받을 팩) 칸 — 이름과 겹치지 않게 따로 (사장님 2026-11-14) */}
+                {pay && <th className="border border-black px-0 py-[2px] text-[10px] text-red-600" title="선결제 마이너스 = 입금 요청할 팩">받을</th>}
               </tr>
             </thead>
             <tbody>
@@ -366,6 +367,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                         ) : cell(p.menus[m], p.isBig)}
                       </td>
                     ))}
+                    {pay && (() => { const tg = pay.tag?.(p.orderId); return <td className="border border-black text-center py-[2px] text-[12px] font-black text-red-600">{tg || ''}</td>; })()}
                   </tr>
                 );
               })}
@@ -382,6 +384,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                       {sec.tot[m].small || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
+                  {pay && <td className="border-2 border-black" />}
                 </tr>
                 <tr className="bg-stone-100">
                   <td colSpan={2} className="border-2 border-black px-1 py-[2px] text-right font-black text-[11px] text-red-600">
@@ -392,9 +395,10 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                       {sec.tot[m].big || <span className="text-stone-300">·</span>}
                     </td>
                   ))}
+                  {pay && <td className="border-2 border-black" />}
                 </tr>
               </>)}
-              {add && sec.part === sec.parts && <AddRow stage={sec.stage} date={add.date} onAdded={add.onAdded} cols={MENU_TYPES.length + 2} />}
+              {add && sec.part === sec.parts && <AddRow stage={sec.stage} date={add.date} onAdded={add.onAdded} cols={MENU_TYPES.length + 2 + (pay ? 1 : 0)} extra={pay ? 1 : 0} />}
             </tbody>
           </table>
           </div>

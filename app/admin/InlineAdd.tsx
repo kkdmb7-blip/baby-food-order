@@ -21,11 +21,12 @@ type Hit = {
   lastDate: string; lastMonths: number; guessMonths: number;
 };
 
-export function AddRow({ stage, date, onAdded, cols }: {
+export function AddRow({ stage, date, onAdded, cols, extra = 0 }: {
   stage: string;              // '중기1단계' … 또는 '반찬'
   date: string;
   onAdded: (row: any) => void;
   cols: number;               // 표 칸 수 (메모 줄 colSpan)
+  extra?: number;             // 오른쪽 빈 칸 수 (입금 탭 '받을' 칸)
 }) {
   const banchan = stage === '반찬';
   const [name, setName] = useState('');
@@ -181,6 +182,7 @@ export function AddRow({ stage, date, onAdded, cols }: {
               className={`${numCls} ${big ? 'text-red-600' : ''}`} />
           </td>
         ))}
+        {Array.from({ length: extra }, (_, i) => <td key={`x${i}`} className="border border-dashed border-amber-400" />)}
       </tr>
       {(msg || hit) && (
         <tr className="no-print">

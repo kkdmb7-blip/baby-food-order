@@ -277,6 +277,12 @@ export async function POST(req: NextRequest) {
     let prepaidAfter: number | null = null;   // 장부에 남길 차감 뒤 잔액
     let prepaidKind: string | null = null;    // 여러 묶음 손님이면 뺀 묶음
     let prepaidMoves: { kind: string | null; delta: number }[] = [];
+    // 정보 없이 넣은 아이 — 이름이 똑같은 손님 카드가 딱 하나면 그 카드에 잇는다.
+    // 연락처 없는 택배 손님(석하린)은 지난 주문 찾기에 안 걸려 새 아이로 들어갔고, 선결제가 다른 카드로 갈라졌다 (2026-11-14)
+    if (laterInfo && !customer_phone && order_type !== '선결제') {
+      const { data: same } = await sb.from('baby_food_customers').select('id').eq('baby_name', baby_name).limit(2);
+      if (same && same.length === 1) customer_id = same[0].id;
+    }
     if (order_type === '선결제') {
       const { data: cust } = await sb
         .from('baby_food_customers')

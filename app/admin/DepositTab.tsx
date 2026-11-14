@@ -299,7 +299,11 @@ function CardLink({ o, onLinked }: { o: SheetOrder; onLinked: (row: any) => void
     return () => { alive = false; };
   }, [o.baby_name]);
   async function link(target: string) {
-    if (target === 'new' && !confirm(`${o.baby_name} — 이름만으로 손님 카드를 만들까요?\n연락처·주소는 나중에 정보 넣기에서 넣으면 이 카드에 붙어요.`)) return;
+    // 같은 이름 카드가 이미 있으면 새로 만들지 말라고 한 번 더 — 선결제가 두 카드로 갈라진다(석하린 2026-11-14)
+    const same = (list || []).filter(c => c.baby_name === o.baby_name).length;
+    if (target === 'new' && !confirm(same
+      ? `${o.baby_name} — 같은 이름 카드가 이미 ${same}개 있어요. 새로 만들면 선결제가 따로 세어져요.\n같은 아이면 위 [이 카드에 잇기]를 누르세요. 그래도 새로 만들까요?`
+      : `${o.baby_name} — 이름만으로 손님 카드를 만들까요?\n연락처·주소는 나중에 정보 넣기에서 넣으면 이 카드에 붙어요.`)) return;
     setBusy(true); setErr(null);
     const d = await fetch(`/api/orders/${o.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link_customer: target }) })
       .then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
