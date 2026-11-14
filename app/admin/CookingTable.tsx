@@ -67,7 +67,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           {/* 이름 = 입금확인 켜고 끄기, 오른쪽 끝 ▸ = 판 열기 — 둘 다 한 번에 (사장님 2026-11-14) */}
           {pay.onOpen && (
             <button onClick={() => pay.onOpen!(orderId)} title="판 열기 — 선결제·택배비·정보"
-              className="absolute inset-y-0 right-0 w-4 flex items-center justify-center text-[10px] text-stone-400 hover:text-violet-700 hover:bg-violet-100/70 print:hidden">▸</button>
+              className="absolute inset-y-0 right-0 w-5 flex items-center justify-center text-[16px] leading-none text-violet-400 hover:text-violet-800 hover:bg-violet-100/80 print:hidden">▸</button>
           )}
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
             className="w-full text-center hover:underline">
@@ -134,6 +134,28 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
   type BRow = CookingSheet['banchan'][number];
   const bGroup = (g: BRow['group']) => sheet.banchan.filter(b => b.group === g);
   const shipCls = (s: string) => (s === '픽' ? 'text-emerald-700' : s === '택' ? 'text-stone-900' : 'text-sky-700');
+  /* 배송 칸 — 화면에서는 눌러서 빈칸 → 택 → 내 → 빈칸 (서버가 배송 방법·값을 맞춘다). 픽업·당일(당)은 정보 넣기에서.
+     2026-11-14 사장님: "아래 추가해서 위로 올라갔을 때 택배도 적을 수 있게" */
+  const [shipBusy, setShipBusy] = useState<string | null>(null);
+  async function cycleShip(orderId: string, cur: string) {
+    if (!add || shipBusy) return;
+    const next = cur === '' || cur === '당' ? '택' : cur === '택' ? '내' : '';
+    setShipBusy(orderId); setErr(null);
+    try {
+      const r = await fetch(`/api/orders/${orderId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ship: next }) })
+        .then(x => x.json()).catch(e => ({ ok: false, error: e?.message }));
+      if (!r.ok) { setErr(`배송 칸을 못 바꿨어요: ${r.error || ''}`); return; }
+      add.onAdded(r.row);
+    } finally { setShipBusy(null); }
+  }
+  const shipTd = (orderId: string, s: string) => (
+    <td className={`border border-black text-center p-0 text-[12px] font-black ${shipCls(s)}`}>
+      {add && s !== '픽' ? (
+        <button onClick={() => cycleShip(orderId, s)} disabled={shipBusy === orderId} title="눌러서 빈칸 → 택 → 내"
+          className="w-full min-h-[20px] py-[2px] hover:bg-amber-100 disabled:opacity-40">{s}</button>
+      ) : <div className="py-[2px]">{s}</div>}
+    </td>
+  );
   const bName = (b: BRow) => <>{b.needInfo
     ? <span className="underline decoration-yellow-400 decoration-[3px] underline-offset-2" title="연락처·주소를 아직 안 넣었어요 — 이름을 눌러 넣기">{b.name}</span>
     : b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}</>;
@@ -156,7 +178,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
         {rows.map((b, i) => (
           <tr key={i}>
             {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
-            <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
+            {shipTd(b.orderId, b.ship)}
             <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>
           </tr>
         ))}
@@ -226,7 +248,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
           {rows.map((b, i) => (
             <tr key={i}>
               {nameCell(b.orderId, b.phone, b.color, bName(b), 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
-              <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls(b.ship)}`}>{b.ship}</td>
+              {shipTd(b.orderId, b.ship)}
               {items.map(n => <td key={n} className="border border-black text-center py-[2px] font-black">{b.menus[n] || <span className="text-stone-200">·</span>}</td>)}
               <td className="border border-black text-center py-[2px] font-black">{Object.values(b.menus).reduce((a, v) => a + (v || 0), 0)}</td>
               <td className="border border-black text-center py-[2px] text-[10px] font-bold">{b.note || ''}</td>
@@ -317,13 +339,12 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                   </>
                 );
                 // 받는 방법 한 글자 — 픽(픽업)은 배송차에 실으면 안 되고, 택(택배)은 냉장 포장이 다르다
-                const shipCls = p.ship === '픽' ? 'text-emerald-700' : p.ship === '택' ? 'text-stone-900' : 'text-sky-700';
                 return (
                   <tr key={`${p.orderId}-${i}`}>
                     {/* 이름은 가운데 — 칸이 좁아 왼쪽에 붙이면 긴 이름과 짧은 이름이 들쭉날쭉해진다 */}
                     {/* 여러 단계를 시킨 사람은 배경색 — 같은 사람은 다른 블록에서도 같은 색이다 */}
                     {nameCell(p.orderId, p.phone, p.color, nameNode, 'border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center')}
-                    <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls}`}>{p.ship}</td>
+                    {shipTd(p.orderId, p.ship)}
                     {MENU_TYPES.map(m => (
                       <td key={m} className={`border border-black text-center ${editable(p) ? 'p-0' : 'py-[2px]'}`}>
                         {editable(p) ? (

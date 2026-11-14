@@ -125,16 +125,35 @@ export function AddRow({ stage, date, onAdded, cols }: {
   }
 
   const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
+  /* ←/→ 로 옆 칸 — 사장님 2026-11-14 "아래 추가할 때 옆으로 방향키로도 이동". 이름 칸은 글자 맨 앞·맨 끝에서만 넘어간다 */
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const onNav = (e: React.KeyboardEvent) => {
+    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || (e.nativeEvent as any).isComposing) return;
+    const t = e.target as HTMLElement;
+    if (t === nameRef.current) {
+      const i = nameRef.current!;
+      if (e.key === 'ArrowLeft' && !(i.selectionStart === 0 && i.selectionEnd === 0)) return;
+      if (e.key === 'ArrowRight' && i.selectionStart !== i.value.length) return;
+    }
+    const els = Array.from(rowRef.current?.querySelectorAll<HTMLElement>('input, button') || [])
+      .filter(x => !x.closest('[data-hits]') && !(x as HTMLInputElement).disabled);
+    const at = els.indexOf(t);
+    const next = els[at + (e.key === 'ArrowRight' ? 1 : -1)];
+    if (at < 0 || !next) return;
+    e.preventDefault();
+    next.focus();
+    if (next instanceof HTMLInputElement) setTimeout(() => next.select(), 0);
+  };
   const numCls = 'w-full text-center bg-white outline-none font-black py-[2px] text-[13px] focus:bg-amber-100 disabled:opacity-40';
   return (
     <>
-      <tr className="no-print bg-amber-50">
+      <tr ref={rowRef} onKeyDown={onNav} className="no-print bg-amber-50">
         <td className="border border-dashed border-amber-400 p-0 relative">
           <input ref={nameRef} value={name} onChange={e => setName(e.target.value)} onKeyDown={onKey} disabled={busy}
             placeholder="＋ 이름" className="w-full px-0.5 py-[2px] text-[13px] font-bold text-center bg-transparent outline-none placeholder:text-amber-600 focus:bg-white" />
           {hits.length > 0 && !hit && (
             // 위로 펼친다 — 표 상자가 가로 스크롤(overflow)이라 아래로 펼치면 맨 긴 블록에서 잘린다
-            <div className="absolute left-0 bottom-full z-30 w-[190px] bg-white border border-amber-300 rounded shadow-lg text-left">
+            <div data-hits className="absolute left-0 bottom-full z-30 w-[190px] bg-white border border-amber-300 rounded shadow-lg text-left">
               {hits.map(h => (
                 <button key={h.phone} onMouseDown={e => { e.preventDefault(); pick(h); }}
                   className="block w-full px-2 py-1 text-left hover:bg-amber-50 border-b border-stone-100 last:border-0">

@@ -4,6 +4,7 @@ import { supabaseService } from '@/lib/supabase';
 import { kstToday, thisWeekMonday } from '@/lib/dates';
 import { orderDates, shiftDate } from '@/lib/orderItems';
 import AdminShell from './AdminShell';
+import { guessKinds } from '@/lib/prepaidSplit';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +40,13 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
   ]);
 
   const all = ordersRes.data || [];
+  // 종류 기록 없는 옛 선결제 카드 — 처음 빠진 주문 종류로 짐작해 붙인다(입금 표 '전환' 표시용, 잔액은 안 건드림)
+  const custs: any[] = customersRes.data || [];
+  const noLabel = custs.filter(c => !c.prepaid_label && !c.prepaid_split && Number(c.prepaid_balance) !== 0).map(c => c.id);
+  if (noLabel.length) {
+    const g = await guessKinds(sb, noLabel).catch(() => ({} as Record<string, string>));
+    for (const c of custs) if (g[c.id]) c.prepaid_label_guess = g[c.id];
+  }
 
   // 기본은 항상 오늘. 다른 날은 사장님이 날짜를 직접 골라서 본다.
   const selectedDate = requested || today;
@@ -52,7 +60,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
     <AdminShell
       initialOrders={selectedOrders}
       cancelledOrders={cancelledOrders}
-      customers={customersRes.data || []}
+      customers={custs}
       weeklyMenus={menusRes.data || []}
       today={today}
       selectedDate={selectedDate}

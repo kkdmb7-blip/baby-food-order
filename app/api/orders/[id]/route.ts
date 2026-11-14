@@ -88,6 +88,37 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ ok: true, row });
   }
 
+  // 배송 칸 한 글자 고치기 — 조리표·입금 표 '배송' 칸을 눌러 빈칸 → 택 → 내 → 빈칸
+  // 2026-11-14 사장님: "아래 추가해서 위로 올라갔을 때 택배도 적을 수 있게"
+  // { ship: '' | '택' | '내' } — 택·내 = 택배(내 = 하루 보관했다 다음 날 것과 합쳐 택배, 메모 '내일 합쳐 택배').
+  // 값(지역 인상분·배송비)은 정보 넣기와 같은 규칙으로 — 입금 전 일반 주문만 다시 계산한다.
+  if (status === undefined && typeof body.ship === 'string') {
+    const s = body.ship;
+    if (!['', '택', '내'].includes(s)) return NextResponse.json({ ok: false, error: 'invalid ship' }, { status: 400 });
+    const { data: o } = await sb.from('baby_food_orders').select('*').eq('id', id).single();
+    if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
+    if (o.status === '취소') return NextResponse.json({ ok: false, error: '취소된 주문이에요' }, { status: 409 });
+    if (o.receive_method === '픽업') return NextResponse.json({ ok: false, error: '픽업 주문이에요 — 정보 넣기에서 바꿔 주세요' }, { status: 409 });
+    const baseMemo = String(o.memo || '').replace(/\s*[·,/]?\s*(엑셀 표시 '내'|내일\s*합쳐(\s*택배)?)/g, '').trim();
+    const memo = s === '내' ? (baseMemo ? `${baseMemo} · 내일 합쳐 택배` : '내일 합쳐 택배') : (baseMemo || null);
+    const wasCourier = String(o.delivery_method || '').includes('택배');
+    const delivery_method = s ? '택배익일배송'
+      : wasCourier ? (/강서구|양천구/.test(String(o.address || '')) || !o.address ? '직배송' : '당일배송') : (o.delivery_method || '직배송');
+    const patch: Record<string, any> = { memo, delivery_method };
+    const st = String(o.stage || '') as StageType;
+    if (!o.paid && o.order_type === '일반' && STAGE_OPTIONS[st] && o.volume) {
+      const tier = tierOf(delivery_method);
+      const per = getPrice(st, Number(o.volume), tier);
+      if (per) {
+        patch.total_price = per * (Number(o.total_qty) || 0);
+        patch.shipping_fee = shippingFeeFor(tier, Number(o.total_qty) || 0, patch.total_price);
+      }
+    }
+    const { data: row, error } = await sb.from('baby_food_orders').update(patch).eq('id', id).select('*').single();
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, row });
+  }
+
   // 아기 이름 고치기 — 조리표에 찍히는 이름은 카카오 채널에 저장해 둔 이름과 같아야 한다.
   // 동명이인이면 사장님이 카톡에 '찬희2', '찬희3' 으로 저장해 두시므로, 앱에서도
   // 그대로 고칠 수 있어야 한다. 앱이 꼬리표를 붙여 맞추면 카톡과 오히려 어긋난다.

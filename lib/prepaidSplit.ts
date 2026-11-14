@@ -264,10 +264,27 @@ export function convertNeed(c: C | null | undefined, toKind: string | null): { f
     return f && Number(f.balance) !== 0 ? { from, to: toKind, fromBalance: Number(f.balance) } : null;
   }
   const total = Number(c.prepaid_balance) || 0;
-  const cur = kindOfLabel(c.prepaid_label) || null;
-  if (cur === toKind || total === 0) return null;
-  if (cur && cur !== from) return null;
+  // 종류 기록이 없는 옛 카드는 서버가 붙여 준 짐작(처음 선결제로 빠진 주문의 종류)으로 본다 — 짐작도 없으면 표시 안 함
+  // (라벨 없는 완료기 손님까지 '전환' 이 뜨던 것, 2026-11-14 화면 확인)
+  const cur = kindOfLabel(c.prepaid_label) || kindOfLabel((c as any).prepaid_label_guess) || null;
+  if (!cur || cur !== from || total === 0) return null;
   return { from, to: toKind, fromBalance: total };
+}
+
+/** 종류 기록 없는 옛 선결제 카드의 종류 짐작 — 처음 선결제로 빠진 주문(취소 빼고)의 종류. 표시·단계 변경 판단에만 쓴다(잔액은 안 건드림) */
+export async function guessKinds(sb: SupabaseClient, ids: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await sb.from('baby_food_orders').select('customer_id, delivery_date, created_at, stage, volume, items, total_qty, order_type, paid_note')
+      .in('customer_id', ids.slice(i, i + 100)).neq('status', '취소').or('order_type.eq.선결제,paid_note.like.선결제 차감*')
+      .order('delivery_date').order('created_at').limit(1000);
+    for (const r of data || []) {
+      if (out[r.customer_id] || String(r.stage || '').startsWith('반찬')) continue;
+      const k = orderKinds(r)[0]?.kind;
+      if (k) out[r.customer_id] = k;
+    }
+  }
+  return out;
 }
 
 /** 표시용 '남은' — 섞인 주문을 여러 묶음에서 뺐으면 '중후300 2·중후230 5', 아니면 숫자 */

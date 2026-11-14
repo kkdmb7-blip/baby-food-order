@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, PREPAID_UNITS } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { OPENWORLD_NOTE, OPENWORLD_LAST_DATE } from '@/lib/openworld';
+import { guessKinds } from '@/lib/prepaidSplit';
 
 // GET /api/customers — 고객 목록 (admin)
 //
@@ -22,6 +23,11 @@ export async function GET(req: NextRequest) {
       : sb.from('baby_food_customers').select('*').eq('phone', String(onePhone).replace(/\D/g, ''));
     const { data, error } = await qq.limit(1).maybeSingle();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // 종류 기록 없는 옛 선결제 카드 — 짐작 종류를 붙인다(입금 탭 단계 변경 표시용, lib/prepaidSplit guessKinds)
+    if (data && !data.prepaid_label && !data.prepaid_split && Number(data.prepaid_balance) !== 0) {
+      const g = await guessKinds(sb, [data.id]).catch(() => ({} as Record<string, string>));
+      if (g[data.id]) (data as any).prepaid_label_guess = g[data.id];
+    }
     return NextResponse.json({ customer: data || null });
   }
 

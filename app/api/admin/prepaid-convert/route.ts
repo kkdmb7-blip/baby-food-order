@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
-import { convertNeed, orderKinds, setPrepaidParts, CONVERT_PER_PACK, PREPAID_KINDS } from '@/lib/prepaidSplit';
+import { convertNeed, orderKinds, setPrepaidParts, guessKinds, CONVERT_PER_PACK, PREPAID_KINDS } from '@/lib/prepaidSplit';
 import { nameKey } from '@/lib/depositMatch';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +24,11 @@ async function load(sb: any, id: string, to: string) {
   const { data: c } = await sb.from('baby_food_customers')
     .select('id, phone, baby_name, payer_names, prepaid_balance, prepaid_label, prepaid_split').eq('id', id).maybeSingle();
   if (!c) return { c: null as any, need: null, usedTo: 0 };
+  // 종류 기록 없는 옛 카드는 처음 선결제로 빠진 주문 종류로 짐작 (입금 표 표시와 같은 규칙)
+  if (!c.prepaid_label && !c.prepaid_split) {
+    const g = await guessKinds(sb, [c.id]).catch(() => ({} as Record<string, string>));
+    if (g[c.id]) c.prepaid_label_guess = g[c.id];
+  }
   const need = convertNeed(c, to);
   if (!need) return { c, need: null, usedTo: 0 };
   let q = sb.from('baby_food_orders').select('id, delivery_date, stage, volume, items, total_qty, order_type, paid_note, status')

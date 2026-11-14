@@ -561,7 +561,7 @@ export default function AdminShell({
             if (orderId && p.order) setOrders(prev => prev.map(x => x.id === orderId ? { ...x, ...(p.order as any) } : x));
             if (p.customerId && p.customer) setCustomers(prev => prev.map(c => c.id === p.customerId ? { ...c, ...p.customer } : c));
           }}
-          onAdded={row => setOrders(prev => [row as Order, ...prev])} />}
+          onAdded={row => setOrders(prev => prev.some(x => x.id === row.id) ? prev.map(x => x.id === row.id ? { ...x, ...row } : x) : [row as Order, ...prev])} />}
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
@@ -585,7 +585,7 @@ export default function AdminShell({
               onDateChange={d => router.push(`/admin?date=${d}`)} />
             <CookingSheet orders={orders} today={selectedDate} customers={customers}
               onChanged={() => router.refresh()}
-              onAdded={row => setOrders(prev => [row as Order, ...prev])}
+              onAdded={row => setOrders(prev => prev.some(x => x.id === row.id) ? prev.map(x => x.id === row.id ? { ...x, ...row } : x) : [row as Order, ...prev])}
               onReplace={row => setOrders(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))} />
           </>
         )}
