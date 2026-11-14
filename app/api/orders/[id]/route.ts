@@ -137,7 +137,7 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
 
   const { data: order } = await sb
     .from('baby_food_orders')
-    .select('id, status, order_type, total_qty, points_used, points_earned, customer_phone, baby_name, delivery_date, customer_id, stage, volume, paid_note')
+    .select('id, status, order_type, total_qty, points_used, points_earned, customer_phone, baby_name, delivery_date, customer_id, stage, volume, items, paid_note')
     .eq('id', id).single();
   if (!order) return NextResponse.json({ error: '주문 없음' }, { status: 404 });
 

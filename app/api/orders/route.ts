@@ -14,7 +14,7 @@ import { looksDirectDelivery } from '@/lib/routeCode';
 import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { OPENWORLD_NOTE, openworldApplies } from '@/lib/openworld';
-import { movePrepaid, kindOf } from '@/lib/prepaidSplit';
+import { movePrepaidMany, orderKinds } from '@/lib/prepaidSplit';
 import { deductShip } from '@/lib/prepaidShip';
 import { rematchDeposits } from '@/lib/deposits';
 
@@ -276,6 +276,7 @@ export async function POST(req: NextRequest) {
     let customer_id: string | null = null;
     let prepaidAfter: number | null = null;   // 장부에 남길 차감 뒤 잔액
     let prepaidKind: string | null = null;    // 여러 묶음 손님이면 뺀 묶음
+    let prepaidMoves: { kind: string | null; delta: number }[] = [];
     if (order_type === '선결제') {
       const { data: cust } = await sb
         .from('baby_food_customers')
@@ -293,7 +294,9 @@ export async function POST(req: NextRequest) {
       }
       // 잔여 차감 — 여러 단계 선결제면 이 주문 단계·용량의 묶음에서 뺀다 (lib/prepaidSplit).
       // "읽은 값 그대로일 때만" 갱신(CAS)이라 중복 클릭에도 두 번 빠지지 않는다. 모자라면 거절.
-      const mv = await movePrepaid(sb, cust.id, { delta: -total_qty, kind: kindOf(stage, volume), requireEnough: true });
+      // 용량이 섞인 주문(230g + 300g)은 묶음마다 따로 뺀다 — 취소할 때도 같은 방식으로 돌려준다 (lib/orderCancel)
+      prepaidMoves = orderKinds({ stage, volume, total_qty, items }).map(x => ({ kind: x.kind, delta: -x.qty }));
+      const mv = await movePrepaidMany(sb, cust.id, prepaidMoves, { requireEnough: true });
       if (!mv.ok) return mv.status === 400 ? bad(`잔여 팩이 부족합니다 (${mv.error})`) : bad('처리 중 잔액이 변경됐어요 — 다시 시도해주세요 (중복 제출 방지)');
       customer_id = cust.id;
       prepaidAfter = mv.after;
@@ -374,7 +377,7 @@ export async function POST(req: NextRequest) {
       });
       // ⚠️ 선결제 팩은 이미 뺐다 — 주문이 안 들어갔으면 돌려놔야 한다(전에는 빠진 채 남았다)
       if (customer_id && prepaidAfter !== null) {
-        await movePrepaid(sb, customer_id, { delta: total_qty, kind: prepaidKind || kindOf(stage, volume) });
+        await movePrepaidMany(sb, customer_id, prepaidMoves.map(m => ({ kind: m.kind, delta: -m.delta })));
       }
       return NextResponse.json({ ok: false, error: 'DB 저장 실패' }, { status: 500 });
     }

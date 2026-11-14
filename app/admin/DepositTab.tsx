@@ -5,7 +5,7 @@ import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
-import { kindOf, isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
+import { kindOf, isSplit, partsOf, balanceFor, shortKind, orderKinds } from '@/lib/prepaidSplit';
 import { AddMissing, LaterInfo } from './InlineAdd';
 
 /*
@@ -169,7 +169,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
             tag: id => {
               const o = byId.get(id); if (!o) return null;
               const c = custOf(o); if (!c) return null;
-              const b = balanceFor(c, kindOf(o.stage, (o as any).volume));
+              // 230g·300g 섞인 주문은 묶음 중 가장 모자란 쪽
+              const b = Math.min(...orderKinds(o as any).map(k => balanceFor(c, k.kind)));
               return !String(o.stage || '').startsWith('반찬') && b < 0 ? `${b}` : null;
             },
           }} printedAt={printedAt} add={onAdded ? { date, onAdded } : undefined} />}
@@ -255,6 +256,13 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   const okind = banchan ? null : kindOf(stage, (o as any).volume);
   const split = !banchan && isSplit(cust);
   const left = banchan ? (cust?.prepaid_banchan || 0) : balanceFor(cust, okind);
+  // 한 주문에 230g·300g 이 섞여 있으면(서은혁) 묶음마다 따로 빠진다 — 서버도 같은 계산(lib/prepaidSplit orderKinds)
+  const ks = banchan ? [] : orderKinds(o as any);
+  const mixed = ks.length > 1;
+  const mixTxt = ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${k.qty}`).join(' · ');
+  const afterTxt = (sign: number) => split
+    ? ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${balanceFor(cust, k.kind)}→${balanceFor(cust, k.kind) + sign * k.qty}`).join(' · ')
+    : `${left}${unit} → ${left + sign * qty}${unit}`;
   const used = /^선결제 차감 \d+(팩|회) \(입금 탭/.test(String(o.paid_note || '')); // 이 화면에서 뺀 것
   const label = split ? okind : (cust?.prepaid_label || labelOf(o));
   const [edit, setEdit] = useState(String(left));
@@ -271,7 +279,10 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   }
 
   async function use(on: boolean) {
-    if (!confirm(on
+    if (!confirm(mixed
+      ? (on ? `${o.baby_name} — 이 주문 ${mixTxt}팩을 선결제에서 뺄까요?\n남은 ${afterTxt(-1)}`
+        : `${o.baby_name} — 선결제에서 뺀 ${mixTxt}팩을 돌려놓을까요?\n남은 ${afterTxt(1)}, 주문은 미입금으로`)
+      : on
       ? `${o.baby_name} — 이 주문 ${qty}${unit}을 선결제에서 뺄까요?\n남은 ${left}${unit} → ${left - qty}${unit}`
       : `${o.baby_name} — 선결제에서 뺀 ${qty}${unit}을 돌려놓을까요?\n남은 ${left}${unit} → ${left + qty}${unit}, 주문은 미입금으로`)) return;
     setBusy(true); setInfo(null);
@@ -350,7 +361,7 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     <div className="mb-3 border-2 border-violet-300 bg-violet-50/60 rounded-xl p-3 text-[12px] space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <b className="text-[14px] text-stone-900">{o.baby_name}</b>
-        <span className="text-stone-600">{banchan ? (stage === '반찬낱개' ? `반찬 낱개 ${qty}개` : `반찬 ${qty}세트`) : `${stage.replace('단계', '')} ${o.volume || ''} ${qty}팩`} · {won((o.total_price || 0) + (o.shipping_fee || 0))}</span>
+        <span className="text-stone-600">{banchan ? (stage === '반찬낱개' ? `반찬 낱개 ${qty}개` : `반찬 ${qty}세트`) : mixed ? `${stage.replace('단계', '')} ${mixTxt}팩` : `${stage.replace('단계', '')} ${o.volume || ''} ${qty}팩`} · {won((o.total_price || 0) + (o.shipping_fee || 0))}</span>
         <span className={`px-1.5 rounded ${used ? 'bg-violet-200 text-violet-900' : o.paid ? 'bg-emerald-200 text-emerald-900' : 'bg-white border border-stone-300 text-rose-700'}`}>
           {o.order_type === '선결제' ? '선결제 주문' : used ? '선결제에서 뺌' : o.paid ? '입금확인' : '미입금'}
         </span>
@@ -410,10 +421,17 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
               <span className="text-stone-500">반찬 낱개는 선결제(세트 회수)로 뺄 수 없어요</span>
             ) : (
               <button disabled={busy || o.paid} onClick={() => use(true)} className={`${btn} border-violet-400 bg-violet-100 text-violet-900`}>
-                선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})
+                {mixed ? <>선결제에서 빼기 (−{mixTxt}{split ? '' : ` → 남은 ${left - qty}`})</> : <>선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})</>}
               </button>
             )}
           </div>
+          {mixed && (
+            <p className={`text-[11px] ${split ? 'text-violet-800' : 'text-amber-800'}`}>
+              {split
+                ? <>이 주문은 용량이 섞여 있어요 — <b>{mixTxt}</b>팩이 각 묶음에서 따로 빠집니다. (지금 {ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${balanceFor(cust, k.kind)}`).join(' · ')})</>
+                : <>이 주문은 용량이 섞여 있어요({mixTxt}). 지금은 선결제가 한 묶음이라 <b>합쳐서</b> 빠집니다 — 230·300을 따로 세려면 위 충전에서 다른 용량도 충전하세요(묶음이 나뉩니다).</>}
+            </p>
+          )}
           {o.order_type !== '선결제' && stage !== '반찬낱개' && (
             <div className="pt-2 border-t border-violet-200 space-y-1.5">
               <p className="text-[11px] font-bold text-violet-800">이 날부터 뒤로 한꺼번에 빼기</p>

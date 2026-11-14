@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
-import { movePrepaid, kindOf, kindTag } from '@/lib/prepaidSplit';
+import { movePrepaidMany, orderKinds, leftText, kindTag } from '@/lib/prepaidSplit';
 import { deductShip, refundShip } from '@/lib/prepaidShip';
 
 export const dynamic = 'force-dynamic';
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   const sb = supabaseService();
 
   const { data: o } = await sb.from('baby_food_orders')
-    .select('id, baby_name, stage, volume, total_qty, customer_id, customer_phone, paid, paid_note, status, order_type')
+    .select('id, baby_name, stage, volume, total_qty, items, customer_id, customer_phone, paid, paid_note, status, order_type')
     .eq('id', id).single();
   if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
   if (o.status === '취소') return NextResponse.json({ ok: false, error: '취소된 주문이에요' }, { status: 409 });
@@ -57,7 +57,11 @@ export async function POST(req: NextRequest) {
   if (!c) return NextResponse.json({ ok: false, error: '손님 카드를 못 찾았어요' }, { status: 404 });
 
   const delta = b.use ? -qty : qty;
-  const kind = banchan ? null : kindOf(o.stage, o.volume);
+  // 용량이 섞인 주문(후기 300g 3팩 + 230g 1팩)은 묶음마다 따로 (lib/prepaidSplit orderKinds)
+  const ks = banchan ? [] : orderKinds(o);
+  const kind = banchan ? null : ks.length === 1 ? ks[0].kind : null;
+  const moves = (sign: number) => ks.map(x => ({ kind: x.kind, delta: sign * x.qty }));
+  let left = '';
   // 읽은 값 그대로일 때만 바꾼다(두 번 눌림 방지) — 그 사이 바뀌었으면 다시 읽어 세 번까지
   // 이유식은 여러 단계 선결제면 이 주문 단계·용량의 묶음에서 (lib/prepaidSplit)
   let next = 0, partNext = 0, ok = false, tag = '', split: any = undefined;
@@ -72,22 +76,23 @@ export async function POST(req: NextRequest) {
     }
     partNext = next;
   } else {
-    const r = await movePrepaid(sb, c.id, { delta, kind });
+    const r = await movePrepaidMany(sb, c.id, moves(b.use ? -1 : 1));
     if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: r.status });
-    ok = true; next = r.after; partNext = r.partAfter; tag = kindTag(r); split = r.split;
+    ok = true; next = r.after; partNext = r.partAfter; tag = kindTag(r); split = r.split; left = leftText(r);
   }
+  if (!left) left = String(partNext);
   if (!ok) return NextResponse.json({ ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시' }, { status: 409 });
 
   const k = new Date(Date.now() + 9 * 3600e3).toISOString();
   const stamp = `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
   const patch: { paid: boolean; paid_at: string | null; paid_note: string | null } = b.use
-    ?{ paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${partNext}${unit})` }
+    ?{ paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${left}${unit})` }
     : { paid: false, paid_at: null, paid_note: null };
   const { error } = await sb.from('baby_food_orders').update(patch).eq('id', id);
   if (error) {
     // 주문 표시를 못 바꿨으면 잔액을 되돌린다 — 잔액만 빠지고 주문은 미입금으로 남으면 안 된다
     if (banchan) await sb.from('baby_food_customers').update({ [field]: next - delta }).eq('id', c.id).eq(field, next);
-    else await movePrepaid(sb, c.id, { delta: -delta, kind });
+    else await movePrepaidMany(sb, c.id, moves(b.use ? 1 : -1));
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
   await recordPrepaid(sb, {
@@ -103,5 +108,5 @@ export async function POST(req: NextRequest) {
   } else {
     await refundShip(sb, c.id, id, o.paid_note, '입금 탭에서 되돌림');
   }
-  return NextResponse.json({ ok: true, customer_id: c.id, field, balance: next, part: partNext, kind, split: split ?? null, paid: patch.paid, paid_note: patch.paid_note });
+  return NextResponse.json({ ok: true, customer_id: c.id, field, balance: next, part: ks.length > 1 ? left : partNext, kind, split: split ?? null, paid: patch.paid, paid_note: patch.paid_note });
 }

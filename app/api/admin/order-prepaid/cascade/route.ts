@@ -3,7 +3,7 @@ import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { isOpenworld } from '@/lib/openworld';
-import { movePrepaid, kindOf, isSplit, balanceFor } from '@/lib/prepaidSplit';
+import { movePrepaid, kindOf, isSplit, balanceFor, orderKinds } from '@/lib/prepaidSplit';
 import { deductShip } from '@/lib/prepaidShip';
 
 export const dynamic = 'force-dynamic';
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   const cur = banchan ? (Number((c as any)[field]) || 0) : balanceFor(c as any, kind);
 
   let q = sb.from('baby_food_orders')
-    .select('id, delivery_date, created_at, stage, volume, total_qty, paid, paid_note, order_type, status')
+    .select('id, delivery_date, created_at, stage, volume, items, total_qty, paid, paid_note, order_type, status')
     .gte('delivery_date', o.delivery_date).neq('status', '취소')
     .order('delivery_date').order('created_at').limit(500);
   q = c.phone ? q.or(`customer_id.eq.${c.id},customer_phone.eq.${c.phone}`) : q.eq('customer_id', c.id);
@@ -63,7 +63,14 @@ export async function POST(req: NextRequest) {
   for (const r of rows || []) {
     const st = String(r.stage || '');
     if (!same(st)) continue;
-    if (split && kindOf(st, r.volume) !== kind) continue; // 다른 묶음(예: 완료기)은 그 묶음 판에서
+    // 다른 묶음(예: 완료기)은 그 묶음 판에서. 용량이 섞인 주문(230g+300g)은 이 숫자 하나로 못 세서 건너뛴다 — 그 날 ▸ 판에서 빼기
+    const ks = banchan ? [] : orderKinds(r);
+    if (split && !ks.some(x => x.kind === kind)) continue;
+    if (split && ks.length > 1) {
+      const mine = ks.find(x => x.kind === kind)!.qty;
+      const n0 = String(r.paid_note || '');
+      if (r.order_type === '선결제' || n0.startsWith('선결제 차감')) { bal -= mine; lines.push({ id: r.id, date: r.delivery_date, qty: mine, action: '이미 뺌', after: bal }); continue; }
+      lines.push({ id: r.id, date: r.delivery_date, qty: Number(r.total_qty) || 0, action: '건너뜀', why: '230·300 섞인 주문 — 그 날 ▸ 판에서', after: bal }); continue; }
     const qty = Number(r.total_qty) || 0;
     const note = String(r.paid_note || '');
     if (r.order_type === '선결제' || note.startsWith('선결제 차감')) { bal -= qty; lines.push({ id: r.id, date: r.delivery_date, qty, action: '이미 뺌', after: bal }); continue; }

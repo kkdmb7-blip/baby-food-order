@@ -133,5 +133,78 @@ export async function movePrepaid(sb: SupabaseClient, customerId: string, op: {
   return { ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시', status: 409 };
 }
 
+/* 한 주문 안에 용량이 섞여 들어온다 — 2026-11-14 사장님(서은혁): "후기230이랑 300이랑 같이 시키는데 합쳐서 빠지는 것 같아"
+   주문 행의 volume 은 하나뿐이라(첫 세트 용량) 그걸로만 보면 300g 3팩 + 230g 1팩이 전부 300g 묶음에서 빠졌다.
+   세트(items[].sets[])의 단계·용량별 팩으로 나눈다. 세트 합이 total_qty 와 다르면(옛 주문·고친 주문) 예전처럼 한 묶음. */
+type OrderLike = { stage?: string | null; volume?: number | string | null; total_qty?: number | null; items?: any };
+export function orderKinds(o: OrderLike): { kind: string | null; qty: number }[] {
+  const total = Number(o.total_qty) || 0;
+  const m = new Map<string, number>();
+  let sum = 0;
+  for (const it of Array.isArray(o.items) ? o.items : []) {
+    for (const s of Array.isArray(it?.sets) ? it.sets : []) {
+      const k = kindOf(s?.stage || o.stage, s?.volume ?? o.volume);
+      const q = Number(s?.qty) || 0;
+      if (!k || q <= 0) continue;
+      m.set(k, (m.get(k) || 0) + q); sum += q;
+    }
+  }
+  if (!m.size || sum !== total) return [{ kind: kindOf(o.stage, o.volume), qty: total }];
+  return [...m].map(([kind, qty]) => ({ kind, qty }));
+}
+/** 용량이 섞인 주문인가 */
+export const isMixed = (o: OrderLike) => orderKinds(o).length > 1;
+
+/**
+ * 주문 하나의 팩을 묶음별로 한꺼번에 옮긴다 (용량 섞인 주문). 한 종류면 movePrepaid 그대로.
+ * 한 묶음 손님은 예전처럼 전체에서. 여러 묶음 손님은 종류마다 그 묶음에서 — 한 번에 쓴다(CAS).
+ * moved = 움직인 묶음들의 뒤 잔액 (여러 묶음 손님일 때만)
+ */
+export async function movePrepaidMany(sb: SupabaseClient, customerId: string, moves: { kind: string | null; delta: number }[], opt?: { requireEnough?: boolean }):
+  Promise<MoveResult & { moved?: Part[] }> {
+  if (moves.length <= 1) return movePrepaid(sb, customerId, { delta: moves[0]?.delta || 0, kind: moves[0]?.kind ?? null, requireEnough: opt?.requireEnough });
+  const sum = moves.reduce((s, m) => s + m.delta, 0);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: c, error: e0 } = await sb.from('baby_food_customers')
+      .select('id, phone, baby_name, prepaid_balance, prepaid_label, prepaid_split').eq('id', customerId).maybeSingle();
+    if (e0) return { ok: false, error: e0.message, status: 500 };
+    if (!c) return { ok: false, error: '손님 카드를 못 찾았어요', status: 404 };
+    const total = Number(c.prepaid_balance) || 0;
+    const patch: Record<string, any> = {};
+    let next = total + sum, split: Part[] | null = null, moved: Part[] | undefined;
+    if (isSplit(c)) {
+      const parts = (c.prepaid_split as Part[]).map(p => ({ kind: p.kind, balance: Number(p.balance) || 0 }));
+      for (const mv of moves) {
+        const k = mv.kind || [...parts].sort((a, b) => b.balance - a.balance)[0].kind;
+        let p = parts.find(x => x.kind === k);
+        if (!p) { p = { kind: k, balance: 0 }; parts.push(p); }
+        if (opt?.requireEnough && mv.delta < 0 && p.balance + mv.delta < 0)
+          return { ok: false, error: `${k} 잔여 ${p.balance}팩 — ${-mv.delta}팩이 필요해요`, status: 400 };
+        p.balance += mv.delta;
+      }
+      moved = moves.map(mv => parts.find(x => x.kind === mv.kind)).filter(Boolean).map(p => ({ ...(p as Part) }));
+      next = parts.reduce((s, x) => s + x.balance, 0);
+      const live = parts.filter(x => x.balance !== 0);
+      if (live.length >= 2) split = live;
+      else if (live.length === 1) patch.prepaid_label = live[0].kind;
+    } else if (opt?.requireEnough && sum < 0 && next < 0) {
+      return { ok: false, error: `잔여 ${total}팩 — ${-sum}팩이 필요해요`, status: 400 };
+    }
+    patch.prepaid_balance = next; patch.prepaid_split = split;
+    const { data: up, error } = await sb.from('baby_food_customers').update(patch)
+      .eq('id', c.id).eq('prepaid_balance', total).select('id');
+    if (error) return { ok: false, error: error.message, status: 500 };
+    if (up && up.length) {
+      return { ok: true, customerId: c.id, phone: c.phone, babyName: c.baby_name, before: total, after: next,
+        kind: moved ? moves.map(m => m.kind).join('+') : null, partBefore: total, partAfter: next, split, moved };
+    }
+  }
+  return { ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시', status: 409 };
+}
+
+/** 표시용 '남은' — 섞인 주문을 여러 묶음에서 뺐으면 '중후300 2·중후230 5', 아니면 숫자 */
+export const leftText = (r: { partAfter: number; moved?: Part[] }) =>
+  r.moved && r.moved.length > 1 ? r.moved.map(p => `${shortKind(p.kind)} ${p.balance}`).join('·') : String(r.partAfter);
+
 /** 장부 메모 앞에 붙일 묶음 이름 — 여러 묶음일 때만 */
 export const kindTag = (r: { kind: string | null }) => r.kind ? `[${r.kind}] ` : '';

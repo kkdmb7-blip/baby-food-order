@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordPrepaid } from './prepaidLedger';
-import { movePrepaid, kindOf, kindTag } from './prepaidSplit';
+import { movePrepaidMany, orderKinds, kindTag } from './prepaidSplit';
 import { deductShip, refundShip, shipUnitsIn, stripShip } from './prepaidShip';
 
 type CancelableOrder = {
@@ -14,6 +14,7 @@ type CancelableOrder = {
   customer_id?: string | null;
   stage?: string | null;
   volume?: number | null;
+  items?: any;               // 용량 섞인 주문은 세트별로 묶음을 나눠 돌려준다 (lib/prepaidSplit orderKinds)
   paid_note?: string | null;
 };
 
@@ -41,7 +42,7 @@ export async function applyCancelReversal(sb: SupabaseClient, order: CancelableO
       const cid = await custIdOf(sb, order);
       if (cid) {
         // 여러 단계 선결제면 그 주문 단계·용량의 묶음으로 돌려준다 (lib/prepaidSplit)
-        const r = await movePrepaid(sb, cid, { delta: sign * order.total_qty, kind: kindOf(order.stage, order.volume) });
+        const r = await movePrepaidMany(sb, cid, orderKinds(order).map(x => ({ kind: x.kind, delta: sign * x.qty })));
         if (r.ok) {
           // 장부 — 취소면 팩이 돌아오고(환불), 취소를 되돌리면 다시 빠진다(사용)
           await recordPrepaid(sb, {
@@ -77,7 +78,7 @@ export async function applyCancelReversal(sb: SupabaseClient, order: CancelableO
             if (up?.length) after = base + qty;
           }
         } else {
-          const r = await movePrepaid(sb, cid, { delta: qty, kind: kindOf(order.stage, order.volume) });
+          const r = await movePrepaidMany(sb, cid, (orderKinds(order).reduce((s, x) => s + x.qty, 0) === qty ? orderKinds(order) : [{ kind: orderKinds(order)[0].kind, qty }]).map(x => ({ kind: x.kind, delta: x.qty })));
           if (r.ok) { after = r.after; tag = kindTag(r); }
         }
         if (after !== null) {
