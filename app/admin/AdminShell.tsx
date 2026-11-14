@@ -964,7 +964,9 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   const [msg, setMsg] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
-  const prepaid = customers.filter(c => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0 || c.is_regular);
+  // 검색해서 뭔가 고친 손님은 아래 목록에 카드로 남긴다 (사장님: "정보 변경하면 아래 석하린·송다민처럼 보여야")
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const prepaid = customers.filter(c => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0 || c.is_regular || c.openworld || touched.has(c.id));
 
   // 손님은 계속 쌓이므로 화면에 다 들고 있지 않는다 — 찾는 건 서버가 한다.
   // (전부 받아다 걸렀더니 1000명 뒤의 손님은 검색해도 안 나왔다)
@@ -999,8 +1001,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       if (!r.ok || !d.ok) {
         setMsg(`못 고쳤어요: ${d.error || r.status}`);
       } else {
-        onUpdate(customers.map(x => x.id === c.id ? { ...x, baby_name: next } : x));
-        setFound(prev => prev.map(x => x.id === c.id ? { ...x, baby_name: next } : x));
+        patchCustomer(c.id, { baby_name: next });
         setMsg(
           d.ordersError
             ? `이름은 ${next}(으)로 바뀌었는데 주문 쪽이 안 바뀌었어요 — ${d.ordersError}`
@@ -1055,6 +1056,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   }
 
   function patchCustomer(id: string, patch: Partial<Customer>) {
+    setTouched(s => s.has(id) ? s : new Set(s).add(id));
     const inList = customers.some(c => c.id === id);
     const hit = found.find(x => x.id === id);
     onUpdate(inList
@@ -1156,7 +1158,8 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
         )}
       </div>
 
-      <h3 className="text-sm font-bold text-stone-700 mb-2">선결제 · 정기 손님</h3>
+      <h3 className="text-sm font-bold text-stone-700 mb-0.5">선결제 · 정기 · 오픈월드 손님</h3>
+      <p className="text-[11px] text-stone-400 mb-2">위에서 찾아서 고친 손님도 여기 카드로 보여요</p>
       {prepaid.length === 0 && <Empty text="선결제·정기 손님이 없어요" />}
       <div className="space-y-3">
         {prepaid.map(c => (
@@ -1166,9 +1169,14 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                 {nameInput(c)}
                 <span className="ml-2 text-xs text-stone-500">{c.phone ? formatPhone(c.phone) : "연락처 없음"}</span>
                 {c.is_regular && <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
+                <button onClick={() => toggleOpenworld(c)} disabled={savingId === c.id}
+                  title="나라 후원사업 아이 — 입금 대조에서 빼고, 나중에 한꺼번에 정산"
+                  className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold border ${c.openworld ? 'bg-sky-100 text-sky-800 border-sky-300' : 'border-stone-200 text-stone-400'}`}>
+                  {c.openworld ? '오픈월드' : '오픈월드 아님'}
+                </button>
               </div>
               <div className="text-right">
-                {(c.prepaid_balance !== 0 || !(c.prepaid_banchan || 0)) && (
+                {(c.prepaid_balance !== 0 || (!(c.prepaid_banchan || 0) && !c.openworld)) && (
                   <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
                     잔여 {c.prepaid_balance}팩{c.prepaid_balance < 0 ? <span className="ml-1 text-xs">(받을 팩)</span> : null}
                     {c.prepaid_label ? <span className="ml-1 text-xs font-normal text-stone-500">{c.prepaid_label}</span> : null}
