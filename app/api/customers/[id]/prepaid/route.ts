@@ -17,7 +17,9 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   // 카톡 메모장 정리를 통째로 붙여넣기 — { memo: '8/21 중230ᆞ50입\n8/24 50-3-6-3-6=32 …' }
   // 메모장이 원본이다. 잔여는 마지막 묶음의 적힌 마지막 결과, 단계·용량은 그 묶음의 마지막 '입' 줄.
   // 다시 붙여넣으면 그 값으로 다시 맞춘다(더하지 않는다). 바뀐 만큼 장부에 '수정' 한 줄.
-  if (typeof body.memo === 'string') {
+  // ⚠️ 잔여 고치기·충전도 사유를 'memo' 로 보낸다({ set, memo: '사유' }). 그걸 카톡 메모로 읽으면
+  //    "읽을 줄이 없어요" 로 거절돼 잔여 고치기가 전부 안 먹었다(2026-11-14 사장님 신고). 숫자가 같이 오면 카톡 메모가 아니다.
+  if (typeof body.memo === 'string' && body.set === undefined && body.times === undefined && body.units === undefined) {
     const memo = body.memo.replace(/\r/g, '').trim().slice(0, 20000);
     const parsed = parseKakaoPrepaid(memo);
     const tracks = memoSummary(parsed);

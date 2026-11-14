@@ -1735,6 +1735,7 @@ function PrepaidLedger({ customerId, balance, onBalance, onPatch }: {
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs font-bold text-stone-600">잔여 고치기</span>
         <input value={setTo} onChange={e => setSetTo(e.target.value.replace(/\D/g, '').slice(0, 3))}
+          onKeyDown={e => { if (e.key === 'Enter') saveAll(); }}
           inputMode="numeric" placeholder={String(balance)}
           className="w-14 px-2 py-1 border border-stone-300 rounded text-xs text-right outline-none focus:border-amber-400" />
         <span className="text-xs text-stone-500">팩</span>
