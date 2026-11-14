@@ -185,6 +185,8 @@ function DepositRow({ d, orders, onDone }: { d: Dep; orders: Record<string, O>; 
   const [savePayer, setSavePayer] = useState(true);
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
+  const [editMemo, setEditMemo] = useState(false);
+  const [memo, setMemo] = useState('');
   const depDay = kst(d.deposited_at).slice(0, 10);
 
   useEffect(() => {
@@ -248,7 +250,17 @@ function DepositRow({ d, orders, onDone }: { d: Dep; orders: Record<string, O>; 
         {d.status !== '무관' && <button disabled={busy} onClick={() => act({ action: 'status', status: '무관' })} className="text-[11px] px-2.5 py-1 rounded border border-stone-200 text-stone-500">손님 돈 아님</button>}
         {d.status !== '선결제' && d.status !== '자동확인' && d.status !== '수동확인' && <button disabled={busy} onClick={() => act({ action: 'status', status: '선결제' })} className="text-[11px] px-2.5 py-1 rounded border border-violet-200 text-violet-700">선결제로 표시</button>}
         {(d.status === '무관' || d.status === '선결제') && d.confirmed_at && <button disabled={busy} onClick={() => act({ action: 'status', status: '모름' })} className="text-[11px] px-2.5 py-1 rounded border border-stone-200 text-stone-500">되돌리기</button>}
+        {d.status !== '확인필요' && <button disabled={busy} onClick={() => (linked.length === 0 || confirm('확인필요로 돌리면 붙은 주문이 미입금으로 돌아가요. 할까요?')) && act({ action: 'status', status: '확인필요' })} className="text-[11px] px-2.5 py-1 rounded border border-amber-200 text-amber-700">나중에 볼게요</button>}
+        <button onClick={() => { setEditMemo(v => !v); setMemo(d.note || ''); }} className="text-[11px] px-2.5 py-1 rounded border border-stone-200 text-stone-600">메모 고치기</button>
       </div>
+      {editMemo && (
+        <div className="mt-2 flex gap-1.5">
+          <input value={memo} onChange={e => setMemo(e.target.value)} maxLength={300} placeholder="예: 이단우 엄마, 11/9분+11/12분 합친 돈"
+            className="flex-1 px-2 py-1.5 border border-stone-300 rounded text-xs outline-none focus:border-amber-400" />
+          <button disabled={busy} onClick={() => act({ action: 'memo', note: memo })}
+            className="text-[11px] px-3 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-800 font-bold disabled:opacity-40">저장</button>
+        </div>
+      )}
 
       {((canPick && sugg.length > 0) || open) && (
         <div className="mt-2 border-t border-stone-100 pt-2 space-y-1">

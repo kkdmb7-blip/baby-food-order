@@ -1014,6 +1014,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     setTimeout(() => setMsg(null), 6000);
   }
 
+  // 너비: ch 는 숫자 '0' 너비라 한글(약 2ch)은 절반만 보였다(세 글자 이름이 두 글자로 잘림) → 글자 수 × 1em + 여백
   const nameInput = (c: Customer) => (
     <input
       key={c.id + c.baby_name}
@@ -1025,7 +1026,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       title="눌러서 고칠 수 있어요 (카톡에 저장한 이름과 같게)"
       className="font-bold text-stone-900 bg-transparent border border-transparent rounded px-1 -ml-1
                  hover:border-stone-200 focus:border-amber-400 focus:bg-white outline-none disabled:opacity-50"
-      style={{ width: `${Math.max(4, (c.baby_name || '').length + 2)}ch` }}
+      style={{ width: `calc(${Math.max(2, (c.baby_name || '').length)}em + 1.2rem)` }}
     />
   );
 

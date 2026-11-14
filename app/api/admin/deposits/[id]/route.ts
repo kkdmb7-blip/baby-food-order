@@ -10,7 +10,8 @@ const UUID = /^[0-9a-f-]{36}$/i;
   PATCH — 사장님이 입금 하나를 정리한다.
     { action: 'confirm', order_ids: [...], save_payer?: true }  이 주문들 돈이 맞다 → 입금확인
     { action: 'unlink' }                                         짝 풀기 → 주문은 미입금으로, 입금은 '모름'
-    { action: 'status', status: '무관'|'선결제'|'모름', note? }   손님 돈 아님 / 선결제 / 다시 모름
+    { action: 'status', status: '무관'|'선결제'|'모름'|'확인필요', note? }   손님 돈 아님 / 선결제 / 다시 모름 / 나중에 볼 것
+    { action: 'memo', note }                                     메모만 고치기
   입금 줄은 절대 지우지 않는다. 바꾼 사람이 사장님이라는 표시(confirmed_at)를 남긴다.
 */
 export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
@@ -62,7 +63,14 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json({ ok: true });
   }
 
-  if (b.action === 'status' && ['무관', '선결제', '모름'].includes(b.status)) {
+  // 메모만 고친다 — 상태·짝은 그대로
+  if (b.action === 'memo') {
+    const memo = String(b.note ?? '').trim().slice(0, 300);
+    await sb.from('baby_food_deposits').update({ note: memo || null, confirmed_at: new Date().toISOString() }).eq('id', id);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (b.action === 'status' && ['무관', '선결제', '모름', '확인필요'].includes(b.status)) {
     await release(d.order_ids || []);
     const memo = String(b.note || '').trim().slice(0, 200);
     await sb.from('baby_food_deposits').update({
