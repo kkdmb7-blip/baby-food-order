@@ -114,7 +114,8 @@ export function AddRow({ stage, date, onAdded, cols }: {
       const j = await res.json().catch(() => ({}));
       if (!res.ok || j.ok === false) { setMsg({ ok: false, t: j.error || `못 넣었어요 (${res.status})` }); return; }
       if (j.row) onAdded(j.row);
-      setMsg({ ok: true, t: h ? `${h.babyName} ${total}${banchan ? '세트' : '팩'} 넣었어요`
+      const paidTxt = j.row?.paid ? ' · 은행 입금과 맞아서 입금확인까지 했어요' : '';
+      setMsg({ ok: true, t: h ? `${h.babyName} ${total}${banchan ? '세트' : '팩'} 넣었어요${paidTxt}`
         : `${typed} ${total}${banchan ? '세트' : '팩'} 넣었어요 — 새 아이라 연락처·주소는 나중에 (이름 눌러 넣기)` });
       setName(''); setHit(null); setHits([]); setQty({}); setBig(false);
       setTimeout(() => nameRef.current?.focus(), 0);

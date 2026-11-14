@@ -16,6 +16,7 @@ import { recordPrepaid } from '@/lib/prepaidLedger';
 import { OPENWORLD_NOTE, openworldApplies } from '@/lib/openworld';
 import { movePrepaid, kindOf } from '@/lib/prepaidSplit';
 import { deductShip } from '@/lib/prepaidShip';
+import { rematchDeposits } from '@/lib/deposits';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -451,8 +452,19 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ id: data.id, baby_name, delivery_date, stage, volume, items, total_qty, total_price: net_price, customer_phone, address })
     }).catch(() => {});
 
+    // 사장님이 나중에 넣은 주문(조리표·입금 표 아래 줄 등) — 이미 들어와 있는 은행 입금과 바로 맞춰 본다.
+    // 2026-11-14 사장님: "추가한 게 아래 은행 입금에 있는 경우 바로 체크되게". 맞으면 입금확인된 줄을 돌려준다.
+    let row: any = data;
+    if (adminManual && order_type !== '선결제' && !row.paid_note) {
+      try {
+        await rematchDeposits(sb);
+        const { data: fresh } = await sb.from('baby_food_orders').select('*').eq('id', data.id).maybeSingle();
+        if (fresh) row = fresh;
+      } catch (e) { console.error('[orders POST rematch]', e); }
+    }
+
     return NextResponse.json({
-      ok: true, id: data.id, row: data,
+      ok: true, id: data.id, row,
       points_earned: pointsEarned, points_used: pointsUsed, net_price,
       shipping_fee, charged: net_price + shipping_fee,
       welcome_bonus: welcomeBonus, referral_bonus: referralBonus,
