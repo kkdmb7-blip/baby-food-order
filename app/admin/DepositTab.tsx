@@ -172,9 +172,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
               // 230g·300g 섞인 주문은 묶음 중 가장 모자란 쪽
               const b = Math.min(...orderKinds(o as any).map(k => balanceFor(c, k.kind)));
               if (String(o.stage || '').startsWith('반찬')) return null;
-              if (b < 0) return `${b}`;
-              // 완료기 주문인데 선결제가 아직 중기·후기 묶음 — 차액 받고 바꿔야 할 손님 (사장님 2026-11-14 안시은)
-              return orderKinds(o as any).some(k => convertNeed(c, k.kind)) ? '전환' : null;
+              // (완료기 '전환' 꼬리표는 사장님 요청으로 뺐다 2026-11-14 — 단계 변경은 ▸ 판의 노란 상자에서)
+              return b < 0 ? `${b}` : null;
             },
           }} printedAt={printedAt} add={onAdded ? { date, onAdded } : undefined} />}
       {onAdded && <AddMissing sheet={sheet} date={date} onAdded={onAdded} />}
