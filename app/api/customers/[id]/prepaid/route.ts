@@ -117,8 +117,11 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     if (!c) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
     const base = Number(c.prepaid_balance) || 0;
     const next = base + units;
+    // 충전할 때 고른 종류(예: '완료기 300g')를 손님의 선결제 단계로 남긴다 — 다음 충전·입금 대조가 이 값을 쓴다
+    const pickLabel = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 30) : null;
     const { data: upd, error } = await sb.from('baby_food_customers')
-      .update({ prepaid_balance: next }).eq('id', id).eq('prepaid_balance', base).select('id');
+      .update({ prepaid_balance: next, ...(pickLabel ? { prepaid_label: pickLabel } : {}) })
+      .eq('id', id).eq('prepaid_balance', base).select('id');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (upd && upd.length) {
       await recordPrepaid(sb, {

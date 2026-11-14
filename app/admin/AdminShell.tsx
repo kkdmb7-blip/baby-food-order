@@ -9,6 +9,7 @@ import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
 import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
 import DepositTab from './DepositTab';
+import ChargeBar from './ChargeBar';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
@@ -1110,8 +1111,9 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       });
       const d = await r.json().catch(() => ({}));
       if (d.ok) {
-        setBalance(id, d.new_balance);
-        setMsg(`${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
+        // 고른 종류(단계·용량)를 손님 표시에도 남긴다 — 서버도 같이 저장한다
+        patchCustomer(id, { prepaid_balance: d.new_balance, ...(label ? { prepaid_label: label } : {}) });
+        setMsg(`${label ? label + ' ' : ''}${units}팩 충전됐어요 (잔여 ${d.new_balance}팩)`);
         const open = openLedger;
         if (open === id || open === 'f:' + id) { setOpenLedger(null); setTimeout(() => setOpenLedger(open), 0); }
       } else {
@@ -1166,13 +1168,8 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                   {openLedger === 'f:' + c.id && (
                     <div className="w-full">
                       <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
-                      <div className="flex gap-2 mt-2">
-                        {PREPAID_UNITS.map(u => (
-                          <button key={u} onClick={() => charge(c.id, u, c.prepaid_label)} disabled={chargingId === c.id}
-                            className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
-                            +{u}팩{prepaidPrice(c.prepaid_label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(c.prepaid_label, u)!.toLocaleString()}원</span> : null}
-                          </button>
-                        ))}
+                      <div className="mt-2">
+                        <ChargeBar label={c.prepaid_label} disabled={chargingId === c.id} onCharge={(u, l) => charge(c.id, u as any, l)} />
                       </div>
                       <PrepaidLedger key={c.id + ':' + c.prepaid_balance} customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
                     </div>
@@ -1318,13 +1315,8 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
         {openLedger === c.id && (
           <div className="pb-2">
             {/* 충전 단추는 줄에서 빼고 여기로 — 간판 할인표 금액이 같이 뜬다 */}
-            <div className="flex gap-1.5 mt-1.5 flex-wrap">
-              {PREPAID_UNITS.map(u => (
-                <button key={u} onClick={() => charge(c.id, u, c.prepaid_label)} disabled={chargingId === c.id}
-                  className="px-2.5 py-1 border border-amber-200 text-amber-700 rounded-lg text-[11px] font-bold hover:bg-amber-50 disabled:opacity-40">
-                  +{u}팩{prepaidPrice(c.prepaid_label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(c.prepaid_label, u)!.toLocaleString()}원</span> : null}
-                </button>
-              ))}
+            <div className="mt-1.5">
+              <ChargeBar size="sm" label={c.prepaid_label} disabled={chargingId === c.id} onCharge={(u, l) => charge(c.id, u as any, l)} />
             </div>
             <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
             <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />

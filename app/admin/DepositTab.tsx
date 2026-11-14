@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import CookingTable, { type PayState } from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
-import { PREPAID_UNITS, prepaidPrice, type Customer } from '@/lib/supabase';
+import { prepaidPrice, type Customer } from '@/lib/supabase';
+import ChargeBar from './ChargeBar';
 
 /*
   입금 대조 화면
@@ -186,18 +187,18 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
     setInfo(`남은 ${d.new_balance}${unit}로 고쳤어요`);
   }
 
-  async function charge(units: number) {
+  async function charge(units: number, pick: string) {
     if (!cust) return;
-    const wonAmt = prepaidPrice(label, units);
-    if (!confirm(wonAmt ? `${o.baby_name} — ${label} ${units}팩 ${wonAmt.toLocaleString()}원 받으셨나요?` : `${o.baby_name} — ${units}팩을 넣을까요?`)) return;
+    const wonAmt = prepaidPrice(pick, units);
+    if (!confirm(wonAmt ? `${o.baby_name} — ${pick} ${units}팩 ${wonAmt.toLocaleString()}원 받으셨나요?` : `${o.baby_name} — ${units}팩을 넣을까요?`)) return;
     setBusy(true); setInfo(null);
     const d = await fetch(`/api/customers/${cust.id}/prepaid`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ units, amount_won: wonAmt || undefined, label: label || undefined }),
+      body: JSON.stringify({ units, amount_won: wonAmt || undefined, label: pick }),
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 넣었어요: ${d.error || ''}`); return; }
-    onPatch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, ...(label ? { prepaid_label: label } : {}) } });
+    onPatch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, prepaid_label: pick } });
     setEdit(String(d.new_balance));
     setInfo(`${units}팩 넣었어요 — 남은 ${d.new_balance}팩. 이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
   }
@@ -245,12 +246,8 @@ function PrepaidPanel({ o, cust, onClose, onToggle, onPatch }: {
           </div>
           {!banchan && (
             <div className="flex gap-1.5 flex-wrap items-center">
-              <span className="text-stone-500">선결제 충전{label ? ` (${label})` : ''}</span>
-              {PREPAID_UNITS.map(u => (
-                <button key={u} disabled={busy} onClick={() => charge(u)} className={`${btn} border-amber-200 bg-white text-amber-800`}>
-                  +{u}팩{prepaidPrice(label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(label, u)!.toLocaleString()}원</span> : null}
-                </button>
-              ))}
+              <span className="text-stone-500">선결제 충전</span>
+              <ChargeBar label={label} disabled={busy} onCharge={(u, l) => charge(u, l)} />
             </div>
           )}
         </>
