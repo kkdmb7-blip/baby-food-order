@@ -88,6 +88,62 @@ export function looksDirectDelivery(address: string): boolean {
   return false;
 }
 
+/*
+  ── 미지정 주소를 비슷한 동네 근처로 (2026-11-14 사장님: "미지정일 경우는 비슷한 동네 근처로 배치")
+  순번표에 없는 새 주소도, 같은 길(또는 같은 동)의 가장 가까운 번지 순번을 빌려 그 자리에 끼운다.
+  같은 길이 표에 없으면 같은 동으로, 그것도 없으면 null(맨 뒤). 순번 자체는 저장하지 않는다 — 줄 세우기용이다.
+*/
+type NearRow = { full: string; num: number; code: number };
+const NEAR: Map<string, NearRow[]> = (() => {
+  const m = new Map<string, NearRow[]>();
+  const add = (root: string, r: NearRow) => { if (!root) return; if (!m.has(root)) m.set(root, []); m.get(root)!.push(r); };
+  for (const [k, code] of Object.entries(byAddr)) {
+    const [head, numStr] = k.split(' ');
+    const r = { full: head, num: parseInt(numStr || '', 10), code };
+    const road = roadRoot(head);
+    if (road) { add(road, r); continue; }
+    const dong = dongRoot(head);
+    if (dong) { add(dong, r); add(dong.replace(/[0-9]+(?=동$)/, ''), r); }
+  }
+  return m;
+})();
+
+function pickNear(list: NearRow[] | undefined, full: string, num: number): number | null {
+  if (!list || !list.length) return null;
+  const same = list.filter(r => r.full === full);
+  const pool = same.length ? same : list;
+  if (!Number.isFinite(num)) {
+    const codes = pool.map(r => r.code).sort((a, b) => a - b);
+    return codes[Math.floor(codes.length / 2)];   // 번지를 모르면 그 길·동의 가운데 순번
+  }
+  let best = pool[0];
+  for (const r of pool) {
+    const d = Number.isFinite(r.num) ? Math.abs(r.num - num) : Infinity;
+    const bd = Number.isFinite(best.num) ? Math.abs(best.num - num) : Infinity;
+    if (d < bd) best = r;
+  }
+  return best.code;
+}
+
+/** 순번이 없으면 같은 길·같은 동의 가까운 번지 순번으로 짐작 (줄 세우기용). 짐작도 못 하면 null */
+export function nearRouteCodeOf(address: string): { code: number | null; guessed: boolean } {
+  const a = String(address || '').replace(/\s+/g, ' ').trim();
+  const exact = routeCodeOf(a);
+  if (exact !== null) return { code: exact, guessed: false };
+  const rm = a.match(/([가-힣]+(?:[0-9]+)?(?:가)?(?:대로|로)(?:[0-9]+[가-힣]?길)?)\s*,?\s*([0-9]+)?/);
+  if (rm) {
+    const c = pickNear(NEAR.get(roadRoot(rm[1])), rm[1], parseInt(rm[2] || '', 10));
+    if (c !== null) return { code: c, guessed: true };
+  }
+  const dm = a.match(/([가-힣]+[0-9]*동)(?![로길])\s*([0-9]+)?/);
+  if (dm) {
+    const d = normDong(dm[1]);
+    const c = pickNear(NEAR.get(d) || NEAR.get(d.replace(/[0-9]+(?=동$)/, '')), d, parseInt(dm[2] || '', 10));
+    if (c !== null) return { code: c, guessed: true };
+  }
+  return { code: null, guessed: false };
+}
+
 /** 주소로 배송 순번을 찾음. 확실하지 않으면 null (억지로 맞추지 않음) */
 export function routeCodeOf(address: string): number | null {
   const addr = String(address || '');

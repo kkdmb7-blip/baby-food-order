@@ -1,10 +1,9 @@
-import React from 'react';
 import { redirect } from 'next/navigation';
 import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
 import { orderDates, qtyOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
-import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
+import { addrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -80,43 +79,37 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   const { data: overrideRows } = await sb.from('baby_food_route_codes').select('addr_key, code');
   const overrides = new Map<string, number>();
   (overrideRows || []).forEach((r: any) => overrides.set(r.addr_key, Number(r.code)));
-  const codeOf = (o: Order): number | null => {
+  // 순번표에 없는 주소는 같은 길·같은 동의 가까운 번지 순번을 빌려 그 근처에 끼운다
+  // (2026-11-14 사장님: "미지정일 경우는 비슷한 동네 근처로 배치")
+  const codeOf = (o: Order): { code: number | null; guessed: boolean } => {
     const k = addrKey(String(o.address || ''));
-    if (k && overrides.has(k)) return overrides.get(k)!;
-    return routeCodeOf(String(o.address || ''));
+    if (k && overrides.has(k)) return { code: overrides.get(k)!, guessed: false };
+    return nearRouteCodeOf(String(o.address || ''));
   };
 
-  // 배송 순번(엑셀 전체주소록의 맨 오른쪽 숫자)으로 묶고 정렬 — 인쇄물이 곧 도는 순서가 됨
-  type Grp = { code: number | null; label: string; list: Order[] };
-  const grpMap = new Map<string, Grp>();
-  let matched = 0;
-  for (const o of orders) {
-    const code = codeOf(o);
-    if (code !== null) matched++;
-    const key = code !== null ? `c${code}` : `x${areaLabel(o)}`;
-    if (!grpMap.has(key)) grpMap.set(key, { code, label: areaLabel(o), list: [] });
-    grpMap.get(key)!.list.push(o);
-  }
-  for (const g of grpMap.values()) {
-    g.list.sort((a, b) => String(a.address || '').localeCompare(String(b.address || '')));
-  }
-  const sorted = [...grpMap.values()].sort((a, b) => {
-    if (a.code === null && b.code === null) return a.label.localeCompare(b.label);
-    if (a.code === null) return 1;   // 순번 없는 새 손님은 맨 뒤
-    if (b.code === null) return -1;
-    return a.code - b.code;
+  // 배송 순번으로 한 줄 세우기 — 도는 순서 그대로. 구역 제목 줄('11 화곡동 1건')은 뺐다(사장님: 다 지워 달라)
+  const rows = orders.map(o => ({ o, ...codeOf(o) })).sort((x, y) => {
+    if (x.code === null && y.code === null) return areaLabel(x.o).localeCompare(areaLabel(y.o));
+    if (x.code === null) return 1;
+    if (y.code === null) return -1;
+    return x.code - y.code || String(x.o.address || '').localeCompare(String(y.o.address || ''));
   });
-  const unmatched = orders.length - matched;
+  const guessed = rows.filter(r => r.guessed).length;
+  const unknown = rows.filter(r => r.code === null).length;
+
+  // A4 한 장에 — 건수가 많으면 글씨와 줄 간격을 줄인다 (A4 세로, 여백 8mm 기준 실측 ~1000px)
+  const n = rows.length;
+  const dense = n > 60 ? { text: 'text-[9.5px]', py: 'py-0' } : n > 48 ? { text: 'text-[10.5px]', py: 'py-[1px]' }
+    : n > 38 ? { text: 'text-[11px]', py: 'py-[2px]' } : { text: 'text-[12px]', py: 'py-[3px]' };
 
   const dow = DOW_KOR[new Date(date + 'T00:00:00Z').getUTCDay()];
-  let no = 0;
 
   return (
     <div className="bg-white min-h-screen p-3 text-black print:p-0">
       <PrintAuto />
       <style>{`@media print { @page { size: A4; margin: 8mm; } }`}</style>
 
-      <div className="flex justify-between items-baseline mb-1.5 border-b border-black pb-1">
+      <div className="flex justify-between items-baseline mb-1 border-b border-black pb-1">
         <div className="flex items-baseline gap-2 text-[12px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-sm.png" alt="까꿍디미방" width={30} height={30} className="w-[30px] h-[30px] object-contain self-center" />
@@ -125,48 +118,30 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
           {pickupCount > 0 && <span className="text-stone-500">픽업 {pickupCount}건 제외</span>}
           {dubalCount > 0 && <span className="text-stone-500">두발 {dubalCount}건 제외</span>}
           {parcelCount > 0 && <span className="text-stone-500">택배 {parcelCount}건 제외</span>}
-          {unmatched > 0 && <span className="text-red-600">구역 미지정 {unmatched}건</span>}
+          {guessed > 0 && <span className="text-stone-500"><b className="text-red-600">*</b>근처 배치 {guessed}</span>}
+          {unknown > 0 && <span className="text-red-600">동네 모름 {unknown}(맨 뒤)</span>}
         </div>
         <PrintBar date={date} kind="labels" />
       </div>
 
-      <table className="w-full border-collapse text-[12px] leading-tight">
+      <table className={`w-full border-collapse ${dense.text} leading-tight`}>
         <tbody>
-          {sorted.map(g => (
-            <React.Fragment key={g.code !== null ? `c${g.code}` : `x${g.label}`}>
-              <tr>
-                <td colSpan={5} className="border-b border-black pt-1.5 pb-0.5 font-black text-[11px]">
-                  {g.code !== null
-                    ? <><span className="text-[13px]">{g.code}</span>
-                        <span className="font-normal ml-1">
-                          {[...new Set(g.list.map(x => areaLabel(x)))].join(', ')}
-                        </span></>
-                    : <span className="text-red-600">구역 미지정 · {g.label}</span>}
-                  <span className="font-normal text-stone-500 ml-1">{g.list.length}건</span>
-                </td>
-              </tr>
-              {g.list.map(o => {
-                no++;
-                return (
-                  <tr key={o.id} className="border-b border-stone-300">
-                    <td className="py-[3px] pr-1 w-4 align-top text-stone-400 text-[10px]">{no}</td>
-                    <td className="py-[3px] pr-1.5 w-[58px] align-top font-bold whitespace-nowrap">{dispName.get(o.id) || o.baby_name}</td>
-                    <td className="py-[3px] pr-1.5 align-top">
-                      {o.address}
-                      {o.address_detail && <span className="font-bold"> {o.address_detail}</span>}
-                      {doorPw(o) && <span className="text-[11px] text-stone-600"> 🔑{doorPw(o)}</span>}
-                      {o.customer_request && <span className="font-black"> ※{o.customer_request}</span>}
-                    </td>
-                    <td className="py-[3px] pr-1 align-top text-right whitespace-nowrap">{formatPhone(o.customer_phone)}</td>
-                    <td className="py-[3px] align-top text-right whitespace-nowrap font-bold w-8">{qtyOn(o as any, date)}팩</td>
-                  </tr>
-                );
-              })}
-            </React.Fragment>
+          {rows.map(({ o, guessed: g, code }, i) => (
+            <tr key={o.id} className="border-b border-stone-300">
+              <td className={`${dense.py} pr-1 w-5 align-top text-[10px] whitespace-nowrap ${g || code === null ? 'text-red-600 font-bold' : 'text-stone-400'}`}>{i + 1}{g || code === null ? '*' : ''}</td>
+              <td className={`${dense.py} pr-1.5 w-[58px] align-top font-bold whitespace-nowrap`}>{dispName.get(o.id) || o.baby_name}</td>
+              <td className={`${dense.py} pr-1.5 align-top`}>
+                {o.address}
+                {o.address_detail && <span className="font-bold"> {o.address_detail}</span>}
+                {doorPw(o) && <span className="text-[0.9em] text-stone-600"> 🔑{doorPw(o)}</span>}
+                {o.customer_request && <span className="font-black"> ※{o.customer_request}</span>}
+              </td>
+              <td className={`${dense.py} pr-1 align-top text-right whitespace-nowrap`}>{formatPhone(o.customer_phone)}</td>
+              <td className={`${dense.py} align-top text-right whitespace-nowrap font-bold w-8`}>{qtyOn(o as any, date)}팩</td>
+            </tr>
           ))}
         </tbody>
       </table>
-
       {orders.length === 0 && (
         <div className="py-10 text-center text-stone-400 text-sm">
           {others.length > 0

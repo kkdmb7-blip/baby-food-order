@@ -6,7 +6,7 @@ import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, prepaidPrice, menuLab
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
-import { routeCodeOf, addrKey, looksDirectDelivery } from '@/lib/routeCode';
+import { routeCodeOf, addrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
 import DepositTab from './DepositTab';
 import ChargeBar from './ChargeBar';
@@ -851,9 +851,10 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
     setTimeout(() => setMsg(null), 3000);
   }
 
-  // 순번대로 정렬 — 인쇄물과 같은 순서로 보이게
+  // 순번대로 정렬 — 인쇄물과 같은 순서로 보이게. 순번이 없는 주소는 같은 길·동의 가까운 번지 순번으로 근처에 둔다
+  const sortCode = (o: Order) => codeOf(o) ?? nearRouteCodeOf(String(o.address || '')).code;
   const sorted = [...orders].sort((a, b) => {
-    const ca = codeOf(a), cb = codeOf(b);
+    const ca = sortCode(a), cb = sortCode(b);
     if (ca === null && cb === null) return 0;
     if (ca === null) return 1;
     if (cb === null) return -1;
