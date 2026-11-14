@@ -45,6 +45,39 @@ const STATUS_HELP: Record<Dep['status'], string> = {
   무관: '카드·플랫폼 정산 등 손님 입금이 아닌 돈',
 };
 
+/* 남은 입금을 '무엇을 해야 하나' 로 나눈다 — 사장님 2026-11-14: "다시 맞춰보기 했는데 추가된 게 한 건도 없어",
+   "인간이 알아보기 쉽게". 확인필요·모름 같은 기계 이름 대신 이유와 할 일로. 이유는 맞추기(lib/depositMatch)가 남긴 메모에서 읽는다. */
+type Reason = '주문없음' | '누구돈' | '금액' | '고르기' | '두번' | '선결제' | '나중에' | '기타';
+const REASONS: { key: Reason; title: string; todo: string; cls: string }[] = [
+  { key: '주문없음', title: '앱에 그 날 주문이 없어요', todo: '종이에만 적은 주문일 수 있어요. 그 날 표로 가서 단계 아래 ＋이름으로 넣고 [다시 맞춰보기]를 누르면 붙어요.', cls: 'border-l-amber-400' },
+  { key: '누구돈', title: '누구 돈인지 몰라요', todo: '엄마·아빠 이름일 때가 많아요. [주문 골라 붙이기]로 아이를 찾아 붙이면 그 이름을 기억해서 다음부터 자동으로 맞춰요.', cls: 'border-l-rose-400' },
+  { key: '금액', title: '금액이 안 맞아요', todo: '팩 수가 바뀌었거나 나눠 보냈을 수 있어요. 맞는 주문을 골라 붙이거나 주문 팩 수를 고쳐 주세요.', cls: 'border-l-orange-400' },
+  { key: '고르기', title: '맞는 주문이 여럿이에요', todo: '아래 "아마 이 주문" 중 맞는 걸 체크하고 [이 주문 돈으로 확인].', cls: 'border-l-sky-400' },
+  { key: '두번', title: '이미 확인된 주문에 또 들어온 돈', todo: '두 번 보냈거나 다음 주문 돈일 수 있어요. 손님께 확인해 주세요.', cls: 'border-l-violet-400' },
+  { key: '선결제', title: '선결제 충전 돈', todo: '손님 카드에 충전했는지 보세요 (▸ 판의 충전 또는 고객관리 「기록」).', cls: 'border-l-violet-400' },
+  { key: '나중에', title: '나중에 볼 것', todo: '사장님이 \'나중에 볼게요\' 로 둔 입금이에요.', cls: 'border-l-stone-300' },
+  { key: '기타', title: '가까운 날 미입금 주문이 없어요', todo: '이미 다른 돈으로 확인됐거나 주문이 앱에 없을 수 있어요. 주문을 찾아 붙이거나 손님께 확인해 주세요.', cls: 'border-l-stone-400' },
+];
+function reasonOf(d: Dep): Reason | null {
+  if (!['확인필요', '모름', '선결제'].includes(d.status)) return null;
+  const n = String(d.note || '');
+  if (d.status === '선결제') return '선결제';
+  if (d.confirmed_at && n.startsWith('사장님')) return '나중에';
+  if (/주문이 엑셀·앱에 없어요/.test(n)) return '주문없음';
+  if (/이름의 주문이 없어요/.test(n)) return '누구돈';
+  if (/금액이 안 맞아요/.test(n)) return '금액';
+  if (/조합이/.test(n)) return '고르기';
+  if (/이미 다른 입금/.test(n)) return '두번';
+  return '기타';
+}
+/** 메모에 적힌 날짜('11-12 주문이 …', '적힌 날짜 11-18') → 그 날 표로 가는 날짜 */
+function noteDate(d: Dep): string | null {
+  const m = String(d.note || '').match(/(\d{2})-(\d{2}) 주문이|적힌 날짜 (\d{2})-(\d{2})/);
+  if (!m) return null;
+  const mo = m[1] || m[3], dd = m[2] || m[4];
+  return `${kst(d.deposited_at).slice(0, 4)}-${mo}-${dd}`;
+}
+
 const won = (n: number) => `${(n || 0).toLocaleString('ko-KR')}원`;
 const kst = (iso: string) => new Date(new Date(iso).getTime() + 9 * 3600e3).toISOString();
 const when = (iso: string) => { const t = kst(iso); return `${Number(t.slice(5, 7))}/${Number(t.slice(8, 10))} ${t.slice(11, 16)}`; };
@@ -142,15 +175,21 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
         {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
         {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
       </div>
-      <p className="mb-2 text-[11px] text-stone-500 leading-relaxed">
-        <span className="px-1 bg-emerald-200 rounded">초록 ✓</span> 입금확인 ·{' '}
-        <span className="px-1 border border-stone-300 rounded text-rose-700">흰 칸 빨간 이름</span> 미입금 ·{' '}
-        <span className="px-1 bg-violet-100 rounded">보라</span> 선결제에서 뺌 ·{' '}
-        <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드 ·{' '}
-        <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).{' '}
-<b>이름</b>을 누르면 입금확인이 바로 켜지고 꺼집니다. 이름 칸 <b>오른쪽 끝 ▸</b>를 누르면 판이 열립니다 — 선결제 충전·빼기, 남은 팩, 택배비, 정보 넣기.
-        {' '}배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배.
-      </p>
+      {/* 색 뜻 + 누르는 법 — 짧게 두 줄 (사장님: "인간이 알아보기 쉽게") */}
+      <div className="mb-2 space-y-1">
+        <div className="flex gap-1.5 flex-wrap text-[11px]">
+          <span className="px-1.5 rounded bg-emerald-200 text-emerald-900 font-bold">✓ 입금확인</span>
+          <span className="px-1.5 rounded border border-stone-300 text-rose-700 font-bold">빨간 이름 = 미입금</span>
+          <span className="px-1.5 rounded bg-violet-100 text-violet-800 font-bold">✓ 선결제에서 뺌</span>
+          <span className="px-1.5 rounded bg-sky-100 text-sky-800 font-bold">오픈월드</span>
+          <span className="px-1.5 rounded bg-orange-100 text-orange-800 font-bold">후불</span>
+          <span className="px-1.5 rounded bg-stone-100 text-stone-600 font-bold">회색 = 대조 안 함</span>
+          <span className="px-1.5 rounded border border-red-200 text-red-600 font-bold">받을 = 선결제 마이너스</span>
+        </div>
+        <p className="text-[12px] text-stone-600">
+          <b>이름</b> 누르기 = 입금확인 켜고 끄기 · <b>▸</b> = 선결제·택배비·엄마 이름·정보 넣기 · <b>배송 칸</b> 누르기 = 빈칸→택→내 · 단계 아래 <b>＋이름</b> = 종이에 적은 아이 넣기
+        </p>
+      </div>
 
       {openOrder && (
         <PrepaidPanel key={openOrder.id} o={openOrder} cust={custOf(openOrder)}
@@ -716,35 +755,42 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
   onPatch?: (orderId: string | null, p: Patch) => void;
   onAdded?: (row: any) => void; // 표 단계 아래 추가 줄로 넣은 주문 — 조리표 탭과 같은 주문 목록에 꽂는다
 }) {
-  const [showBank, setShowBank] = useState(false);
   const [deps, setDeps] = useState<Dep[] | null>(null);
   const [orders, setOrders] = useState<Record<string, O>>({});
   const [unpaid, setUnpaid] = useState<O[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [show, setShow] = useState<Record<string, boolean>>({ 확인필요: true, 모름: true, 선결제: true, 자동확인: false, 수동확인: false, 무관: false });
   const fileRef = useRef<HTMLInputElement>(null);
 
-  async function load() {
+  async function load(): Promise<Dep[] | null> {
     setErr(null);
     try {
       const d = await fetch('/api/admin/deposits').then(r => r.json());
-      if (!d.ok) { setErr(d.error || '불러오지 못했어요'); return; }
+      if (!d.ok) { setErr(d.error || '불러오지 못했어요'); return null; }
       setDeps(d.deposits);
       setOrders(Object.fromEntries((d.orders || []).map((o: O) => [o.id, o])));
       setUnpaid(d.unpaid || []);
-    } catch (e: any) { setErr(e?.message || '불러오지 못했어요'); }
+      return d.deposits;
+    } catch (e: any) { setErr(e?.message || '불러오지 못했어요'); return null; }
   }
   useEffect(() => { load(); }, []);
 
+  // 맞춘 결과를 사람 말로 — "새로 맞은 것 몇 건, 남은 것은 왜 남았는지"
+  const leftover = (list: Dep[] | null) => {
+    if (!list) return '';
+    const c: Partial<Record<Reason, number>> = {};
+    for (const d of list) { const r = reasonOf(d); if (r) c[r] = (c[r] || 0) + 1; }
+    const parts = REASONS.filter(r => c[r.key]).map(r => `${r.title} ${c[r.key]}건`);
+    return parts.length ? ` 남은 입금: ${parts.join(' · ')}.` : ' 남은 입금이 없어요.';
+  };
   async function upload(f: File) {
     setBusy(true); setMsg(null);
     const fd = new FormData(); fd.append('file', f);
     try {
       const d = await fetch('/api/admin/deposits', { method: 'POST', body: fd }).then(r => r.json());
-      setMsg(d.ok ? `파일 입금 ${d.inFile}건 중 새로 ${d.added}건 · ${d.checked}건 맞춰봄 · 자동확인 ${d.auto}건` : `못 올렸어요: ${d.error}`);
-      await load();
+      const list = await load();
+      setMsg(d.ok ? `파일의 입금 ${d.inFile}건 중 새 입금 ${d.added}건을 넣었어요. 자동으로 맞은 입금 ${d.auto}건.${leftover(list)}` : `못 올렸어요: ${d.error}`);
     } catch (e: any) { setMsg(`못 올렸어요: ${e?.message || '네트워크 오류'}`); }
     setBusy(false);
     if (fileRef.current) fileRef.current.value = '';
@@ -753,8 +799,8 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
     setBusy(true); setMsg(null);
     const fd = new FormData(); fd.append('rematch', '1');
     const d = await fetch('/api/admin/deposits', { method: 'POST', body: fd }).then(r => r.json()).catch(() => ({ ok: false }));
-    setMsg(d.ok ? `${d.checked}건 다시 맞춰봄 · 새로 자동확인 ${d.auto}건` : `실패: ${d.error || ''}`);
-    await load(); setBusy(false);
+    const list = await load(); setBusy(false);
+    setMsg(d.ok ? `새로 맞은 입금 ${d.auto}건.${leftover(list)}${d.auto ? '' : ' 대부분 앱에 주문이 없거나 누구 돈인지 몰라서예요 — 아래에서 하나씩 정리해 주세요.'}` : `실패: ${d.error || ''}`);
   }
 
   // 입금이 없는 주문을 사장님이 직접 확인 — 카드결제·현금·선결제 차감 등. 근거 문구가 주문에 남는다.
@@ -771,6 +817,15 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
     for (const d of deps || []) (g[d.status] ||= []).push(d);
     return g;
   }, [deps]);
+  // 남은 입금(확인필요·모름·선결제)을 할 일별로
+  const byReason = useMemo(() => {
+    const g: Partial<Record<Reason, Dep[]>> = {};
+    for (const d of deps || []) { const r = reasonOf(d); if (r) (g[r] ||= []).push(d); }
+    return g;
+  }, [deps]);
+  const [openReason, setOpenReason] = useState<Record<string, boolean>>({});
+  const [showHistory, setShowHistory] = useState<Record<string, boolean>>({});
+  const [showUnpaidList, setShowUnpaidList] = useState(false);
 
   function toggleFromSheet(o: SheetOrder) {
     if (!onTogglePaid) return;
@@ -779,108 +834,151 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
     if (s === 'prepaid' && !confirm(`${o.baby_name} — 선결제 주문이에요. 입금확인으로 표시할까요?`)) return;
     onTogglePaid(o);
   }
-  const need = (groups['확인필요'] || []).length + (groups['모름'] || []).length;
+  // 아직 정리 안 된 입금 — 선결제(충전 확인)는 빼고 센다
+  const need = REASONS.filter(r => r.key !== '선결제').reduce((a, r) => a + (byReason[r.key] || []).length, 0);
   // 선결제보다 더 먹은 손님 — 입금 요청 톡 보낼 명단 (사장님 2026-11-14)
   // 여러 단계 선결제 손님은 묶음 하나만 마이너스여도 (예: 완료기 230 −3, 후기 230 +12)
   // 택배비 선결제(prepaid_ship)가 마이너스여도 — '택배비' 묶음으로 같이 보인다
   const minus = customers.map(c => ({ c, neg: [...partsOf(c).filter(p => p.balance < 0), ...((c.prepaid_ship || 0) < 0 ? [{ kind: '택배비(회)', balance: c.prepaid_ship as number }] : [])] })).filter(x => x.neg.length > 0)
     .sort((a, b) => Math.min(...a.neg.map(p => p.balance)) - Math.min(...b.neg.map(p => p.balance)) || String(a.c.baby_name).localeCompare(String(b.c.baby_name), 'ko'));
+  // 이 날 미입금 (요약 줄)
+  const dayUnpaid = dayOrders.filter(o => payState(o) === 'unpaid' && !customers.find(c => (o.customer_id && c.id === o.customer_id))?.postpaid);
+  const dayUnpaidWon = dayUnpaid.reduce((a, o) => a + (o.total_price || 0) + (o.shipping_fee || 0), 0);
+  const go = (id: string) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
 
+  const tile = 'flex-1 min-w-[140px] text-left rounded-xl border px-3 py-2 transition hover:shadow-sm';
   return (
     <div className="space-y-4">
+      {/* ── 한눈에: 지금 챙길 것 네 가지 ── */}
+      <div className="flex gap-2 flex-wrap">
+        {date && (
+          <button onClick={() => go('pay-sheet')} className={`${tile} bg-white border-stone-200`}>
+            <p className="text-[11px] text-stone-500">{md(date)} 미입금</p>
+            <p className={`text-[17px] font-black ${dayUnpaid.length ? 'text-rose-600' : 'text-emerald-700'}`}>{dayUnpaid.length ? `${dayUnpaid.length}건 · ${won(dayUnpaidWon)}` : '없음'}</p>
+          </button>
+        )}
+        <button onClick={() => go('bank')} className={`${tile} bg-white border-stone-200`}>
+          <p className="text-[11px] text-stone-500">정리할 은행 입금</p>
+          <p className={`text-[17px] font-black ${need ? 'text-amber-700' : 'text-emerald-700'}`}>{deps ? (need ? `${need}건` : '없음') : '…'}</p>
+        </button>
+        <button onClick={() => go('minus')} className={`${tile} bg-white border-stone-200`}>
+          <p className="text-[11px] text-stone-500">입금 요청 (선결제 마이너스)</p>
+          <p className={`text-[17px] font-black ${minus.length ? 'text-red-600' : 'text-emerald-700'}`}>{minus.length ? `${minus.length}명` : '없음'}</p>
+        </button>
+      </div>
+
       <PostpaidBox onSettled={(ids, note) => ids.forEach(id => onPatch?.(id, { order: { paid: true, paid_note: note } }))} />
+
       {minus.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <p className="text-[13px] font-black text-red-700">입금 요청 — 선결제 마이너스 {minus.length}명</p>
+        <div id="minus" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 scroll-mt-4">
+          <p className="text-[13px] font-black text-red-700">입금 요청 — 선결제보다 더 드신 {minus.length}명</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {minus.map(({ c, neg }) => (
               <span key={c.id} className="px-2 py-0.5 rounded-lg bg-white border border-red-200 text-[12px]">
                 <b className="text-stone-900">{c.baby_name}</b>
                 {neg.map(p => (
-                  <span key={p.kind}><b className="ml-1 text-red-600">{p.balance}팩</b><span className="ml-0.5 text-[11px] text-stone-400">{p.kind}</span></span>
+                  <span key={p.kind}><b className="ml-1 text-red-600">{p.balance}{p.kind.includes('택배') ? '회' : '팩'}</b><span className="ml-0.5 text-[11px] text-stone-400">{shortKind(p.kind)}</span></span>
                 ))}
                 {isSplit(c) && <span className="ml-1 text-[11px] text-stone-400">(다른 묶음 {partsOf(c).filter(p => p.balance >= 0).map(p => `${shortKind(p.kind)} ${p.balance}`).join(' · ')})</span>}
                 {c.phone && <span className="ml-1 text-[11px] text-stone-500">{c.phone.replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3')}</span>}
               </span>
             ))}
           </div>
-          <p className="mt-1 text-[11px] text-stone-500">입금 체크판에서도 이름 옆에 빨간 숫자(−7)로 보입니다. 입금받으면 이름을 눌러 충전하세요.</p>
+          <p className="mt-1 text-[11px] text-stone-500">입금 표 오른쪽 '받을' 칸에도 보여요. 돈을 받으면 이름 칸 ▸ 를 눌러 충전하세요.</p>
         </div>
       )}
-      {date && <PaySheet orders={dayOrders} date={date} customers={customers} onToggle={toggleFromSheet}
-        onPatch={(id, p) => onPatch?.(id, p)} onAdded={onAdded} />}
 
-      <button onClick={() => setShowBank(v => !v)}
-        className="w-full flex justify-between items-center px-4 py-3 bg-white rounded-xl border border-stone-200 text-sm font-bold text-stone-700">
-        <span>은행 입금 줄 하나씩 보기{deps ? ` · 확인필요·모름 ${need}건` : ''}</span><span>{showBank ? '∧' : '∨'}</span>
-      </button>
+      {date && <div id="pay-sheet" className="scroll-mt-4"><PaySheet orders={dayOrders} date={date} customers={customers} onToggle={toggleFromSheet}
+        onPatch={(id, p) => onPatch?.(id, p)} onAdded={onAdded} /></div>}
 
-      {showBank && <>
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
+      {/* ── 은행 입금 — 올리기·다시 맞춰보기는 늘 보이게, 남은 입금은 할 일별로 ── */}
+      <div id="bank" className="bg-white rounded-xl border border-stone-200 p-4 space-y-3 scroll-mt-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <label className={`px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-bold cursor-pointer ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
-            은행 거래내역 올리기 (.xls)
+          <p className="text-base font-black text-stone-900 mr-1">은행 입금</p>
+          <label className={`px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-[13px] font-bold cursor-pointer ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
+            거래내역 파일 올리기
             <input ref={fileRef} type="file" accept=".xls,.xlsx" className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); }} />
           </label>
           <button onClick={rematch} disabled={busy}
-            className="px-3 py-2 rounded-lg border border-stone-300 text-stone-700 text-sm font-bold disabled:opacity-40">다시 맞춰보기</button>
-          {busy && <span className="text-xs text-stone-400">처리 중…</span>}
+            className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white text-stone-700 text-[13px] font-bold disabled:opacity-40">다시 맞춰보기</button>
+          {busy && <span className="text-xs text-stone-400">맞춰보는 중…</span>}
         </div>
-        <p className="mt-2 text-[11px] text-stone-500 leading-relaxed">
-          국민은행 '거래내역조회' 엑셀 파일을 그대로 올리시면 됩니다. 같은 입금은 몇 번 올려도 한 번만 들어가요.
-          자동확인은 <b>이름·날짜·금액이 딱 맞을 때만</b> 해요. 나머지는 아래에서 골라 주세요.
+        <p className="text-[11px] text-stone-500 leading-relaxed">
+          국민은행 &lsquo;거래내역조회&rsquo; 엑셀을 그대로 올리세요(같은 입금은 몇 번 올려도 한 번만). 이름·날짜·금액이 딱 맞으면 자동으로 입금확인해요.
+          주문을 새로 넣었거나 엄마 이름을 넣었으면 <b>[다시 맞춰보기]</b>.
         </p>
-        {msg && <p className="mt-2 text-xs text-emerald-700">{msg}</p>}
-        {deps && (
-          <div className="mt-3 flex gap-1.5 flex-wrap">
-            {STATUS_ORDER.map(s => (
-              <button key={s} onClick={() => setShow(p => ({ ...p, [s]: !p[s] }))}
-                className={`text-xs px-2.5 py-1 rounded-full border font-bold ${STATUS_CLS[s]} ${show[s] ? '' : 'opacity-50'}`}>
-                {s} {(groups[s] || []).length}
+        {msg && <p className="text-[13px] font-bold text-stone-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{msg}</p>}
+        {err && <p className="text-sm text-red-600">불러오지 못했어요: {err} <button onClick={load} className="underline">다시</button></p>}
+        {!deps && !err && <p className="text-sm text-stone-400">불러오는 중…</p>}
+        {deps && deps.length === 0 && <p className="text-sm text-stone-400">아직 올린 입금내역이 없어요</p>}
+
+        {deps && REASONS.filter(r => (byReason[r.key] || []).length).map(r => {
+          const list = byReason[r.key] || [];
+          const isOpen = openReason[r.key] ?? (r.key !== '선결제' && r.key !== '나중에');
+          return (
+            <section key={r.key} className={`border-l-4 ${r.cls} pl-3`}>
+              <button onClick={() => setOpenReason(p => ({ ...p, [r.key]: !isOpen }))} className="w-full flex items-baseline gap-2 text-left">
+                <span className="text-[14px] font-black text-stone-900">{r.title}</span>
+                <span className="text-[12px] text-stone-500">{list.length}건 · {won(list.reduce((a, d) => a + d.amount, 0))}</span>
+                <span className="ml-auto text-stone-400 text-[12px]">{isOpen ? '접기 ∧' : '펼치기 ∨'}</span>
               </button>
+              <p className="text-[11px] text-stone-500 mb-1.5">{r.todo}</p>
+              {isOpen && <div className="space-y-2">{list.map(d => <DepositRow key={d.id} d={d} orders={orders} onDone={load} />)}</div>}
+            </section>
+          );
+        })}
+        {deps && need === 0 && deps.length > 0 && <p className="text-[13px] font-bold text-emerald-700">정리할 은행 입금이 없어요</p>}
+
+        {/* 지난 기록 — 자동확인·사장님 확인·손님 돈 아님 (평소엔 접어 둔다) */}
+        {deps && deps.length > 0 && (
+          <div className="pt-2 border-t border-stone-100">
+            <p className="text-[12px] font-bold text-stone-500 mb-1">지난 기록</p>
+            <div className="flex gap-1.5 flex-wrap">
+              {(['자동확인', '수동확인', '무관'] as Dep['status'][]).map(s => (
+                <button key={s} onClick={() => setShowHistory(p => ({ ...p, [s]: !p[s] }))}
+                  className={`text-xs px-2.5 py-1 rounded-full border font-bold ${STATUS_CLS[s]} ${showHistory[s] ? '' : 'opacity-60'}`}>
+                  {s === '수동확인' ? '사장님 확인' : s === '무관' ? '손님 돈 아님' : s} {(groups[s] || []).length}
+                </button>
+              ))}
+            </div>
+            {(['자동확인', '수동확인', '무관'] as Dep['status'][]).filter(s => showHistory[s]).map(s => (
+              <div key={s} className="mt-2 space-y-2">
+                <p className="text-[11px] text-stone-400">{STATUS_HELP[s]}</p>
+                {(groups[s] || []).map(d => <DepositRow key={d.id} d={d} orders={orders} onDone={load} />)}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 입금내역 기간 안인데 돈이 안 들어온 주문 */}
+        {deps && deps.length > 0 && (
+          <div className="pt-2 border-t border-stone-100">
+            <button onClick={() => setShowUnpaidList(v => !v)} className="w-full flex items-baseline gap-2 text-left">
+              <span className="text-[13px] font-black text-stone-800">돈이 안 들어온 주문</span>
+              <span className="text-[12px] text-stone-500">{unpaid.length}건 · {won(unpaid.reduce((a, o) => a + due(o), 0))}</span>
+              <span className="ml-auto text-stone-400 text-[12px]">{showUnpaidList ? '접기 ∧' : '펼치기 ∨'}</span>
+            </button>
+            <p className="text-[11px] text-stone-500">입금내역 기간 안 주문인데 맞는 입금이 없어요 — 선결제 손님이거나, 다른 이름으로 보냈거나, 아직 안 보냈을 수 있어요.</p>
+            {showUnpaidList && (unpaid.length === 0 ? <p className="text-xs text-stone-400 mt-1">없어요</p> : (
+              <div className="mt-1.5 bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
+                {unpaid.map(o => (
+                  <div key={o.id} className="px-3 py-1.5 text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <a href={`/admin?date=${o.delivery_date}`} className="w-10 font-bold text-sky-700 underline" title="그 날 표로 가기">{md(o.delivery_date)}</a>
+                    <span className="font-bold text-stone-900 w-20 truncate">{o.baby_name}</span>
+                    <span className="text-stone-500 flex-1 min-w-0 truncate">{what(o)} {o.total_qty}{String(o.stage || '').startsWith('반찬') ? '세트' : '팩'}{o.delivery_method && o.delivery_method !== '직배송' ? ' · 택배' : ''}</span>
+                    <span className="font-bold text-stone-700 whitespace-nowrap">{won(due(o))}</span>
+                    <span className="flex gap-1.5 ml-auto">
+                      <button onClick={() => markPaid(o, '선결제 차감')} className="px-2 py-0.5 rounded border border-violet-200 text-violet-700 whitespace-nowrap">선결제분</button>
+                      <button onClick={() => markPaid(o, '')} className="px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-bold whitespace-nowrap">돈 받았어요</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
             ))}
           </div>
         )}
       </div>
-
-      {err && <p className="text-sm text-red-600">불러오지 못했어요: {err} <button onClick={load} className="underline">다시</button></p>}
-      {!deps && !err && <p className="text-sm text-stone-400">불러오는 중…</p>}
-      {deps && deps.length === 0 && <p className="text-sm text-stone-400">아직 올린 입금내역이 없어요</p>}
-
-      {deps && STATUS_ORDER.filter(s => show[s] && (groups[s] || []).length).map(s => (
-        <section key={s}>
-          <h3 className="text-sm font-bold text-stone-700 mb-1">{s} <span className="font-normal text-stone-400">{(groups[s] || []).length}건 · {won((groups[s] || []).reduce((a, d) => a + d.amount, 0))}</span></h3>
-          <p className="text-[11px] text-stone-400 mb-2">{STATUS_HELP[s]}</p>
-          <div className="space-y-2">
-            {(groups[s] || []).map(d => <DepositRow key={d.id} d={d} orders={orders} onDone={load} />)}
-          </div>
-        </section>
-      ))}
-
-      {deps && deps.length > 0 && (
-        <section>
-          <h3 className="text-sm font-bold text-stone-700 mb-1">입금을 못 찾은 주문 <span className="font-normal text-stone-400">{unpaid.length}건</span></h3>
-          <p className="text-[11px] text-stone-400 mb-2">입금내역 기간 안의 주문인데 짝이 되는 입금이 없어요. 선결제 손님이거나, 이름을 다르게 보냈거나, 아직 안 보냈을 수 있어요.</p>
-          {unpaid.length === 0 ? <p className="text-xs text-stone-400">없어요</p> : (
-            <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
-              {unpaid.map(o => (
-                <div key={o.id} className="px-3 py-1.5 text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="w-10 font-bold text-stone-700">{md(o.delivery_date)}</span>
-                  <span className="font-bold text-stone-900 w-20 truncate">{o.baby_name}</span>
-                  <span className="text-stone-500 flex-1 min-w-0 truncate">{what(o)} {o.total_qty}{String(o.stage || '').startsWith('반찬') ? '세트' : '팩'}{o.delivery_method && o.delivery_method !== '직배송' ? ' · 택배' : ''}</span>
-                  <span className="font-bold text-stone-700 whitespace-nowrap">{won(due(o))}</span>
-                  <span className="flex gap-1.5 ml-auto">
-                    <button onClick={() => markPaid(o, '선결제 차감')} className="px-2 py-0.5 rounded border border-violet-200 text-violet-700 whitespace-nowrap">선결제분</button>
-                    <button onClick={() => markPaid(o, '')} className="px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-bold whitespace-nowrap">직접 확인</button>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-      </>}
     </div>
   );
 }
@@ -942,18 +1040,23 @@ function DepositRow({ d, orders, onDone }: { d: Dep; orders: Record<string, O>; 
 
   const canPick = d.status !== '자동확인' && d.status !== '수동확인';
   return (
-    <div className="bg-white rounded-xl border border-stone-200 p-3">
-      <div className="flex items-start gap-2">
-        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold shrink-0 ${STATUS_CLS[d.status]}`}>{d.status}</span>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm">
-            <span className="font-bold text-stone-900">{d.depositor}</span>
-            <span className="ml-2 font-bold text-amber-700">{won(d.amount)}</span>
-            <span className="ml-2 text-xs text-stone-400">{when(d.deposited_at)}</span>
-          </div>
-          {d.note && <p className="text-[11px] text-stone-500 mt-0.5 leading-relaxed">{d.note}</p>}
-        </div>
+    <div className="bg-stone-50/60 rounded-xl border border-stone-200 p-3">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-[15px] font-black text-stone-900">{d.depositor.replace(/[\s　]+/g, ' ')}</span>
+        <span className="text-[15px] font-black text-amber-700">{won(d.amount)}</span>
+        <span className="text-xs text-stone-500">{when(d.deposited_at)} 입금</span>
+        {noteDate(d) && reasonOf(d) === '주문없음' && (
+          <a href={`/admin?date=${noteDate(d)}`} className="ml-auto text-[12px] font-bold text-sky-700 underline" title="그 날 입금 표로 — 단계 아래 ＋이름으로 주문을 넣으세요">{md(noteDate(d)!)} 표로 가기 →</a>
+        )}
       </div>
+      {/* 묶음 제목이 이미 말하는 문장은 빼고, 이 입금만의 내용(금액 차이·다른 날 주문 등)만 */}
+      {(() => {
+        const n = String(d.note || '')
+          .replace(/\d{2}-\d{2} 주문이 엑셀·앱에 없어요 \(수량을 안 적었거나, 미리 보낸 돈일 수 있어요\)( · )?/, '')
+          .replace(/'[^']*' 이름의 주문이 없어요 \(엄마·아빠 이름일 수 있어요\)( · )?/, '')
+          .replace(/^가까운 날 입금 안 된 주문이 없어요( · )?/, '').trim();
+        return n ? <p className="text-[12px] text-stone-600 mt-0.5 leading-relaxed">{n}</p> : null;
+      })()}
 
       {linked.length > 0 && <div className="mt-2 space-y-0.5">{linked.map(o => orderLine(o, 'linked'))}</div>}
 

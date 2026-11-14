@@ -72,11 +72,25 @@ export function parseDepositor(raw: string, depositedAt: string): { name: string
       take(m, Number(m?.[1]), Number(m?.[2]));
     }
   }
+  // '11월선결제', '월4회' 같은 붙은 말은 이름이 아니다 (2026-11-14 '김하윤(11월선결제', '도영도현월4회' 가 이름으로 읽혔다)
+  s = s.replace(/\d{1,2}월(?!\d)/g, '').replace(/\d+회/g, '').replace(/선결제|선불|후불|정기/g, '');
   let name = s.replace(/[^가-힣]/g, '')
     .replace(/^일(?=[가-힣]{2,})/, '')
     .replace(/(아기|아가|반찬|이유식|조리|입금)+$/, '');
   return { name, hint, nonCustomer: false };
 }
+
+/** 이름 앞뒤에 붙은 요일('화금 김유건', '도영도현월') — 떼어 낸 이름과 요일들. 요일이 없으면 null */
+const WD = '일월화수목금토';
+export function splitWeekdays(name: string): { name: string; days: number[] } | null {
+  const m = name.match(/^([월화수목금토]{1,3})([가-힣]{2,})$/) || name.match(/^([가-힣]{2,}?)([월화수목금토]{1,3})$/);
+  if (!m) return null;
+  const front = /^[월화수목금토]+$/.test(m[1]) && m[1].length <= 3 && m[2].length >= 2;
+  const daysTxt = front ? m[1] : m[2];
+  const rest = front ? m[2] : m[1];
+  return { name: rest, days: [...daysTxt].map(c => WD.indexOf(c)) };
+}
+const dow = (d: string) => new Date(d + 'T00:00:00Z').getUTCDay();
 
 /** 주문 하나가 받아야 할 돈 (상품값 + 배송비) */
 const due = (o: MOrder) => (o.total_price || 0) + (o.shipping_fee || 0);
@@ -108,7 +122,7 @@ export function matchDeposits(
                        (다른 날 같은 금액으로 맞추면 틀리기 쉽다 — 실제로 10/26 주문에 붙은 적 있음).
       날짜 없는 입금: 입금일 앞뒤 7일.
   */
-  function solve(amount: number, depDate: string, hint: string | null, cands: MOrder[]) {
+  function solve(amount: number, depDate: string, hint: string | null, cands: MOrder[], days?: number[] | null) {
     const pool = cands
       .filter(o => open(o) && Math.abs(dayDiff(o.delivery_date, hint || depDate)) <= 7)
       .sort((a, b) => Math.abs(dayDiff(a.delivery_date, hint || depDate)) - Math.abs(dayDiff(b.delivery_date, hint || depDate)))
@@ -123,12 +137,21 @@ export function matchDeposits(
         if (idx.length === size) {
           const pick = idx.map(i => pool[i]);
           if (hintHas && !pick.some(o => o.delivery_date === hint)) return;
+          // '화금' 처럼 요일을 여럿 적었으면 그 요일이 다 들어간 조합만
+          if (days && days.length > 1 && !days.every(w => pick.some(o => dow(o.delivery_date) === w))) return;
           if (pick.reduce((s, o) => s + due(o), 0) === amount) found.push({ ids: pick.map(o => o.id) });
           return;
         }
         for (let i = start; i < n; i++) { idx.push(i); rec(i + 1); idx.pop(); }
       };
       rec(0);
+    }
+    // 요일을 적은 입금 — 조합이 여럿이면 입금일에 가장 가까운 것 하나 (같으면 못 고른다)
+    if (days && found.length > 1) {
+      const dist = (f: { ids: string[] }) => f.ids.reduce((s, id) => s + Math.abs(dayDiff(byId[id].delivery_date, depDate)), 0);
+      const best = Math.min(...found.map(dist));
+      const top = found.filter(f => dist(f) === best);
+      if (top.length === 1) return { pool, found: top, hintHas, picked: '적힌 요일 주문 중 입금일에 가장 가까운 것' };
     }
     // 날짜 없이 같은 금액 주문이 여러 날 있으면 — 입금 뒤 7일 안에 오는 주문 하나뿐이면 그걸로 본다
     if (!hint && found.length > 1) {
@@ -145,10 +168,19 @@ export function matchDeposits(
     const p = parseDepositor(d.depositor, d.deposited_at);
     const base = { id: d.id, order_ids: [] as string[], suggested_ids: [] as string[], customer_phone: null as string | null };
     if (p.nonCustomer) { results.push({ ...base, status: '무관', note: '카드·플랫폼 정산으로 보임 — 손님 입금 아님' }); continue; }
-    const cands = candidatesFor(p.name);
+    let cands = candidatesFor(p.name);
+    // 요일이 붙은 이름('화금김유건') — 떼어서 다시 찾고, 그 요일 주문만 본다
+    let days: number[] | null = null;
+    if (!cands.length) {
+      const sw = splitWeekdays(p.name);
+      const c2 = sw ? candidatesFor(sw.name) : [];
+      if (sw && c2.length) { cands = c2; days = sw.days; p.name = sw.name; }
+    }
+    const byDays = days ? cands.filter(o => days!.includes(dow(o.delivery_date))) : cands;
     const phones = [...new Set(cands.map(o => o.customer_phone).filter(Boolean))];
     const sameName = phones.length > 1 ? ` · '${p.name}' 손님이 ${phones.length}명(동명이인 가능)` : '';
-    const prepaid = PREPAID_PRICES[d.amount];
+    // 할인표 금액이거나, 입금자 칸에 '선결제'·'N회'를 적었으면 선결제로 본다 (반찬 4회 130,000원 등)
+    const prepaid = PREPAID_PRICES[d.amount] || (/선결제|\d+회/.test(d.depositor) ? '입금자 칸에 선결제·회수 표시' : undefined);
 
     if (cands.length === 0) {
       results.push({
@@ -157,7 +189,7 @@ export function matchDeposits(
       });
       continue;
     }
-    const sol = solve(d.amount, depDate, p.hint, cands);
+    const sol = solve(d.amount, depDate, p.hint, byDays.length ? byDays : cands, byDays.length ? days : null);
     const { pool, found } = sol;
     if (found.length === 1) {
       const ids = found[0].ids;
