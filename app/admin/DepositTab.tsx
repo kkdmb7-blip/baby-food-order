@@ -1,5 +1,8 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import CookingTable, { type PayState } from './CookingTable';
+import { buildCookingSheet } from '@/lib/cookingSheet';
+import { isOpenworld } from '@/lib/openworld';
 
 /*
   입금 대조 화면
@@ -45,7 +48,56 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const due = (o: O) => (o.total_price || 0) + (o.shipping_fee || 0);
 const what = (o: O) => String(o.stage || '').startsWith('반찬') ? '반찬' : `${String(o.stage || '').replace('단계', '')} ${o.volume || ''}`.trim();
 
-export default function DepositTab() {
+/*
+  조리표로 입금 체크 (2026-11-14 사장님: "조리표대로 보여줘, 그게 확인이 쉬워. 조리표랑 똑같이 해서 체크만")
+    맨 위 날짜(머리말)의 조리표를 그대로 그리고, 이름 칸 색으로 입금 상태를 보인다.
+    이름을 누르면 입금확인을 켜고 끈다. 은행 입금 줄 목록은 그 아래에 접어 둔다.
+*/
+type SheetOrder = Parameters<typeof buildCookingSheet>[0][number] & {
+  paid?: boolean; paid_note?: string | null; order_type?: string | null; total_price?: number; shipping_fee?: number;
+};
+const payState = (o: SheetOrder): PayState =>
+  o.paid ? 'paid' : isOpenworld(o.paid_note) ? 'openworld' : o.order_type === '선결제' ? 'prepaid' : o.paid_note ? 'skip' : 'unpaid';
+
+function PaySheet({ orders, date, onToggle }: { orders: SheetOrder[]; date: string; onToggle: (o: SheetOrder) => void }) {
+  const sheet = buildCookingSheet(orders as any, date);
+  const byId = new Map(orders.map(o => [o.id, o]));
+  const count: Record<PayState, number> = { paid: 0, unpaid: 0, openworld: 0, prepaid: 0, skip: 0 };
+  let unpaidWon = 0;
+  for (const o of orders) {
+    const s = payState(o); count[s]++;
+    if (s === 'unpaid') unpaidWon += (o.total_price || 0) + (o.shipping_fee || 0);
+  }
+  const dow = '일월화수목금토'[new Date(date + 'T00:00:00Z').getUTCDay()];
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 p-4 overflow-x-auto">
+      <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap mb-2 text-[13px]">
+        <span className="text-base font-black text-stone-900">입금 {Number(date.slice(5, 7))}/{Number(date.slice(8, 10))}({dow})</span>
+        <span className="font-bold text-emerald-700">✓ 확인 {count.paid}</span>
+        <span className="font-bold text-rose-700">미입금 {count.unpaid}{unpaidWon ? ` · ${won(unpaidWon)}` : ''}</span>
+        {count.openworld > 0 && <span className="font-bold text-sky-800">오픈월드 {count.openworld}</span>}
+        {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
+        {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
+      </div>
+      <p className="mb-2 text-[11px] text-stone-500 leading-relaxed">
+        <span className="px-1 bg-emerald-200 rounded">초록 ✓</span> 입금확인 ·{' '}
+        <span className="px-1 border border-stone-300 rounded text-rose-700">흰 칸 빨간 이름</span> 미입금 ·{' '}
+        <span className="px-1 bg-sky-100 rounded">하늘</span> 오픈월드(나중에 한꺼번에 정산) ·{' '}
+        <span className="px-1 bg-violet-100 rounded">보라</span> 선결제 ·{' '}
+        <span className="px-1 bg-stone-100 rounded">회색</span> 엑셀 시절(대조 못 함).
+        이름을 누르면 입금확인이 켜지고 꺼집니다. 배송 칸 <b>내</b> = 다음 날 것과 합쳐 택배 — 돈도 두 날 것을 합쳐 보내실 수 있어요.
+      </p>
+      {sheet.people === 0 && sheet.banchan.length === 0
+        ? <p className="text-center text-stone-400 text-sm py-6">이 날짜에 주문이 없어요 — 맨 위에서 날짜를 바꿔 보세요</p>
+        : <CookingTable sheet={sheet} pay={{ state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; }, onToggle: id => { const o = byId.get(id); if (o) onToggle(o); } }} />}
+    </div>
+  );
+}
+
+export default function DepositTab({ dayOrders = [], date, onTogglePaid }: {
+  dayOrders?: SheetOrder[]; date?: string; onTogglePaid?: (o: any) => void;
+}) {
+  const [showBank, setShowBank] = useState(false);
   const [deps, setDeps] = useState<Dep[] | null>(null);
   const [orders, setOrders] = useState<Record<string, O>>({});
   const [unpaid, setUnpaid] = useState<O[]>([]);
@@ -101,8 +153,25 @@ export default function DepositTab() {
     return g;
   }, [deps]);
 
+  function toggleFromSheet(o: SheetOrder) {
+    if (!onTogglePaid) return;
+    const s = payState(o);
+    if (s === 'openworld' && !confirm(`${o.baby_name} — 오픈월드 주문이에요(나중에 한꺼번에 정산). 그래도 입금확인으로 바꿀까요?`)) return;
+    if (s === 'prepaid' && !confirm(`${o.baby_name} — 선결제 주문이에요. 입금확인으로 표시할까요?`)) return;
+    onTogglePaid(o);
+  }
+  const need = (groups['확인필요'] || []).length + (groups['모름'] || []).length;
+
   return (
     <div className="space-y-4">
+      {date && <PaySheet orders={dayOrders} date={date} onToggle={toggleFromSheet} />}
+
+      <button onClick={() => setShowBank(v => !v)}
+        className="w-full flex justify-between items-center px-4 py-3 bg-white rounded-xl border border-stone-200 text-sm font-bold text-stone-700">
+        <span>은행 입금 줄 하나씩 보기{deps ? ` · 확인필요·모름 ${need}건` : ''}</span><span>{showBank ? '∧' : '∨'}</span>
+      </button>
+
+      {showBank && <>
       <div className="bg-white rounded-xl border border-stone-200 p-4">
         <div className="flex items-center gap-2 flex-wrap">
           <label className={`px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-bold cursor-pointer ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -167,6 +236,7 @@ export default function DepositTab() {
           )}
         </section>
       )}
+      </>}
     </div>
   );
 }

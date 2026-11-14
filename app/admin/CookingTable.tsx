@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { MENU_TYPES, menuLabel } from '@/lib/supabase';
 import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet, type PersonRow } from '@/lib/cookingSheet';
 
@@ -18,8 +18,17 @@ import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet, type PersonRow } from '@/l
     '미지정'   = 팩수는 있는데 메뉴가 안 정해진 몫
 */
 
-export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
+/** 입금 체크판 — 조리표와 같은 표에 입금 여부만 칠한다 (사장님: "조리표랑 똑같이 해서 체크만") */
+export type PayState = 'paid' | 'unpaid' | 'openworld' | 'prepaid' | 'skip';
+const PAY_BG: Record<PayState, string> = {
+  paid: 'bg-emerald-200', unpaid: 'bg-white text-rose-700', openworld: 'bg-sky-100 text-sky-900',
+  prepaid: 'bg-violet-100 text-violet-900', skip: 'bg-stone-100 text-stone-500',
+};
+
+export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay }: {
   sheet: CookingSheet;
+  /** 입금 체크판으로 쓸 때 — 이름 칸 색이 입금 상태가 되고, 이름을 누르면 입금확인을 켜고 끈다 */
+  pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void };
   /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
   onPick?: (phone: string) => void;
   /** 화면에서만 — 숫자를 칸에서 바로 고친다. 저장되면 부른다 */
@@ -42,7 +51,29 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
       rowCount.set(p.orderId, (rowCount.get(p.orderId) || 0) + 1);
     }
   }
-  const editable = (p: PersonRow) => !!onSaved && (rowCount.get(p.orderId) || 0) <= 1;
+  const editable = (p: PersonRow) => !pay && !!onSaved && (rowCount.get(p.orderId) || 0) <= 1;
+  // 이름 칸 — 입금 체크판이면 입금 상태 색 + 누르면 체크, 아니면 원래대로(여러 단계 색 + 누르면 고치기)
+  const nameCell = (orderId: string, phone: string, color: number | undefined, node: ReactNode, base: string) => {
+    if (pay) {
+      const st = pay.state(orderId);
+      return (
+        <td className={`${base} ${PAY_BG[st]}`}>
+          <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
+            className="w-full text-center hover:underline">
+            {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}{node}
+          </button>
+        </td>
+      );
+    }
+    return (
+      <td className={`${base} ${groupBg(color)}`}>
+        {onPick ? (
+          <button onClick={() => onPick(phone)} title="눌러서 고치기"
+            className="w-full text-center hover:text-amber-700 hover:underline">{node}</button>
+        ) : node}
+      </td>
+    );
+  };
 
   const valueOf = (p: PersonRow, m: string) =>
     draft[p.orderId]?.[m] ?? (p.menus[m] ? String(p.menus[m]) : '');
@@ -161,14 +192,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                   <tr key={`${p.orderId}-${i}`}>
                     {/* 이름은 가운데 — 칸이 좁아 왼쪽에 붙이면 긴 이름과 짧은 이름이 들쭉날쭉해진다 */}
                     {/* 여러 단계를 시킨 사람은 배경색 — 같은 사람은 다른 블록에서도 같은 색이다 */}
-                    <td className={`border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center ${groupBg(p.color)}`}>
-                      {onPick ? (
-                        <button onClick={() => onPick(p.phone)} title="눌러서 고치기"
-                          className="w-full text-center hover:text-amber-700 hover:underline">
-                          {nameNode}
-                        </button>
-                      ) : nameNode}
-                    </td>
+                    {nameCell(p.orderId, p.phone, p.color, nameNode, 'border border-black px-0 py-[2px] text-[13px] font-bold leading-tight break-all text-center')}
                     <td className={`border border-black text-center py-[2px] text-[12px] font-black ${shipCls}`}>{p.ship}</td>
                     {MENU_TYPES.map(m => (
                       <td key={m} className={`border border-black text-center ${editable(p) ? 'p-0' : 'py-[2px]'}`}>
@@ -247,12 +271,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt }: {
                 const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}</>;
                 return (
                 <tr key={i}>
-                  <td className={`border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center ${groupBg(b.color)}`}>
-                    {onPick ? (
-                      <button onClick={() => onPick(b.phone)} title="눌러서 고치기"
-                        className="w-full text-center hover:text-amber-700 hover:underline">{bn}</button>
-                    ) : bn}
-                  </td>
+                  {nameCell(b.orderId, b.phone, b.color, bn, 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}
                   <td className={`border border-black text-center py-[2px] text-[12px] font-black ${b.ship === '픽' ? 'text-emerald-700' : b.ship === '택' ? 'text-stone-900' : 'text-sky-700'}`}>{b.ship}</td>
                   {/* 낱개는 세트가 아니라 개수다 — 이름 옆 '낱개' 꼬리표로 구분한다 */}
                   <td className="border border-black text-center py-[2px] font-black">{b.qty}</td>

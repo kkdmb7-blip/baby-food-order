@@ -1,5 +1,6 @@
 import { getPrice, MIN_ORDER_QTY, shippingFeeFor, type StageType, type PriceTier } from '@/lib/supabase';
 import { notify } from '@/lib/notify';
+import { OPENWORLD_NOTE } from '@/lib/openworld';
 
 // 정기배송 스케줄 → 실제 주문 동기화.
 // ⚠️ 이 로직은 크론(매일 자정)과 신청 저장(/api/my/regular) 두 곳에서 함께 쓴다.
@@ -47,7 +48,7 @@ export async function syncRegularOrders(
   sb: any, enabled: boolean, onlyPhone?: string
 ): Promise<SyncResult> {
   let q = sb.from('baby_food_customers')
-    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code, address, address_detail, door_password')
+    .select('id, baby_name, phone, is_regular, regular_schedule, postal_code, address, address_detail, door_password, openworld')
     .eq('is_regular', true);
   if (onlyPhone) q = q.eq('phone', onlyPhone);
   const { data: regulars, error } = await q;
@@ -202,6 +203,8 @@ export async function syncRegularOrders(
           total_qty: qty, total_price: pricePer * qty, shipping_fee, delivery_date: u.date,
           order_type: '정기', status: '접수', customer_id: c.id,
           postal_code: c.postal_code || null, zone_group: zoneGroup, delivery_method: deliveryMethod,
+          // 오픈월드(후원사업) 손님은 돈을 보내지 않는다 — 미입금으로 세지 않게
+          ...((c as any).openworld ? { paid_note: OPENWORLD_NOTE } : {}),
         });
         if (ie) skipped.push({ phone: mask(c.phone), reason: `저장 실패: ${ie.message}` });
         else created++;

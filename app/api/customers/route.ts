@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseService, PREPAID_UNITS } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
+import { OPENWORLD_NOTE } from '@/lib/openworld';
 
 // GET /api/customers — 고객 목록 (admin)
 //
@@ -50,6 +51,21 @@ export async function PATCH(req: NextRequest) {
     const { error } = await supabaseService().from('baby_food_customers').update({ payer_names: names }).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, payer_names: names });
+  }
+
+  // 오픈월드(후원사업) 표시 — 켜면 이 손님의 아직 입금 안 된 주문을 대조에서 빼고, 끄면 되돌린다.
+  // 입금확인된 주문(paid=true)은 건드리지 않는다.
+  if (id && typeof b.openworld === 'boolean') {
+    const sb = supabaseService();
+    const { data: c, error: e1 } = await sb.from('baby_food_customers').update({ openworld: b.openworld }).eq('id', id).select('id, phone').single();
+    if (e1 || !c) return NextResponse.json({ error: e1?.message || '손님 없음' }, { status: 500 });
+    let q = sb.from('baby_food_orders').update(b.openworld ? { paid_note: OPENWORLD_NOTE } : { paid_note: null })
+      .eq('paid', false).neq('status', '취소');
+    q = c.phone ? q.or(`customer_id.eq.${c.id},customer_phone.eq.${c.phone}`) : q.eq('customer_id', c.id);
+    q = b.openworld ? q.is('paid_note', null) : q.like('paid_note', '오픈월드%');
+    const { data: changed, error: e2 } = await q.select('id');
+    if (e2) return NextResponse.json({ error: e2.message }, { status: 500 });
+    return NextResponse.json({ ok: true, openworld: b.openworld, orders: changed?.length || 0 });
   }
 
   const baby_name = String(b.baby_name || '').trim().slice(0, 20);

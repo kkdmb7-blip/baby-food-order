@@ -53,7 +53,8 @@ export type PersonRow = {
   phone: string;       // 화면에서 '고치기' 를 열 때 쓴다 (한 사람 = 한 연락처)
   name: string;
   pickup: boolean;     // 픽업(방문수령) — 조리는 하지만 배송차에 실으면 안 됨
-  /** 이름 옆 칸에 적는 받는 방법 — '픽' | '택' | '당' | '' (직배송은 기본이라 비워 둔다).
+  /** 이름 옆 칸에 적는 받는 방법 — '픽' | '택' | '당' | '내' | '' (직배송은 기본이라 비워 둔다).
+   *  '내' = 하루 보관했다가 다음 날 주문과 합쳐 택배 (월+화, 목+금).
    *  사장님: "이름 바로 옆 칸에 빈칸 하나씩 만들어서 픽업인지 택배인지 표기" */
   ship: string;
   unspec: number;      // 메뉴가 지정 안 된 팩수 (이름에 붙이면 이름칸이 터진다)
@@ -91,7 +92,7 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string }[];
+  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
@@ -114,8 +115,11 @@ type OrderLike = {
 /** 받는 방법을 종이에 적을 한 글자로 — 픽(픽업) · 택(택배) · 당(두발 당일배송).
  *  직배송(강서·양천 자체배송)이 기본이라 그건 비워 둔다.
  *  사장님: "한 글자로 표기해도 돼, 픽과 택" — 두 글자는 22px 칸에서 '택/배' 로 접혔다. */
-export function shipTag(o: { receive_method?: string | null; delivery_method?: string | null }): string {
+export function shipTag(o: { receive_method?: string | null; delivery_method?: string | null; memo?: string | null }): string {
   if (o.receive_method === '픽업') return '픽';
+  // 내 = 월+화·목+금 주문을 하루 보관했다가 다음 날 것과 합쳐 택배로 보낸다(사장님 엑셀 표시 '내').
+  // 메모에 "엑셀 표시 '내'" 또는 "내일 합쳐" 가 있으면 그렇게 본다.
+  if (/엑셀 표시 '내'|내일\s*합/.test(String(o.memo || ''))) return '내';
   const d = String(o.delivery_method || '');
   if (d.includes('택배')) return '택';
   if (d.includes('당일')) return '당';
@@ -149,7 +153,7 @@ export function buildCookingSheet(
       // 낱개(1~5개·픽업)도 만들어야 하는 반찬이다. 세트만 잡으면 조리표에서 통째로 빠진다.
       if (isBanchanStage(s.stage)) {
         banchan.push({
-          name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
+          orderId: o.id, name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage), ship: shipTag(o),
         });
         continue;

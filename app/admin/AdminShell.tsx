@@ -499,7 +499,7 @@ export default function AdminShell({
                       o.paid ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
                       : o.paid_note ? 'bg-stone-100 text-stone-500 border-stone-200'
                              : 'bg-rose-100 text-rose-700 border-rose-200'}`}>
-                    {o.paid ? '입금확인' : o.paid_note ? '대조안함' : '미입금'}
+                    {o.paid ? '입금확인' : o.paid_note?.startsWith('오픈월드') ? '오픈월드' : o.paid_note ? '대조안함' : '미입금'}
                   </button>
                   {/* 입금 근거 — 어느 입금으로 확인했는지(자동/사장님) */}
                   {o.paid_note && <div className="text-[10px] text-stone-400 mt-0.5">{o.paid_note}</div>}
@@ -550,7 +550,7 @@ export default function AdminShell({
 
         {/* 카톡주문 탭은 뺐다 — 주문접수(조리표 탭) 맨 위에 붙여넣으면 바로 읽어 채운다 */}
 
-        {tab === '입금' && <DepositTab />}
+        {tab === '입금' && <DepositTab dayOrders={orders as any} date={selectedDate} onTogglePaid={togglePaid} />}
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
@@ -1037,6 +1037,23 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
   // 잔여가 바뀌면 목록·검색결과 둘 다 맞춘다. 0에서 처음 넣은 손님은 아래 선결제 목록에 새로 뜬다.
   function setBalance(id: string, n: number) { patchCustomer(id, { prepaid_balance: n }); }
   // 손님 한 명의 값이 바뀌면 목록·검색결과 둘 다 맞춘다 (잔여·반찬 회수·단계 표시·정기배송)
+  // 오픈월드(나라 후원사업) 켜고 끄기 — 켜면 이 집의 입금 안 된 주문이 입금 대조에서 빠진다
+  async function toggleOpenworld(c: Customer) {
+    const next = !c.openworld;
+    if (!confirm(next
+      ? `${c.baby_name} — 오픈월드(후원사업) 아이로 표시할까요?\n입금 안 된 주문이 입금 대조에서 빠지고, 앞으로 들어오는 주문도 자동으로 빠집니다.`
+      : `${c.baby_name} — 오픈월드 표시를 뺄까요?\n오픈월드로 빼 두었던 주문이 다시 미입금으로 잡힙니다.`)) return;
+    setSavingId(c.id);
+    const r = await fetch('/api/customers', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: c.id, openworld: next }),
+    }).then(x => x.json()).catch(() => ({}));
+    setSavingId(null);
+    if (!r.ok) { setMsg(`못 바꿨어요: ${r.error || ''}`); return; }
+    patchCustomer(c.id, { openworld: next });
+    setMsg(`${c.baby_name} — ${next ? '오픈월드로 표시' : '오픈월드 표시 뺌'} (주문 ${r.orders}건 같이 바뀜)`);
+  }
+
   function patchCustomer(id: string, patch: Partial<Customer>) {
     const inList = customers.some(c => c.id === id);
     const hit = found.find(x => x.id === id);
@@ -1106,6 +1123,11 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
                     {c.is_regular && <span className="text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
                     {c.prepaid_balance > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">잔여 {c.prepaid_balance}{c.prepaid_label ? ` · ${c.prepaid_label}` : ''}</span>}
                     {(c.prepaid_banchan || 0) > 0 && <span className="text-[10px] bg-lime-100 text-lime-800 px-2 py-0.5 rounded-full">반찬 {c.prepaid_banchan}회</span>}
+                    <button onClick={() => toggleOpenworld(c)} disabled={savingId === c.id}
+                      title="나라 후원사업 아이 — 입금 대조에서 빼고, 나중에 한꺼번에 정산"
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${c.openworld ? 'bg-sky-100 text-sky-800 border-sky-300' : 'border-stone-200 text-stone-400'}`}>
+                      {c.openworld ? '오픈월드' : '오픈월드 아님'}
+                    </button>
                     <button onClick={() => setOpenLedger(openLedger === 'f:' + c.id ? null : 'f:' + c.id)}
                       className="text-[10px] px-2 py-0.5 border border-stone-200 text-stone-600 rounded-full font-bold">
                       {openLedger === 'f:' + c.id ? '닫기' : '선결제·주문내역'}

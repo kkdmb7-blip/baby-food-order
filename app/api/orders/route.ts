@@ -13,6 +13,7 @@ import { menuKindsFor } from '@/lib/menuDays';
 import { looksDirectDelivery } from '@/lib/routeCode';
 import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
+import { OPENWORLD_NOTE } from '@/lib/openworld';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -340,9 +341,18 @@ export async function POST(req: NextRequest) {
     const newCustomerBonus = referralBonus || welcomeBonus;
     const pointsEarned = order_type === '선결제' ? 0 : Math.floor(net_price * 0.03) + newCustomerBonus;
 
+    // 오픈월드(후원사업) 손님이면 미입금으로 세지 않게 처음부터 표시한다 — 정산은 나중에 한꺼번에
+    let openworldNote: string | undefined;
+    if (customer_id || customer_phone) {
+      const { data: ow } = await sb.from('baby_food_customers').select('openworld')
+        .eq(customer_id ? 'id' : 'phone', customer_id || customer_phone).limit(1).maybeSingle();
+      if (ow?.openworld) openworldNote = OPENWORLD_NOTE;
+    }
+
     const { data, error } = await sb
       .from('baby_food_orders')
       .insert({
+        ...(openworldNote ? { paid_note: openworldNote } : {}),
         baby_name, months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,

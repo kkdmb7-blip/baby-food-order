@@ -1,3 +1,5 @@
+import { isOpenworld } from './openworld';
+
 /*
   입금 ↔ 주문 짝짓기 (화면·서버 공용, DB 는 안 만진다 — 결과만 돌려준다)
 
@@ -85,7 +87,8 @@ export function matchDeposits(
   const results: MResult[] = [];
   const claimed = new Set<string>();
   const byId: Record<string, MOrder> = Object.fromEntries(orders.map(o => [o.id, o]));
-  const open = (o: MOrder) => !o.paid && !claimed.has(o.id);
+  // 오픈월드(후원사업) 주문은 손님이 돈을 보내지 않는다 — 대조 대상이 아니다
+  const open = (o: MOrder) => !o.paid && !claimed.has(o.id) && !isOpenworld(o.paid_note);
   const sorted = [...deposits].sort((a, b) => a.deposited_at.localeCompare(b.deposited_at));
 
   // 입금자 이름 → 그 이름을 쓰는 손님 번호들
