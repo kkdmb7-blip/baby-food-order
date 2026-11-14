@@ -12,7 +12,8 @@ import DepositTab from './DepositTab';
 import ChargeBar from './ChargeBar';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
-import { buildCookingSheet } from '@/lib/cookingSheet';
+import { buildCookingSheet, SMALL_VOLUME } from '@/lib/cookingSheet';
+import CookingEntry from './CookingEntry';
 import { defaultArrivalNote } from '@/lib/arrival';
 import { sortBanchanNames } from '@/lib/banchanOrder';
 import { parseKakaoPrepaid } from '@/lib/kakaoPrepaid';
@@ -618,6 +619,8 @@ function CookingSheet({ orders, today, customers, onChanged }: {
 }) {
   // 고치고 있는 사람(연락처). 한 사람이 중기·후기를 같이 시키기도 하니 줄이 아니라 사람 단위로 연다.
   const [editPhone, setEditPhone] = useState<string | null>(null);
+  // 단계 블록 아래 '+' 로 연 추가 칸 — 프린트 뒤 종이에 손으로 적은 아이를 나중에 넣는다 (2026-11-14 사장님)
+  const [addStage, setAddStage] = useState<string | null>(null);
   /*
     조리표를 언제 뽑았는지 기억해 둔다. 오전 7시에 뽑으신 뒤 들어오는 주문을
     지금까지는 종이에 손으로 적으셨다. 뽑은 시각을 알면 그 뒤에 들어온 줄만
@@ -706,11 +709,28 @@ function CookingSheet({ orders, today, customers, onChanged }: {
           </span>
         </div>
 
-        {sheet.people === 0
+        {/* 표에 없는 단계(그날 주문이 하나도 없는 단계)에 넣을 때 */}
+        <div className="flex gap-1.5 flex-wrap mb-2 no-print">
+          {[...STAGES.filter(s => !sheet.sections.some(sec => sec.stage === s)), ...(sheet.banchan.length ? [] : ['반찬'])].map(s => (
+            <button key={s} onClick={() => setAddStage(s)}
+              className="px-2 py-0.5 rounded-lg border border-dashed border-amber-400 bg-amber-50 text-amber-800 text-[12px] font-bold">
+              ＋ {s === '반찬' ? '반찬 세트' : s.replace('단계', '')}
+            </button>
+          ))}
+        </div>
+
+        {addStage && (
+          <CookingEntry key={addStage} date={today}
+            preset={addStage === '반찬' ? { banchan: true } : { stage: addStage, volume: SMALL_VOLUME[addStage] }}
+            onClose={() => setAddStage(null)} onSaved={onChanged} />
+        )}
+
+        {sheet.people === 0 && sheet.banchan.length === 0
           ? <div className="text-center text-stone-400 text-sm py-6">이 날짜에 조리할 주문이 없어요</div>
           : <CookingTable sheet={sheet}
                           onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
                           onSaved={onChanged}
+                          onAdd={s => { setAddStage(s); setEditPhone(null); }}
                           printedAt={printInfo?.printedAt ?? null} />}
 
         {/* 고치는 중인 사람 — 표 아래에 펼친다 */}
@@ -1278,6 +1298,8 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
               className={`w-10 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-amber-400 ${bal < 0 ? 'text-red-600 border-red-200' : bal > 0 ? (bal <= 5 ? 'text-red-600 border-amber-200' : 'text-amber-700 border-amber-200') : 'border-stone-200'}`} />
             팩<span className="inline-block w-[58px] text-[10px] text-stone-400 whitespace-nowrap">{c.prepaid_label || ''}</span>
           </label>
+          {/* 마이너스 = 선결제보다 더 먹음 → 입금 요청 톡 보낼 손님 (사장님 2026-11-14) */}
+          {bal < 0 && <span className="text-[10px] font-black text-white bg-red-500 px-1.5 rounded-full whitespace-nowrap">입금요청 {-bal}팩</span>}
 
           <label className="flex items-center gap-0.5 text-stone-500" title="반찬 선결제 남은 회수">
             반찬

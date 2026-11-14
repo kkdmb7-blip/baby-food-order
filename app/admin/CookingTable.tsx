@@ -25,10 +25,13 @@ const PAY_BG: Record<PayState, string> = {
   prepaid: 'bg-violet-100 text-violet-900', skip: 'bg-stone-100 text-stone-500',
 };
 
-export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay }: {
+export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, onAdd }: {
   sheet: CookingSheet;
-  /** 입금 체크판으로 쓸 때 — 이름 칸 색이 입금 상태가 되고, 이름을 누르면 입금확인을 켜고 끈다 */
-  pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void };
+  /** 입금 체크판으로 쓸 때 — 이름 칸 색이 입금 상태가 되고, 이름을 누르면 입금확인을 켜고 끈다.
+      tag: 이름 옆 작은 빨간 꼬리표(선결제 마이너스 '−7' 등) */
+  pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void; tag?: (orderId: string) => string | null };
+  /** 화면에서만 — 단계 블록 맨 아래 '+' (종이에 손으로 적은 아이를 나중에 넣기). 반찬 블록은 '반찬' */
+  onAdd?: (stage: string) => void;
   /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
   onPick?: (phone: string) => void;
   /** 화면에서만 — 숫자를 칸에서 바로 고친다. 저장되면 부른다 */
@@ -56,11 +59,13 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay }:
   const nameCell = (orderId: string, phone: string, color: number | undefined, node: ReactNode, base: string) => {
     if (pay) {
       const st = pay.state(orderId);
+      const tag = pay.tag?.(orderId);
       return (
         <td className={`${base} ${PAY_BG[st]}`}>
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
             className="w-full text-center hover:underline">
             {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}{node}
+            {tag && <span className="ml-0.5 px-0.5 rounded bg-red-500 text-white text-[10px] font-black">{tag}</span>}
           </button>
         </td>
       );
@@ -241,6 +246,14 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay }:
                   ))}
                 </tr>
               </>)}
+              {onAdd && sec.part === sec.parts && (
+                <tr className="no-print">
+                  <td colSpan={MENU_TYPES.length + 2} className="p-0">
+                    <button onClick={() => onAdd(sec.stage)} title={`${sec.stage.replace('단계', '')}에 아이 추가`}
+                      className="w-full py-1 text-[16px] font-black text-amber-700 border border-dashed border-amber-400 bg-amber-50 hover:bg-amber-100">＋</button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
           </div>
@@ -289,6 +302,14 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay }:
                   )}
                 </td>
               </tr>
+              {onAdd && (
+                <tr className="no-print">
+                  <td colSpan={3} className="p-0">
+                    <button onClick={() => onAdd('반찬')} title="반찬 세트에 아이 추가"
+                      className="w-full py-1 text-[16px] font-black text-amber-700 border border-dashed border-amber-400 bg-amber-50 hover:bg-amber-100">＋</button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
           </div>

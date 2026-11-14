@@ -37,8 +37,14 @@ type Hit = {
 
 const VOL_ALL = [230, 240, 300, 310];
 
-export default function CookingEntry({ date, onSaved }: { date: string; onSaved: () => void }) {
-  const [open, setOpen] = useState(false);
+/* preset — 조리표 단계 블록 아래 '+' 로 열 때 (2026-11-14 사장님: 프린트 뒤 종이에 손으로 적은 아이를 나중에 넣기).
+   그 단계·작은 용량을 미리 골라 두고, 지난 주문을 골라도 단계는 누른 블록 그대로 둔다. */
+export default function CookingEntry({ date, onSaved, preset, onClose }: {
+  date: string; onSaved: () => void;
+  preset?: { stage?: string; volume?: number; banchan?: boolean };
+  onClose?: () => void;
+}) {
+  const [open, setOpen] = useState(!!preset);
 
   // 손님 찾기
   const [q, setQ] = useState('');
@@ -53,9 +59,9 @@ export default function CookingEntry({ date, onSaved }: { date: string; onSaved:
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [doorPassword, setDoorPassword] = useState('');
-  const [isBanchan, setIsBanchan] = useState(false);
-  const [stage, setStage] = useState<StageType | ''>('');
-  const [volume, setVolume] = useState('');
+  const [isBanchan, setIsBanchan] = useState(!!preset?.banchan);
+  const [stage, setStage] = useState<StageType | ''>((preset?.stage as StageType) || '');
+  const [volume, setVolume] = useState(preset?.volume ? String(preset.volume) : '');
   const [menuQty, setMenuQty] = useState<Record<string, string>>({});
   const [banchanQty, setBanchanQty] = useState('');
   const [receive, setReceive] = useState<'배송' | '픽업'>('배송');
@@ -67,6 +73,14 @@ export default function CookingEntry({ date, onSaved }: { date: string; onSaved:
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [addedCount, setAddedCount] = useState(0);
   const nameRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  // '+' 로 열면 칸이 표 위에 생긴다 — 그쪽으로 올려 주고 이름 칸에 바로 커서
+  useEffect(() => {
+    if (!preset) return;
+    boxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => nameRef.current?.focus({ preventScroll: true }), 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 날짜를 바꿔 보시면 넣을 조리일도 따라간다 (아직 아무것도 안 쳤을 때만)
   useEffect(() => { if (!babyName && !q) setDeliveryDate(date); }, [date, babyName, q]);
@@ -96,8 +110,13 @@ export default function CookingEntry({ date, onSaved }: { date: string; onSaved:
     setPhone(h.phone);
     setAddress(h.address + (h.addressDetail ? ' ' + h.addressDetail : ''));
     setDoorPassword(h.doorPassword || '');
-    if (h.stage && (STAGES as string[]).includes(h.stage)) setStage(h.stage as StageType);
-    if (h.volume) setVolume(String(h.volume));
+    if (preset?.stage) {
+      // 누른 블록의 단계는 그대로 — 용량만 지난 주문이 같은 단계였으면 그걸 쓴다
+      if (h.stage === preset.stage && h.volume) setVolume(String(h.volume));
+    } else if (!preset?.banchan) {
+      if (h.stage && (STAGES as string[]).includes(h.stage)) setStage(h.stage as StageType);
+      if (h.volume) setVolume(String(h.volume));
+    }
     setReceive(h.receiveMethod === '픽업' ? '픽업' : '배송');
     if (h.deliveryMethod === '직배송' || h.deliveryMethod === '당일배송' || h.deliveryMethod === '택배익일배송') {
       setZone(h.deliveryMethod);
@@ -192,13 +211,13 @@ export default function CookingEntry({ date, onSaved }: { date: string; onSaved:
     : VOL_ALL;
 
   return (
-    <div className="bg-white rounded-xl border border-amber-200 overflow-hidden no-print mb-4">
-      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+    <div ref={boxRef} className="bg-white rounded-xl border border-amber-200 overflow-hidden no-print mb-4 scroll-mt-4">
+      <button onClick={() => onClose ? onClose() : setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3 text-left">
         <span className="font-bold text-stone-900 text-sm">
-          조리표에 줄 넣기
+          {preset ? `${preset.banchan ? '반찬 세트' : String(preset.stage || '').replace('단계', '')}에 아이 추가` : '조리표에 줄 넣기'}
           {addedCount > 0 && <span className="ml-2 font-normal text-amber-700">{addedCount}줄 넣음</span>}
         </span>
-        <span className="text-stone-400 text-xs">{open ? '접기' : '열기'}</span>
+        <span className="text-stone-400 text-xs">{onClose ? '닫기 ✕' : open ? '접기' : '열기'}</span>
       </button>
 
       {open && (

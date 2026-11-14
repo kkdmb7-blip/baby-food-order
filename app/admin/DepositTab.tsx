@@ -157,7 +157,16 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
 
       {sheet.people === 0 && sheet.banchan.length === 0
         ? <p className="text-center text-stone-400 text-sm py-6">이 날짜에 주문이 없어요 — 맨 위에서 날짜를 바꿔 보세요</p>
-        : <CookingTable sheet={sheet} pay={{ state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; }, onToggle: id => { const o = byId.get(id); if (o) click(o); } }} />}
+        : <CookingTable sheet={sheet} pay={{
+            state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; },
+            onToggle: id => { const o = byId.get(id); if (o) click(o); },
+            // 선결제가 마이너스 = 더 먹은 만큼 입금 요청할 손님 (사장님 2026-11-14)
+            tag: id => {
+              const o = byId.get(id); if (!o) return null;
+              const c = custOf(o); const b = Number(c?.prepaid_balance) || 0;
+              return !String(o.stage || '').startsWith('반찬') && b < 0 ? `${b}` : null;
+            },
+          }} />}
     </div>
   );
 }
@@ -424,9 +433,28 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
     onTogglePaid(o);
   }
   const need = (groups['확인필요'] || []).length + (groups['모름'] || []).length;
+  // 선결제보다 더 먹은 손님 — 입금 요청 톡 보낼 명단 (사장님 2026-11-14)
+  const minus = customers.filter(c => (Number(c.prepaid_balance) || 0) < 0)
+    .sort((a, b) => a.prepaid_balance - b.prepaid_balance || String(a.baby_name).localeCompare(String(b.baby_name), 'ko'));
 
   return (
     <div className="space-y-4">
+      {minus.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <p className="text-[13px] font-black text-red-700">입금 요청 — 선결제 마이너스 {minus.length}명</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {minus.map(c => (
+              <span key={c.id} className="px-2 py-0.5 rounded-lg bg-white border border-red-200 text-[12px]">
+                <b className="text-stone-900">{c.baby_name}</b>
+                <b className="ml-1 text-red-600">{c.prepaid_balance}팩</b>
+                {c.prepaid_label && <span className="ml-1 text-[11px] text-stone-400">{c.prepaid_label}</span>}
+                {c.phone && <span className="ml-1 text-[11px] text-stone-500">{c.phone.replace(/^(\d{3})(\d{3,4})(\d{4})$/, '$1-$2-$3')}</span>}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-stone-500">입금 체크판에서도 이름 옆에 빨간 숫자(−7)로 보입니다. 입금받으면 이름을 눌러 충전하세요.</p>
+        </div>
+      )}
       {date && <PaySheet orders={dayOrders} date={date} customers={customers} onToggle={toggleFromSheet}
         onPatch={(id, p) => onPatch?.(id, p)} />}
 
