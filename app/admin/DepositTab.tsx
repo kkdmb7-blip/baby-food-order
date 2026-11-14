@@ -152,7 +152,7 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
       {openOrder && (
         <PrepaidPanel key={openOrder.id} o={openOrder} cust={custOf(openOrder)}
           onClose={() => setOpenId(null)} onToggle={() => { onToggle(openOrder); setOpenId(null); }}
-          onPatch={p => onPatch(openOrder.id, p)} />
+          onPatch={p => onPatch(openOrder.id, p)} onPatchOrder={(id, p) => onPatch(id, p)} />
       )}
 
       {sheet.people === 0 && sheet.banchan.length === 0
@@ -162,8 +162,11 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
   );
 }
 
-function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch }: {
+type CascadeLine = { id: string; date: string; qty: number; action: '뺌' | '이미 뺌' | '건너뜀'; why?: string; after: number };
+
+function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOrder }: {
   o: SheetOrder; cust?: Customer; onClose: () => void; onToggle: () => void; onPatch: (p: Patch) => void;
+  onPatchOrder: (orderId: string, p: Patch) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
@@ -239,6 +242,30 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch }: {
     setInfo(`${units}팩 넣었어요 — 남은 ${d.new_balance}팩. 이 주문도 빼시려면 '선결제에서 빼기'를 누르세요`);
   }
 
+  /* 이 날부터 뒤로 한꺼번에 — 사장님 2026-11-14: "2일 페이지에서 갯수 정하면 그 뒤로 체크 안 된 것들 자동 차감"
+     이 주문 '전' 남은 수를 적으면 미리보기 → 한꺼번에 빼기 */
+  const [startN, setStartN] = useState('');
+  const [preview, setPreview] = useState<{ lines: CascadeLine[]; final: number; current: number } | null>(null);
+  async function cascade(apply: boolean) {
+    const n = Number(startN.trim());
+    if (startN.trim() === '' || !Number.isInteger(n) || n < 0) { setInfo('이 주문 전에 남아 있던 수를 숫자로 적어 주세요'); return; }
+    if (apply && preview && !confirm(`${o.baby_name} — ${preview.lines.filter(l => l.action === '뺌').length}건을 선결제에서 빼고, 남은 ${preview.final}${unit}로 맞출까요?`)) return;
+    setBusy(true); setInfo(null);
+    const d = await fetch('/api/admin/order-prepaid/cascade', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: o.id, start: n, apply }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
+    if (!apply) { setPreview({ lines: d.lines, final: d.final, current: d.current }); return; }
+    patch({ customerId: d.customer_id, customer: { [d.field]: d.final } as any });
+    for (const x of d.done || []) {
+      const p: Patch = { order: { paid: true, paid_note: x.paid_note } };
+      if (x.id === o.id) patch(p); else onPatchOrder(x.id, p);
+    }
+    setEdit(String(d.final)); setPreview(null); setStartN('');
+    setInfo(`${(d.done || []).length}건 뺐어요 — 남은 ${d.final}${unit}`);
+  }
+
   const btn = 'px-2.5 py-1 rounded-lg border text-[12px] font-bold disabled:opacity-40';
   return (
     <div className="mb-3 border-2 border-violet-300 bg-violet-50/60 rounded-xl p-3 text-[12px] space-y-2">
@@ -291,9 +318,40 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch }: {
               </button>
             )}
           </div>
+          {o.order_type !== '선결제' && stage !== '반찬낱개' && (
+            <div className="pt-2 border-t border-violet-200 space-y-1.5">
+              <p className="text-[11px] font-bold text-violet-800">이 날부터 뒤로 한꺼번에 빼기</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-stone-700">{md(o.delivery_date || '')} 이 주문 전에 남은</span>
+                <input value={startN} onChange={e => { setStartN(e.target.value.replace(/\D/g, '')); setPreview(null); }} disabled={busy}
+                  onKeyDown={e => { if (e.key === 'Enter') cascade(false); }} inputMode="numeric" placeholder="예: 30"
+                  className="w-14 px-1.5 py-0.5 border border-violet-300 rounded text-right text-[13px] font-black text-violet-800 outline-none focus:border-violet-400" />
+                <span>{unit}</span>
+                <button disabled={busy || !startN} onClick={() => cascade(false)} className={`${btn} border-violet-300 bg-white text-violet-800`}>뒤 주문 보기</button>
+              </div>
+              {preview && (
+                <div className="bg-white border border-violet-200 rounded-lg p-2 space-y-0.5">
+                  {preview.lines.length === 0 && <p className="text-stone-500">이 날부터 뒤로 주문이 없어요</p>}
+                  {preview.lines.map(l => (
+                    <div key={l.id} className={`flex gap-2 text-[12px] ${l.action === '뺌' ? 'text-violet-900 font-bold' : 'text-stone-400'}`}>
+                      <span className="w-10">{md(l.date)}</span>
+                      <span className="w-10 text-right">{l.qty}{unit}</span>
+                      <span className="flex-1">{l.action === '뺌' ? '이번에 뺌' : l.action === '이미 뺌' ? '이미 선결제로 빠짐' : `건너뜀(${l.why})`}</span>
+                      <span>남은 {l.after}</span>
+                    </div>
+                  ))}
+                  <p className="pt-1 text-[12px] text-stone-700">지금 남은 {preview.current}{unit} → <b className={preview.final < 0 ? 'text-red-600' : 'text-violet-800'}>{preview.final}{unit}</b></p>
+                  <button disabled={busy || !preview.lines.some(l => l.action === '뺌') && preview.final === preview.current} onClick={() => cascade(true)}
+                    className={`${btn} w-full py-1.5 border-violet-400 bg-violet-100 text-violet-900 text-[13px]`}>
+                    {preview.lines.filter(l => l.action === '뺌').length}건 한꺼번에 빼기
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
-      {info && <p className="text-[12px] text-violet-800 font-bold">{info}</p>}
+      {info &&<p className="text-[12px] text-violet-800 font-bold">{info}</p>}
     </div>
   );
 }
