@@ -172,8 +172,14 @@ export async function movePrepaidMany(sb: SupabaseClient, customerId: string, mo
     const total = Number(c.prepaid_balance) || 0;
     const patch: Record<string, any> = {};
     let next = total + sum, split: Part[] | null = null, moved: Part[] | undefined;
-    if (isSplit(c)) {
-      const parts = (c.prepaid_split as Part[]).map(p => ({ kind: p.kind, balance: Number(p.balance) || 0 }));
+    // 한 묶음 손님도 종류를 알면 용량별로 센다 — 없는 용량은 마이너스(입금 요청)로 새 묶음이 생긴다.
+    // 사장님 2026-11-14: "카운팅 자체를 2개로 나눠서 해야 돼". 종류를 모르는 옛 잔액(라벨 없음)만 예전처럼 합쳐서.
+    const curKind = kindOfLabel(c.prepaid_label) || null;
+    const canSplit = isSplit(c) || !!curKind || total === 0;
+    if (canSplit) {
+      const parts: Part[] = isSplit(c) ? (c.prepaid_split as Part[]).map(p => ({ kind: p.kind, balance: Number(p.balance) || 0 }))
+        : total !== 0 ? [{ kind: curKind as string, balance: total }] : [];
+      if (!parts.length && moves.some(m => !m.kind)) { parts.push({ kind: moves.find(m => m.kind)?.kind || PREPAID_KINDS[0], balance: 0 }); }
       for (const mv of moves) {
         const k = mv.kind || [...parts].sort((a, b) => b.balance - a.balance)[0].kind;
         let p = parts.find(x => x.kind === k);
@@ -198,6 +204,47 @@ export async function movePrepaidMany(sb: SupabaseClient, customerId: string, mo
       return { ok: true, customerId: c.id, phone: c.phone, babyName: c.baby_name, before: total, after: next,
         kind: moved ? moves.map(m => m.kind).join('+') : null, partBefore: total, partAfter: next, split, moved };
     }
+  }
+  return { ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시', status: 409 };
+}
+
+/** 그 묶음 잔액 — 한 묶음 손님은 그 묶음 종류일 때만 전체, 다른 종류는 0 (한꺼번에 빼기 용량별에서 씀) */
+export function partBalance(c: C | null | undefined, kind: string): number {
+  if (!c) return 0;
+  if (isSplit(c)) return (c.prepaid_split as Part[]).find(p => p.kind === kind)?.balance ?? 0;
+  const total = Number(c.prepaid_balance) || 0;
+  const cur = kindOfLabel(c.prepaid_label) || c.prepaid_label || null;
+  return !cur || cur === kind ? total : 0;
+}
+
+/**
+ * 여러 묶음 잔액을 한 번에 정한다 — 한꺼번에 빼기(용량별). 2026-11-14 사장님: "한꺼번에 빼기에도 나눠서 빼는 기능"
+ * sets[i].expect = 읽어 둔 그 묶음 잔액(두 번 눌림·그 사이 바뀜 방지). 한 묶음 손님이면 나뉜다.
+ */
+export async function setPrepaidParts(sb: SupabaseClient, customerId: string, sets: { kind: string; set: number; expect?: number }[]):
+  Promise<{ ok: true; before: number; after: number; split: Part[] | null } | { ok: false; error: string; status: number }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: c, error: e0 } = await sb.from('baby_food_customers')
+      .select('id, prepaid_balance, prepaid_label, prepaid_split').eq('id', customerId).maybeSingle();
+    if (e0) return { ok: false, error: e0.message, status: 500 };
+    if (!c) return { ok: false, error: '손님 카드를 못 찾았어요', status: 404 };
+    for (const s of sets) if (s.expect !== undefined && partBalance(c, s.kind) !== s.expect)
+      return { ok: false, error: '잔액이 그 사이 바뀌었어요 — 새로고침 후 다시', status: 409 };
+    const total = Number(c.prepaid_balance) || 0;
+    const curKind = kindOfLabel(c.prepaid_label) || c.prepaid_label || null;
+    const parts: Part[] = isSplit(c) ? (c.prepaid_split as Part[]).map(p => ({ kind: p.kind, balance: Number(p.balance) || 0 }))
+      : total !== 0 ? [{ kind: curKind || sets[0].kind, balance: total }] : [];
+    for (const s of sets) {
+      const p = parts.find(x => x.kind === s.kind);
+      if (p) p.balance = s.set; else parts.push({ kind: s.kind, balance: s.set });
+    }
+    const next = parts.reduce((s, x) => s + x.balance, 0);
+    const live = parts.filter(x => x.balance !== 0);
+    const patch: Record<string, any> = { prepaid_balance: next, prepaid_split: live.length >= 2 ? live : null };
+    if (live.length === 1) patch.prepaid_label = live[0].kind;
+    const { data: up, error } = await sb.from('baby_food_customers').update(patch).eq('id', c.id).eq('prepaid_balance', total).select('id');
+    if (error) return { ok: false, error: error.message, status: 500 };
+    if (up && up.length) return { ok: true, before: total, after: next, split: patch.prepaid_split };
   }
   return { ok: false, error: '잔액이 계속 바뀌어요 — 새로고침 후 다시', status: 409 };
 }

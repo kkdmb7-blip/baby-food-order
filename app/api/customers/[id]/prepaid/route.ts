@@ -3,7 +3,7 @@ import { supabaseService, PREPAID_UNITS } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { parseKakaoPrepaid, memoSummary } from '@/lib/kakaoPrepaid';
-import { movePrepaid, kindOfLabel, isSplit, kindTag } from '@/lib/prepaidSplit';
+import { movePrepaid, kindOfLabel, isSplit, kindTag, partBalance, setPrepaidParts } from '@/lib/prepaidSplit';
 
 // POST /api/customers/[id]/prepaid — 선결제 충전 (admin)
 // body { units: 20|30|50, amount_won?: 받은 돈 }
@@ -97,6 +97,22 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       const { data: c0 } = await sb.from('baby_food_customers').select('prepaid_balance, prepaid_label, prepaid_split').eq('id', ctx.params.id).maybeSingle();
       if (!c0) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
       if (isSplit(c0 as any) && !kind) return NextResponse.json({ error: '여러 단계 선결제 손님이에요 — 어느 묶음을 고칠지 골라 주세요' }, { status: 400 });
+      // 용량별 칸(입금 탭 판, 230·300 섞인 손님) — 그 묶음만 고친다. 한 묶음 손님이면 여기서 묶음이 나뉜다
+      // 2026-11-14 사장님(서은혁): "카운팅 자체를 2개로 나눠서 해야 돼"
+      if (body.per_kind && kind) {
+        const before = partBalance(c0 as any, kind);
+        const r = await setPrepaidParts(sb, ctx.params.id, [{ kind, set: target0, expect: before }]);
+        if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+        if (before !== target0) {
+          const { data: who } = await sb.from('baby_food_customers').select('phone, baby_name').eq('id', ctx.params.id).maybeSingle();
+          await recordPrepaid(sb, {
+            customerId: ctx.params.id, phone: who?.phone ?? null, babyName: who?.baby_name ?? null,
+            kind: '수정', packs: r.after - r.before, balanceAfter: r.after, item,
+            memo: `[${kind}] 사장님이 직접 고침 ${before}→${target0}${unit}${memo ? ` · ${memo}` : ''}`,
+          });
+        }
+        return NextResponse.json({ ok: true, new_balance: r.after, part: target0, split: r.split, label: r.split ? undefined : kind, item });
+      }
       const r = await movePrepaid(sb, ctx.params.id, { set: target0, kind });
       if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
       if (r.before !== r.after || r.partBefore !== r.partAfter) {

@@ -5,7 +5,7 @@ import { buildCookingSheet, banchanRegularMatcher } from '@/lib/cookingSheet';
 import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
-import { kindOf, isSplit, partsOf, balanceFor, shortKind, orderKinds } from '@/lib/prepaidSplit';
+import { kindOf, isSplit, partsOf, balanceFor, shortKind, orderKinds, partBalance } from '@/lib/prepaidSplit';
 import { AddMissing, LaterInfo } from './InlineAdd';
 
 /*
@@ -260,9 +260,38 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   const ks = banchan ? [] : orderKinds(o as any);
   const mixed = ks.length > 1;
   const mixTxt = ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${k.qty}`).join(' · ');
-  const afterTxt = (sign: number) => split
-    ? ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${balanceFor(cust, k.kind)}→${balanceFor(cust, k.kind) + sign * k.qty}`).join(' · ')
+  const afterTxt = (sign: number) => mixed
+    ? ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${k.kind ? partBalance(cust, k.kind) : 0}→${(k.kind ? partBalance(cust, k.kind) : 0) + sign * k.qty}`).join(' · ')
     : `${left}${unit} → ${left + sign * qty}${unit}`;
+  /* 용량별로 따로 센다 — 사장님 2026-11-14(서은혁): "카운팅 자체를 2개로 나눠서 해야 돼"
+     230·300 섞인 주문이거나 여러 묶음 손님이면 '남은 선결제'·'한꺼번에 빼기' 칸을 묶음마다 하나씩 */
+  const perKinds: string[] = banchan ? [] : [...new Set([
+    ...ks.map(k => k.kind).filter((k): k is string => !!k),
+    ...(split ? partsOf(cust).map(p => p.kind) : []),
+  ])];
+  const perKind = perKinds.length > 1;
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const editOf = (k: string) => edits[k] ?? String(partBalance(cust, k));
+  async function setPart(k: string) {
+    if (!cust) return;
+    const raw = editOf(k).trim();
+    const n = Number(raw || 0);
+    const before = partBalance(cust, k);
+    if (!Number.isInteger(n)) { setInfo('숫자로 적어주세요'); return; }
+    if (n === before) { setEdits(e => { const x = { ...e }; delete x[k]; return x; }); return; }
+    if (!confirm(`${o.baby_name} — ${k} 남은 ${before}팩 → ${n}팩으로 고칠까요?`)) { setEdits(e => { const x = { ...e }; delete x[k]; return x; }); return; }
+    setBusy(true); setInfo(null);
+    const d = await fetch(`/api/customers/${cust.id}/prepaid`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ set: n, kind: k, per_kind: true, memo: '입금 탭에서 고침' }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    setEdits(e => { const x = { ...e }; delete x[k]; return x; });
+    if (!d.ok) { setInfo(`못 고쳤어요: ${d.error || ''}`); return; }
+    patch({ customerId: cust.id, customer: { prepaid_balance: d.new_balance, prepaid_split: d.split ?? null, ...(d.label ? { prepaid_label: d.label } : {}) } as any });
+    setInfo(`${shortKind(k)} 남은 ${n}팩으로 고쳤어요`);
+  }
+  const [startsN, setStartsN] = useState<Record<string, string>>({});
   const used = /^선결제 차감 \d+(팩|회) \(입금 탭/.test(String(o.paid_note || '')); // 이 화면에서 뺀 것
   const label = split ? okind : (cust?.prepaid_label || labelOf(o));
   const [edit, setEdit] = useState(String(left));
@@ -334,18 +363,34 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   /* 이 날부터 뒤로 한꺼번에 — 사장님 2026-11-14: "2일 페이지에서 갯수 정하면 그 뒤로 체크 안 된 것들 자동 차감"
      이 주문 '전' 남은 수를 적으면 미리보기 → 한꺼번에 빼기 */
   const [startN, setStartN] = useState('');
-  const [preview, setPreview] = useState<{ lines: CascadeLine[]; final: number; current: number } | null>(null);
+  const [preview, setPreview] = useState<{ lines: CascadeLine[]; final: number | string; current: number | string; neg?: boolean } | null>(null);
   async function cascade(apply: boolean) {
     const n = Number(startN.trim());
-    if (startN.trim() === '' || !Number.isInteger(n) || n < 0) { setInfo('이 주문 전에 남아 있던 수를 숫자로 적어 주세요'); return; }
+    // 용량별 — 적은 묶음만 센다 (lib: order-prepaid/cascade multi)
+    const starts: Record<string, number> = {};
+    if (perKind) {
+      for (const k of perKinds) { const v = (startsN[k] || '').trim(); if (v !== '') starts[k] = Number(v); }
+      if (!Object.keys(starts).length) { setInfo('묶음마다 이 주문 전에 남아 있던 수를 적어 주세요 (안 쓰는 묶음은 비워 두세요)'); return; }
+    } else if (startN.trim() === '' || !Number.isInteger(n) || n < 0) { setInfo('이 주문 전에 남아 있던 수를 숫자로 적어 주세요'); return; }
     if (apply && preview && !confirm(`${o.baby_name} — ${preview.lines.filter(l => l.action === '뺌').length}건을 선결제에서 빼고, 남은 ${preview.final}${unit}로 맞출까요?`)) return;
     setBusy(true); setInfo(null);
     const d = await fetch('/api/admin/order-prepaid/cascade', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: o.id, start: n, apply }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(perKind ? { id: o.id, starts, apply } : { id: o.id, start: n, apply }),
     }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
     setBusy(false);
     if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
-    if (!apply) { setPreview({ lines: d.lines, final: d.final, current: d.current }); return; }
+    if (!apply) { setPreview({ lines: d.lines, final: d.final, current: d.current, neg: d.neg }); return; }
+    if (d.multi) {
+      patch({ customerId: d.customer_id, customer: { prepaid_balance: d.total, prepaid_split: d.split ?? null } as any });
+      for (const x of d.done || []) {
+        const p: Patch = { order: { paid: true, paid_note: x.paid_note } };
+        if (x.id === o.id) patch(p); else onPatchOrder(x.id, p);
+      }
+      setPreview(null); setStartsN({});
+      void reloadShip();
+      setInfo(`${(d.done || []).length}건 뺐어요 — 남은 ${d.final}${unit}`);
+      return;
+    }
     patch({ customerId: d.customer_id, customer: (banchan ? { prepaid_banchan: d.final } : { prepaid_balance: d.total ?? d.final, prepaid_split: d.split ?? null }) as any });
     for (const x of d.done || []) {
       const p: Patch = { order: { paid: true, paid_note: x.paid_note } };
@@ -393,17 +438,27 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="font-bold text-stone-700">남은 {banchan ? '반찬' : '선결제'}</span>
+            {perKind ? perKinds.map(k => (
+              <label key={k} className="flex items-center gap-0.5" title={`${k} 남은 팩 (마이너스 = 받을 팩)`}>
+                <span className="font-bold text-stone-600">{shortKind(k)}</span>
+                <input value={editOf(k)} onChange={e => { const v = e.target.value.replace(/[^\d-]/g, ''); setEdits(s => ({ ...s, [k]: v })); }} disabled={busy}
+                  onBlur={() => setPart(k)} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} inputMode="numeric"
+                  className={`w-12 px-1.5 py-0.5 border rounded text-right text-[13px] font-black outline-none focus:border-violet-400 ${partBalance(cust, k) < 0 ? 'text-red-600' : 'text-violet-800'} border-violet-300`} />
+                <span>팩</span>
+              </label>
+            )) : <>
             <input value={edit} onChange={e => setEdit(e.target.value.replace(banchan ? /\D/g : /[^\d-]/g, ''))} disabled={busy}
               onBlur={setLeft} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} inputMode="numeric"
               className={`w-14 px-1.5 py-0.5 border rounded text-right text-[13px] font-black outline-none focus:border-violet-400 ${left < 0 ? 'text-red-600' : 'text-violet-800'} border-violet-300`} />
             <span>{unit}{!banchan && label ? <span className="ml-1 text-stone-400">{label}</span> : null}</span>
+            </>}
             {!banchan && cust.prepaid_ship !== null && cust.prepaid_ship !== undefined && (
               <span className={`text-[11px] font-bold ${cust.prepaid_ship < 0 ? 'text-red-600' : 'text-sky-700'}`}
                 title="택배 주문이 선결제로 빠질 때 5팩까지 1회씩 같이 빠집니다">
                 · 택배비 {cust.prepaid_ship}회
               </span>
             )}
-            {split && (
+            {split && !perKind && (
               <span className="text-[11px] text-stone-500">
                 · 다른 묶음 {partsOf(cust).filter(p => p.kind !== okind).map(p => (
                   <b key={p.kind} className={`ml-1 ${p.balance < 0 ? 'text-red-600' : 'text-stone-700'}`}>{shortKind(p.kind)} {p.balance}</b>
@@ -421,15 +476,13 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
               <span className="text-stone-500">반찬 낱개는 선결제(세트 회수)로 뺄 수 없어요</span>
             ) : (
               <button disabled={busy || o.paid} onClick={() => use(true)} className={`${btn} border-violet-400 bg-violet-100 text-violet-900`}>
-                {mixed ? <>선결제에서 빼기 (−{mixTxt}{split ? '' : ` → 남은 ${left - qty}`})</> : <>선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})</>}
+                {mixed ? <>선결제에서 빼기 (−{mixTxt} → 남은 {afterTxt(-1).replace(/ -?\d+→/g, ' ')})</> : <>선결제에서 빼기 (−{qty}{unit} → 남은 {left - qty})</>}
               </button>
             )}
           </div>
           {mixed && (
-            <p className={`text-[11px] ${split ? 'text-violet-800' : 'text-amber-800'}`}>
-              {split
-                ? <>이 주문은 용량이 섞여 있어요 — <b>{mixTxt}</b>팩이 각 묶음에서 따로 빠집니다. (지금 {ks.map(k => `${k.kind ? shortKind(k.kind) : '?'} ${balanceFor(cust, k.kind)}`).join(' · ')})</>
-                : <>이 주문은 용량이 섞여 있어요({mixTxt}). 지금은 선결제가 한 묶음이라 <b>합쳐서</b> 빠집니다 — 230·300을 따로 세려면 위 충전에서 다른 용량도 충전하세요(묶음이 나뉩니다).</>}
+            <p className="text-[11px] text-violet-800">
+              이 주문은 용량이 섞여 있어요 — <b>{mixTxt}</b>팩이 묶음마다 따로 빠집니다. 없는 용량은 마이너스(받을 팩)로 잡혀요.
             </p>
           )}
           {o.order_type !== '선결제' && stage !== '반찬낱개' && (
@@ -437,11 +490,20 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
               <p className="text-[11px] font-bold text-violet-800">이 날부터 뒤로 한꺼번에 빼기</p>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-stone-700">{md(o.delivery_date || '')} 이 주문 전에 남은</span>
-                <input value={startN} onChange={e => { setStartN(e.target.value.replace(/\D/g, '')); setPreview(null); }} disabled={busy}
-                  onKeyDown={e => { if (e.key === 'Enter') cascade(false); }} inputMode="numeric" placeholder="예: 30"
-                  className="w-14 px-1.5 py-0.5 border border-violet-300 rounded text-right text-[13px] font-black text-violet-800 outline-none focus:border-violet-400" />
+                {perKind ? perKinds.map(k => (
+                  <label key={k} className="flex items-center gap-0.5">
+                    <span className="font-bold text-stone-600">{shortKind(k)}</span>
+                    <input value={startsN[k] || ''} onChange={e => { const v = e.target.value.replace(/\D/g, ''); setStartsN(s => ({ ...s, [k]: v })); setPreview(null); }} disabled={busy}
+                      onKeyDown={e => { if (e.key === 'Enter') cascade(false); }} inputMode="numeric" placeholder="예: 20"
+                      className="w-12 px-1.5 py-0.5 border border-violet-300 rounded text-right text-[13px] font-black text-violet-800 outline-none focus:border-violet-400" />
+                  </label>
+                )) : (
+                  <input value={startN} onChange={e => { setStartN(e.target.value.replace(/\D/g, '')); setPreview(null); }} disabled={busy}
+                    onKeyDown={e => { if (e.key === 'Enter') cascade(false); }} inputMode="numeric" placeholder="예: 30"
+                    className="w-14 px-1.5 py-0.5 border border-violet-300 rounded text-right text-[13px] font-black text-violet-800 outline-none focus:border-violet-400" />
+                )}
                 <span>{unit}</span>
-                <button disabled={busy || !startN} onClick={() => cascade(false)} className={`${btn} border-violet-300 bg-white text-violet-800`}>뒤 주문 보기</button>
+                <button disabled={busy || (perKind ? !Object.values(startsN).some(v => v) : !startN)} onClick={() => cascade(false)} className={`${btn} border-violet-300 bg-white text-violet-800`}>뒤 주문 보기</button>
               </div>
               {preview && (
                 <div className="bg-white border border-violet-200 rounded-lg p-2 space-y-0.5">
@@ -454,7 +516,8 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
                       <span>남은 {l.after}</span>
                     </div>
                   ))}
-                  <p className="pt-1 text-[12px] text-stone-700">지금 남은 {preview.current}{unit} → <b className={preview.final < 0 ? 'text-red-600' : 'text-violet-800'}>{preview.final}{unit}</b></p>
+                  <p className="pt-1 text-[12px] text-stone-700">지금 남은 {preview.current}{unit} → <b className={(preview.neg ?? (Number(preview.final) < 0)) ? 'text-red-600' : 'text-violet-800'}>{preview.final}{unit}</b></p>
+                  {perKind && <p className="text-[11px] text-stone-500">숫자를 적은 묶음만 셉니다. 안 적은 용량이 섞인 주문은 건너뜁니다.</p>}
                   <button disabled={busy || !preview.lines.some(l => l.action === '뺌') && preview.final === preview.current} onClick={() => cascade(true)}
                     className={`${btn} w-full py-1.5 border-violet-400 bg-violet-100 text-violet-900 text-[13px]`}>
                     {preview.lines.filter(l => l.action === '뺌').length}건 한꺼번에 빼기
