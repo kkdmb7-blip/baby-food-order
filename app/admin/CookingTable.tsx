@@ -20,10 +20,11 @@ import { AddRow } from './InlineAdd';
 */
 
 /** 입금 체크판 — 조리표와 같은 표에 입금 여부만 칠한다 (사장님: "조리표랑 똑같이 해서 체크만") */
-export type PayState = 'paid' | 'unpaid' | 'openworld' | 'prepaid' | 'skip';
+export type PayState = 'paid' | 'unpaid' | 'openworld' | 'prepaid' | 'skip' | 'postpaid';
 const PAY_BG: Record<PayState, string> = {
   paid: 'bg-emerald-200', unpaid: 'bg-white text-rose-700', openworld: 'bg-sky-100 text-sky-900',
   prepaid: 'bg-violet-100 text-violet-900', skip: 'bg-stone-100 text-stone-500',
+  postpaid: 'bg-orange-100 text-orange-800', // 후불 손님 — 아직 안 받은 주문
 };
 
 export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, add }: {

@@ -121,17 +121,19 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
   }
   const custOf = (o: SheetOrder) =>
     customers.find(c => (o.customer_id && c.id === o.customer_id)) || customers.find(c => !!o.customer_phone && c.phone === o.customer_phone);
-  const count: Record<PayState, number> = { paid: 0, unpaid: 0, openworld: 0, prepaid: 0, skip: 0 };
+  // 후불 손님(postpaid)의 안 받은 주문은 빨간 미입금이 아니라 주황 '후불' — 나중에 한꺼번에 받는다
+  const stateOf = (o: SheetOrder): PayState => { const s = payState(o); return s === 'unpaid' && custOf(o)?.postpaid ? 'postpaid' : s; };
+  const count: Record<PayState, number> = { paid: 0, unpaid: 0, openworld: 0, prepaid: 0, skip: 0, postpaid: 0 };
   let unpaidWon = 0;
   for (const o of orders) {
-    const s = payState(o); count[s]++;
+    const s = stateOf(o); count[s]++;
     if (s === 'unpaid') unpaidWon += (o.total_price || 0) + (o.shipping_fee || 0);
   }
   const dow = '일월화수목금토'[new Date(date + 'T00:00:00Z').getUTCDay()];
   const click = (o: SheetOrder) => {
     if (mode === 'quick') { onToggle(o); return; }
     // 미입금이거나 선결제와 얽힌 손님은 판을 연다(판 맨 앞이 '입금확인'). 이미 확인된·오픈월드·엑셀 시절은 바로 켜고 끈다
-    if (payState(o) === 'unpaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
+    if (stateOf(o) === 'unpaid' || stateOf(o) === 'postpaid' || hasPrepaid(custOf(o)) || isPrepaidUse(o) || o.order_type === '선결제') setOpenId(o.id);
     else onToggle(o);
   };
   const openOrder = openId ? byId.get(openId) : undefined;
@@ -143,6 +145,7 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
         <span className="font-bold text-emerald-700">✓ 확인 {count.paid}</span>
         <span className="font-bold text-rose-700">미입금 {count.unpaid}{unpaidWon ? ` · ${won(unpaidWon)}` : ''}</span>
         {count.openworld > 0 && <span className="font-bold text-sky-800">오픈월드 {count.openworld}</span>}
+        {count.postpaid > 0 && <span className="font-bold text-orange-700">후불 {count.postpaid}</span>}
         {count.prepaid > 0 && <span className="font-bold text-violet-700">선결제 {count.prepaid}</span>}
         {count.skip > 0 && <span className="text-stone-500">대조안함 {count.skip}</span>}
         <span className="ml-auto flex rounded-lg border border-stone-300 overflow-hidden text-[12px] font-bold">
@@ -171,7 +174,7 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
       {sheet.people === 0 && sheet.banchan.length === 0
         ? <p className="text-center text-stone-400 text-sm py-6">이 날짜에 주문이 없어요 — 맨 위에서 날짜를 바꿔 보세요</p>
         : <CookingTable sheet={sheet} pay={{
-            state: id => { const o = byId.get(id); return o ? payState(o) : 'skip'; },
+            state: id => { const o = byId.get(id); return o ? stateOf(o) : 'skip'; },
             onToggle: id => { const o = byId.get(id); if (o) click(o); },
             // 선결제가 마이너스 = 더 먹은 만큼 입금 요청할 손님 (사장님 2026-11-14)
             // 여러 단계 선결제 손님은 이 주문 단계·용량의 묶음 잔액으로 본다
@@ -187,7 +190,55 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
   );
 }
 
-type CascadeLine = { id: string; date: string; qty: number; action: '뺌' | '이미 뺌' | '건너뜀'; why?: string; after: number };
+/* 후불 — 받을 돈 (2026-11-14 사장님: "고우리는 특이하게 후불로 하고 있어")
+   후불 손님마다 아직 안 받은 주문 날짜·금액과 합계. 돈을 받으면 [정산] → 그 주문들을 한꺼번에 입금확인.
+   손님 카드 '후불' 은 고객관리에서 켜고 끈다. */
+type PostpaidRow = { id: string; baby_name: string; total: number; orders: { id: string; date: string; qty: number; won: number; excel: boolean }[] };
+function PostpaidBox({ onSettled }: { onSettled: (ids: string[], note: string) => void }) {
+  const [list, setList] = useState<PostpaidRow[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => fetch('/api/admin/postpaid').then(r => r.json()).then(d => { if (d.ok) setList(d.list); }).catch(() => { /* 못 읽으면 상자를 안 보인다 */ });
+  useEffect(() => { load(); }, []);
+  if (!list || !list.length) return null;
+  async function settle(c: PostpaidRow) {
+    if (!confirm(`${c.baby_name} — 후불 ${c.orders.length}건 ${c.total.toLocaleString()}원을 받으셨나요?\n${c.orders.map(o => `${md(o.date)} ${o.qty}팩 ${o.won.toLocaleString()}원`).join('\n')}\n\n전부 입금확인으로 바꿉니다.`)) return;
+    setBusy(c.id); setMsg(null);
+    const d = await fetch('/api/admin/postpaid', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: c.id, order_ids: c.orders.map(o => o.id) }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(null);
+    if (!d.ok) { setMsg(`못 했어요: ${d.error || ''}`); return; }
+    onSettled(d.ids || [], d.paid_note);
+    setMsg(`${c.baby_name} — ${d.total.toLocaleString()}원 정산했어요`);
+    load();
+  }
+  return (
+    <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+      <p className="text-[13px] font-black text-orange-800">후불 — 받을 돈</p>
+      <div className="mt-1.5 space-y-1.5">
+        {list.map(c => (
+          <div key={c.id} className="flex items-center gap-2 flex-wrap text-[12px]">
+            <b className="text-stone-900">{c.baby_name}</b>
+            {c.orders.length === 0 ? <span className="text-stone-400">받을 돈 없음</span> : <>
+              <b className="text-orange-700">{c.orders.length}건 {c.total.toLocaleString()}원</b>
+              <span className="text-[11px] text-stone-500">
+                {c.orders.map(o => `${md(o.date)} ${o.won.toLocaleString()}${o.excel ? '(엑셀)' : ''}`).join(' · ')}
+              </span>
+              <button disabled={busy === c.id} onClick={() => settle(c)}
+                className="ml-auto px-3 py-1 rounded-lg border border-orange-300 bg-white text-orange-800 font-bold disabled:opacity-40">정산 (받았어요)</button>
+            </>}
+          </div>
+        ))}
+      </div>
+      {msg && <p className="mt-1 text-[12px] font-bold text-orange-800">{msg}</p>}
+      <p className="mt-1 text-[11px] text-stone-500">표에서는 주황 이름이 후불 주문이에요. 일부만 받았으면 그 날짜 이름을 눌러 하나씩 입금확인하세요. (엑셀) = 앱 이전 주문이라 이미 받으셨을 수도 있어요.</p>
+    </div>
+  );
+}
+
+type CascadeLine ={ id: string; date: string; qty: number; action: '뺌' | '이미 뺌' | '건너뜀'; why?: string; after: number };
 
 function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOrder }: {
   o: SheetOrder; cust?: Customer; onClose: () => void; onToggle: () => void; onPatch: (p: Patch) => void;
@@ -490,6 +541,7 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
 
   return (
     <div className="space-y-4">
+      <PostpaidBox onSettled={(ids, note) => ids.forEach(id => onPatch?.(id, { order: { paid: true, paid_note: note } }))} />
       {minus.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
           <p className="text-[13px] font-black text-red-700">입금 요청 — 선결제 마이너스 {minus.length}명</p>

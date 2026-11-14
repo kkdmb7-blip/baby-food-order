@@ -33,7 +33,7 @@ export default async function AdminPage({ searchParams }: { searchParams: { date
     // 선결제·정기 손님이 1000번째 뒤에 있으면 화면에서 통째로 사라진다.
     // 화면에 늘 필요한 건 선결제·정기뿐이고, 나머지는 검색으로 찾는다(/api/customers?q=).
     sb.from('baby_food_customers').select('*')
-      .or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true,prepaid_split.not.is.null,prepaid_ship.not.is.null,banchan_regular.eq.true')
+      .or('prepaid_balance.neq.0,prepaid_banchan.gt.0,is_regular.eq.true,openworld.eq.true,prepaid_split.not.is.null,prepaid_ship.not.is.null,banchan_regular.eq.true,postpaid.eq.true')
       .order('baby_name').limit(1000),
     sb.from('baby_food_weekly_menus').select('*').eq('week_start', weekStart)
   ]);

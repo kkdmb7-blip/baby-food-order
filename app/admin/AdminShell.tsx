@@ -1113,6 +1113,18 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     setMsg(`${c.baby_name} — ${next ? '오픈월드로 표시' : '오픈월드 표시 뺌'} (주문 ${r.orders}건 같이 바뀜)`);
   }
 
+  async function toggleFlag(c: Customer, key: 'postpaid') {
+    const next = !c[key];
+    setSavingId(c.id);
+    const r = await fetch('/api/customers', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, [key]: next }),
+    }).then(x => x.json()).catch(() => ({}));
+    setSavingId(null);
+    if (!r.ok) { setMsg(`못 바꿨어요: ${r.error || ''}`); return; }
+    patchCustomer(c.id, { [key]: next });
+    setMsg(`${c.baby_name} — ${next ? '후불 손님으로' : '후불 아님으로'} 표시했어요`);
+  }
+
   async function toggleBanchanRegular(c: Customer) {
     const next = !c.banchan_regular;
     setSavingId(c.id);
@@ -1340,6 +1352,12 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
             title="반찬 정기배송 손님 — 조리표·이름표에서 정기배송 자리에"
             className={`text-[10px] px-1.5 rounded-full border ${c.banchan_regular ? 'bg-lime-100 text-lime-800 border-lime-300 font-bold' : 'border-stone-200 text-stone-300'}`}>
             반찬정기
+          </button>
+          {/* 후불 — 먹고 나중에 한꺼번에 내는 집. 입금 탭 '후불 — 받을 돈' 에 모인다 */}
+          <button onClick={() => toggleFlag(c, 'postpaid')} disabled={busy}
+            title="후불 손님 — 입금 탭에서 주황, 맨 위 '후불 — 받을 돈'에 모임"
+            className={`text-[10px] px-1.5 rounded-full border ${c.postpaid ? 'bg-orange-100 text-orange-800 border-orange-300 font-bold' : 'border-stone-200 text-stone-300'}`}>
+            후불
           </button>
 
           {isSplit(c) ? (
