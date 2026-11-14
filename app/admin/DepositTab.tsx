@@ -6,6 +6,7 @@ import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
 import { kindOf, isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
+import { AddMissing } from './InlineAdd';
 
 /*
   입금 대조 화면
@@ -76,9 +77,10 @@ function labelOf(o: SheetOrder): string | null {
 
 type Patch = { order?: Partial<SheetOrder>; customer?: Partial<Customer>; customerId?: string };
 
-function PaySheet({ orders, date, customers, onToggle, onPatch }: {
+function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
   orders: SheetOrder[]; date: string; customers: Customer[];
   onToggle: (o: SheetOrder) => void; onPatch: (orderId: string | null, p: Patch) => void;
+  onAdded?: (row: any) => void;
 }) {
   /* 이름을 누르면
        '입금 체크' 모드 — 선결제가 있는 손님(남은 팩·반찬 회수)은 선결제 판이 열리고, 나머지는 입금확인을 켜고 끈다(전과 같음)
@@ -91,7 +93,15 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
   const setMode = (m: 'panel' | 'quick') => { setModeState(m); try { localStorage.setItem('kkdmb-pay-mode', m); } catch { /* */ } };
   const [openId, setOpenId] = useState<string | null>(null);
   const byId = new Map(orders.map(o => [o.id, o]));
-  const sheet = buildCookingSheet(orders as any, date);
+  // 조리표를 뽑은 시각 — 그 뒤에 들어온 아이는 조리표처럼 단계 맨 아래('추가')에
+  const [printedAt, setPrintedAt] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true; setPrintedAt(null);
+    fetch(`/api/admin/cooking-print?date=${date}`).then(r => r.json())
+      .then(d => { if (alive && d.ok && d.printed) setPrintedAt(d.printedAt || null); }).catch(() => { /* 못 읽어도 표는 나온다 */ });
+    return () => { alive = false; };
+  }, [date]);
+  const sheet = buildCookingSheet(orders as any, date, printedAt);
   /* 오픈월드는 블록마다 아래쪽으로 (사장님: 엑셀에서도 월·목 표 아래에 따로 적었다).
      한 단계가 20명 넘어 여러 칸으로 나뉘면 단계 전체를 한 줄로 이어 정렬한 뒤 원래 칸 크기대로 다시 나눈다
      — 그래야 오픈월드가 칸마다 흩어지지 않고 그 단계 맨 끝에 모인다. 조리표 탭 순서는 그대로다. */
@@ -169,7 +179,8 @@ function PaySheet({ orders, date, customers, onToggle, onPatch }: {
               const b = balanceFor(c, kindOf(o.stage, (o as any).volume));
               return !String(o.stage || '').startsWith('반찬') && b < 0 ? `${b}` : null;
             },
-          }} />}
+          }} printedAt={printedAt} add={onAdded ? { date, onAdded } : undefined} />}
+      {onAdded && <AddMissing sheet={sheet} date={date} onAdded={onAdded} />}
     </div>
   );
 }
@@ -379,9 +390,10 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   );
 }
 
-export default function DepositTab({ dayOrders = [], date, customers = [], onTogglePaid, onPatch }: {
+export default function DepositTab({ dayOrders = [], date, customers = [], onTogglePaid, onPatch, onAdded }: {
   dayOrders?: SheetOrder[]; date?: string; customers?: Customer[]; onTogglePaid?: (o: any) => void;
   onPatch?: (orderId: string | null, p: Patch) => void;
+  onAdded?: (row: any) => void; // 표 단계 아래 추가 줄로 넣은 주문 — 조리표 탭과 같은 주문 목록에 꽂는다
 }) {
   const [showBank, setShowBank] = useState(false);
   const [deps, setDeps] = useState<Dep[] | null>(null);
@@ -473,7 +485,7 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
         </div>
       )}
       {date && <PaySheet orders={dayOrders} date={date} customers={customers} onToggle={toggleFromSheet}
-        onPatch={(id, p) => onPatch?.(id, p)} />}
+        onPatch={(id, p) => onPatch?.(id, p)} onAdded={onAdded} />}
 
       <button onClick={() => setShowBank(v => !v)}
         className="w-full flex justify-between items-center px-4 py-3 bg-white rounded-xl border border-stone-200 text-sm font-bold text-stone-700">

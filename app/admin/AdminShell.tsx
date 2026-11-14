@@ -12,9 +12,9 @@ import DepositTab from './DepositTab';
 import ChargeBar from './ChargeBar';
 import SheetEditor from './SheetEditor';
 import CookingTable from './CookingTable';
-import { buildCookingSheet, SMALL_VOLUME } from '@/lib/cookingSheet';
+import { buildCookingSheet } from '@/lib/cookingSheet';
 import { isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
-import CookingEntry from './CookingEntry';
+import { AddMissing } from './InlineAdd';
 import { defaultArrivalNote } from '@/lib/arrival';
 import { sortBanchanNames } from '@/lib/banchanOrder';
 import { parseKakaoPrepaid } from '@/lib/kakaoPrepaid';
@@ -559,7 +559,8 @@ export default function AdminShell({
           onPatch={(orderId, p) => {
             if (orderId && p.order) setOrders(prev => prev.map(x => x.id === orderId ? { ...x, ...(p.order as any) } : x));
             if (p.customerId && p.customer) setCustomers(prev => prev.map(c => c.id === p.customerId ? { ...c, ...p.customer } : c));
-          }} />}
+          }}
+          onAdded={row => setOrders(prev => [row as Order, ...prev])} />}
         {tab === '통계' && <StatsTab />}
 
         {/* ── 탭 2: 조리표 ────────────────────────────────── */}
@@ -582,7 +583,8 @@ export default function AdminShell({
               }}
               onDateChange={d => router.push(`/admin?date=${d}`)} />
             <CookingSheet orders={orders} today={selectedDate} customers={customers}
-              onChanged={() => router.refresh()} />
+              onChanged={() => router.refresh()}
+              onAdded={row => setOrders(prev => [row as Order, ...prev])} />
           </>
         )}
 
@@ -615,13 +617,12 @@ type PrintInfo = {
   newOrders?: number; newPacks?: number;
 };
 
-function CookingSheet({ orders, today, customers, onChanged }: {
+function CookingSheet({ orders, today, customers, onChanged, onAdded }: {
   orders: Order[]; today: string; customers: Customer[]; onChanged: () => void;
+  onAdded: (row: any) => void; // 단계 아래 추가 줄로 넣은 주문 — 입금 탭과 같은 주문 목록에 꽂는다
 }) {
   // 고치고 있는 사람(연락처). 한 사람이 중기·후기를 같이 시키기도 하니 줄이 아니라 사람 단위로 연다.
   const [editPhone, setEditPhone] = useState<string | null>(null);
-  // 단계 블록 아래 '+' 로 연 추가 칸 — 프린트 뒤 종이에 손으로 적은 아이를 나중에 넣는다 (2026-11-14 사장님)
-  const [addStage, setAddStage] = useState<string | null>(null);
   /*
     조리표를 언제 뽑았는지 기억해 둔다. 오전 7시에 뽑으신 뒤 들어오는 주문을
     지금까지는 종이에 손으로 적으셨다. 뽑은 시각을 알면 그 뒤에 들어온 줄만
@@ -710,29 +711,15 @@ function CookingSheet({ orders, today, customers, onChanged }: {
           </span>
         </div>
 
-        {/* 표에 없는 단계(그날 주문이 하나도 없는 단계)에 넣을 때 */}
-        <div className="flex gap-1.5 flex-wrap mb-2 no-print">
-          {[...STAGES.filter(s => !sheet.sections.some(sec => sec.stage === s)), ...(sheet.banchan.length ? [] : ['반찬'])].map(s => (
-            <button key={s} onClick={() => setAddStage(s)}
-              className="px-2 py-0.5 rounded-lg border border-dashed border-amber-400 bg-amber-50 text-amber-800 text-[12px] font-bold">
-              ＋ {s === '반찬' ? '반찬 세트' : s.replace('단계', '')}
-            </button>
-          ))}
-        </div>
-
-        {addStage && (
-          <CookingEntry key={addStage} date={today}
-            preset={addStage === '반찬' ? { banchan: true } : { stage: addStage, volume: SMALL_VOLUME[addStage] }}
-            onClose={() => setAddStage(null)} onSaved={onChanged} />
-        )}
-
         {sheet.people === 0 && sheet.banchan.length === 0
           ? <div className="text-center text-stone-400 text-sm py-6">이 날짜에 조리할 주문이 없어요</div>
           : <CookingTable sheet={sheet}
                           onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
                           onSaved={onChanged}
-                          onAdd={s => { setAddStage(s); setEditPhone(null); }}
+                          add={{ date: today, onAdded }}
                           printedAt={printInfo?.printedAt ?? null} />}
+        {/* 그날 주문이 없는 단계에 넣을 때 — 단추를 누르면 빈 표가 열린다 */}
+        <AddMissing sheet={sheet} date={today} onAdded={onAdded} />
 
         {/* 고치는 중인 사람 — 표 아래에 펼친다 */}
         {editPhone && (

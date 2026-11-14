@@ -2,6 +2,7 @@
 import { useState, type ReactNode } from 'react';
 import { MENU_TYPES, menuLabel } from '@/lib/supabase';
 import { BIG_VOLUME, SMALL_VOLUME, type CookingSheet, type PersonRow } from '@/lib/cookingSheet';
+import { AddRow } from './InlineAdd';
 
 /*
   조리표 한 장 — 화면과 종이가 같은 모양을 쓴다.
@@ -25,13 +26,13 @@ const PAY_BG: Record<PayState, string> = {
   prepaid: 'bg-violet-100 text-violet-900', skip: 'bg-stone-100 text-stone-500',
 };
 
-export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, onAdd }: {
+export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, add }: {
   sheet: CookingSheet;
   /** 입금 체크판으로 쓸 때 — 이름 칸 색이 입금 상태가 되고, 이름을 누르면 입금확인을 켜고 끈다.
       tag: 이름 옆 작은 빨간 꼬리표(선결제 마이너스 '−7' 등) */
   pay?: { state: (orderId: string) => PayState; onToggle: (orderId: string) => void; tag?: (orderId: string) => string | null };
-  /** 화면에서만 — 단계 블록 맨 아래 '+' (종이에 손으로 적은 아이를 나중에 넣기). 반찬 블록은 '반찬' */
-  onAdd?: (stage: string) => void;
+  /** 화면에서만 — 단계 블록 맨 아래 추가 줄(이름·230/300·팩수 → Enter). 종이에 손으로 적은 아이를 그 자리에서 넣는다 */
+  add?: { date: string; onAdded: (row: any) => void };
   /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
   onPick?: (phone: string) => void;
   /** 화면에서만 — 숫자를 칸에서 바로 고친다. 저장되면 부른다 */
@@ -246,14 +247,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, o
                   ))}
                 </tr>
               </>)}
-              {onAdd && sec.part === sec.parts && (
-                <tr className="no-print">
-                  <td colSpan={MENU_TYPES.length + 2} className="p-0">
-                    <button onClick={() => onAdd(sec.stage)} title={`${sec.stage.replace('단계', '')}에 아이 추가`}
-                      className="w-full py-1 text-[16px] font-black text-amber-700 border border-dashed border-amber-400 bg-amber-50 hover:bg-amber-100">＋</button>
-                  </td>
-                </tr>
-              )}
+              {add && sec.part === sec.parts && <AddRow stage={sec.stage} date={add.date} onAdded={add.onAdded} cols={MENU_TYPES.length + 2} />}
             </tbody>
           </table>
           </div>
@@ -302,14 +296,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, o
                   )}
                 </td>
               </tr>
-              {onAdd && (
-                <tr className="no-print">
-                  <td colSpan={3} className="p-0">
-                    <button onClick={() => onAdd('반찬')} title="반찬 세트에 아이 추가"
-                      className="w-full py-1 text-[16px] font-black text-amber-700 border border-dashed border-amber-400 bg-amber-50 hover:bg-amber-100">＋</button>
-                  </td>
-                </tr>
-              )}
+              {add && <AddRow stage="반찬" date={add.date} onAdded={add.onAdded} cols={3} />}
             </tbody>
           </table>
           </div>

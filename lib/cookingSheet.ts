@@ -72,6 +72,7 @@ export type PersonRow = {
    *  한 줄뿐인 사람은 undefined. 화면이 이 번호로 이름 칸 배경색을 고른다. */
   color?: number;
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
+  createdAt?: string;  // 추가 줄끼리 들어온 순서로 놓으려고
 };
 
 export type Section = {
@@ -92,7 +93,7 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string }[];
+  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string; isNew?: boolean; createdAt?: string }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
@@ -155,6 +156,7 @@ export function buildCookingSheet(
         banchan.push({
           orderId: o.id, name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage), ship: shipTag(o),
+          isNew: !!(printedAt && o.created_at && o.created_at > printedAt), createdAt: o.created_at,
         });
         continue;
       }
@@ -179,6 +181,7 @@ export function buildCookingSheet(
         multi: false,
         others: [],
         isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
+        createdAt: o.created_at,
       });
     }
   }
@@ -253,8 +256,18 @@ export function buildCookingSheet(
      같은 단계면 그냥 섞어서 적었어. 그러면 같은 단계 다른 용량의 아가들은 이름이 바로 붙겠지."
      전에는 용량 먼저 정렬해서 240g 을 쭉 챙기고 310g 을 쭉 챙기는 흐름이었는데,
      그러면 한 아이의 230·300 이 멀리 떨어진다. 큰 용량은 빨간 숫자로 구분된다. */
+  // 단, 프린트한 뒤에 들어온 줄('추가')은 ㄱㄴ순에 끼우지 않고 맨 아래에 들어온 순서대로 —
+  // 사장님 2026-11-14: "추가한 아이들은 ㄱㄴ순 말고 그냥 맨 아래" (종이에 손으로 적은 것도 맨 아래라 대조가 쉽다)
   for (const list of byStage.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.volume - b.volume);
+    list.sort((a, b) => Number(a.isNew) - Number(b.isNew)
+      || (a.isNew ? String(a.createdAt || '').localeCompare(String(b.createdAt || '')) : 0)
+      || a.name.localeCompare(b.name, 'ko') || a.volume - b.volume);
+  }
+  {
+    const keep = banchan.map((b, i) => ({ b, i }));
+    keep.sort((x, y) => Number(x.b.isNew) - Number(y.b.isNew)
+      || (x.b.isNew ? String(x.b.createdAt || '').localeCompare(String(y.b.createdAt || '')) : 0) || x.i - y.i);
+    banchan.splice(0, banchan.length, ...keep.map(x => x.b));
   }
 
   const sections: Section[] = STAGES.filter(s => (byStage.get(s) || []).length > 0).flatMap(stage => {
