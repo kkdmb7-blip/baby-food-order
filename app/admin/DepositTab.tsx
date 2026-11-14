@@ -6,7 +6,7 @@ import { isOpenworld } from '@/lib/openworld';
 import { prepaidPrice, type Customer } from '@/lib/supabase';
 import ChargeBar from './ChargeBar';
 import { kindOf, isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
-import { AddMissing } from './InlineAdd';
+import { AddMissing, LaterInfo } from './InlineAdd';
 
 /*
   입금 대조 화면
@@ -106,16 +106,18 @@ function PaySheet({ orders, date, customers, onToggle, onPatch, onAdded }: {
      한 단계가 20명 넘어 여러 칸으로 나뉘면 단계 전체를 한 줄로 이어 정렬한 뒤 원래 칸 크기대로 다시 나눈다
      — 그래야 오픈월드가 칸마다 흩어지지 않고 그 단계 맨 끝에 모인다. 조리표 탭 순서는 그대로다. */
   {
+    // 순서: 보통 → 오픈월드 → 나중에 넣은 아이('추가', 사장님: "추가한 아이들은 맨 아래")
     const ow = (id: string) => isOpenworld(byId.get(id)?.paid_note) ? 1 : 0;
+    const rank = (p: { orderId: string; isNew?: boolean }) => (p.isNew ? 2 : ow(p.orderId));
     for (const stage of new Set(sheet.sections.map(s => s.stage))) {
       const parts = sheet.sections.filter(s => s.stage === stage);
       const all = parts.flatMap(s => s.list).map((p, i) => ({ p, i }))
-        .sort((a, b) => ow(a.p.orderId) - ow(b.p.orderId) || a.i - b.i).map(x => x.p);
+        .sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i).map(x => x.p);
       let k = 0;
       for (const s of parts) { const n = s.list.length; s.list = all.slice(k, k + n); k += n; }
     }
     sheet.banchan = sheet.banchan.map((b, i) => ({ b, i }))
-      .sort((x, y) => ow(x.b.orderId) - ow(y.b.orderId) || x.i - y.i).map(x => x.b);
+      .sort((x, y) => rank(x.b) - rank(y.b) || x.i - y.i).map(x => x.b);
   }
   const custOf = (o: SheetOrder) =>
     customers.find(c => (o.customer_id && c.id === o.customer_id)) || customers.find(c => !!o.customer_phone && c.phone === o.customer_phone);
@@ -316,6 +318,10 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
         <button onClick={onClose} className="ml-auto text-stone-500 text-[12px] underline">닫기</button>
       </div>
       {o.paid_note && <p className="text-[11px] text-stone-500">{o.paid_note}</p>}
+      {/* 이름·팩수만 먼저 넣은 아이 — 연락처·주소를 여기서 넣으면 손님 카드가 이어지고 선결제도 쓸 수 있다 */}
+      {!String((o as any).address || '').trim() && (o as any).receive_method !== '픽업' && (
+        <LaterInfo order={o as any} onSaved={row => patch({ order: row })} />
+      )}
 
       {/* ① 돈으로 받았으면 이것 하나 — 판 맨 앞 */}
       {!used && o.order_type !== '선결제' && (

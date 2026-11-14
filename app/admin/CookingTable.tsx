@@ -34,7 +34,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
   /** 화면에서만 — 단계 블록 맨 아래 추가 줄(이름·230/300·팩수 → Enter). 종이에 손으로 적은 아이를 그 자리에서 넣는다 */
   add?: { date: string; onAdded: (row: any) => void };
   /** 화면에서만 — 이름을 누르면 그 사람 것을 고친다(여덟 칸 전부 열림) */
-  onPick?: (phone: string) => void;
+  onPick?: (phone: string, orderId: string) => void;
   /** 화면에서만 — 숫자를 칸에서 바로 고친다. 저장되면 부른다 */
   onSaved?: () => void;
   /** 프린트한 시각. 그 뒤에 들어온 줄에 '추가' 를 붙인다 */
@@ -65,7 +65,9 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
         <td className={`${base} ${PAY_BG[st]}`}>
           <button onClick={() => pay.onToggle(orderId)} title="눌러서 입금확인 켜기/끄기"
             className="w-full text-center hover:underline">
-            {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}{node}
+            {st === 'paid' && <span className="text-emerald-800 font-black">✓</span>}
+            {/* 선결제에서 뺀 것도 체크 — 사장님 2026-11-14 "선결제도 체크 표기 넣어줘" */}
+            {st === 'prepaid' && <span className="text-violet-700 font-black">✓</span>}{node}
             {tag && <span className="ml-0.5 px-0.5 rounded bg-red-500 text-white text-[10px] font-black">{tag}</span>}
           </button>
         </td>
@@ -74,7 +76,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
     return (
       <td className={`${base} ${groupBg(color)}`}>
         {onPick ? (
-          <button onClick={() => onPick(phone)} title="눌러서 고치기"
+          <button onClick={() => onPick(phone, orderId)} title="눌러서 고치기"
             className="w-full text-center hover:text-amber-700 hover:underline">{node}</button>
         ) : node}
       </td>
@@ -188,7 +190,8 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
                 const nameNode = (
                   <>
                     {p.name}
-                    {printedAt && p.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}
+                    {p.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}
+                    {p.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print" title="연락처·주소를 아직 안 넣었어요 — 이름을 눌러 넣기">정보?</span>}
                     {p.unspec > 0 && <span className="ml-0.5 text-[10px] font-bold text-red-600">미지정{p.unspec}</span>}
                   </>
                 );
@@ -275,7 +278,7 @@ export default function CookingTable({ sheet, onPick, onSaved, printedAt, pay, a
             </thead>
             <tbody>
               {sheet.banchan.map((b, i) => {
-                const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}</>;
+                const bn = <>{b.name}{b.single && <span className="ml-0.5 text-[10px] font-bold text-amber-700">낱개</span>}{b.isNew && <span className="ml-0.5 text-[10px] font-black text-amber-700">추가</span>}{b.needInfo && <span className="ml-0.5 px-0.5 rounded bg-yellow-300 text-[10px] font-black text-stone-900 no-print">정보?</span>}</>;
                 return (
                 <tr key={i}>
                   {nameCell(b.orderId, b.phone, b.color, bn, 'border border-black px-0 py-[2px] text-[13px] font-bold break-all text-center')}

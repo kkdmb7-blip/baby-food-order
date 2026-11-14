@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseService } from '@/lib/supabase';
+import { supabaseService, STAGE_OPTIONS, getPrice, shippingFeeFor, tierOf, type StageType } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { applyCancelReversal } from '@/lib/orderCancel';
 import { orderDates } from '@/lib/orderItems';
@@ -42,6 +42,50 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     void sendStatusPush(sb, o.customer_phone, `${o.baby_name} 이유식이 도착했어요`, note);
     return NextResponse.json({ ok: true, arrival_note: note, arrived_at, status: '배송완료' });
+  }
+
+  // 정보 나중에 넣기 — 조리표·입금 표 아래 줄에서 이름·팩수만으로 먼저 넣은 아이(연락처·주소 빈 칸)
+  // { info: { customer_phone, address, address_detail?, door_password?, months, receive_method?, delivery_method? } }
+  // 그 연락처의 손님 카드가 있으면 잇고, 없으면 새로 만든다. 배송 방법이 바뀌면 값(지역 인상분·배송비)을 다시 계산한다.
+  if (status === undefined && body.info && typeof body.info === 'object') {
+    const i = body.info;
+    const phone = String(i.customer_phone || '').replace(/\D/g, '');
+    const address = String(i.address || '').trim().slice(0, 200);
+    const months = parseInt(i.months);
+    if (!/^\d{10,11}$/.test(phone)) return NextResponse.json({ ok: false, error: '연락처를 확인해 주세요' }, { status: 400 });
+    if (!address && i.receive_method !== '픽업') return NextResponse.json({ ok: false, error: '주소를 넣어 주세요' }, { status: 400 });
+    if (!(months > 0)) return NextResponse.json({ ok: false, error: '개월수를 넣어 주세요' }, { status: 400 });
+    const { data: o } = await sb.from('baby_food_orders').select('*').eq('id', id).single();
+    if (!o) return NextResponse.json({ ok: false, error: '주문 없음' }, { status: 404 });
+    const receive_method = i.receive_method === '픽업' ? '픽업' : '배송';
+    const delivery_method = receive_method === '픽업' ? '직배송'
+      : ['직배송', '당일배송', '택배익일배송'].includes(i.delivery_method) ? i.delivery_method : (o.delivery_method || '직배송');
+    const patch: Record<string, any> = {
+      customer_phone: phone, address, months, receive_method, delivery_method,
+      address_detail: String(i.address_detail || '').trim().slice(0, 100) || null,
+      door_password: String(i.door_password || '').trim().slice(0, 30) || null,
+    };
+    // 값 다시 계산 — 이유식 한 칸짜리 일반 주문이고 아직 입금 전일 때만 (선결제·입금된 주문은 돈이 이미 오갔다)
+    const st = String(o.stage || '') as StageType;
+    if (!o.paid && o.order_type === '일반' && STAGE_OPTIONS[st] && o.volume) {
+      const tier = receive_method === '픽업' ? '직배송' : tierOf(delivery_method);
+      const per = getPrice(st, Number(o.volume), tier);
+      if (per) {
+        patch.total_price = per * (Number(o.total_qty) || 0);
+        patch.shipping_fee = shippingFeeFor(tier, Number(o.total_qty) || 0, patch.total_price);
+      }
+    }
+    // 손님 카드 — 연락처로 찾고 없으면 만든다
+    const { data: c0 } = await sb.from('baby_food_customers').select('id').eq('phone', phone).maybeSingle();
+    let cid = c0?.id as string | undefined;
+    if (!cid) {
+      const { data: cn } = await sb.from('baby_food_customers').insert({ baby_name: o.baby_name, phone, points: 0 }).select('id').single();
+      cid = cn?.id;
+    }
+    if (cid) patch.customer_id = cid;
+    const { data: row, error } = await sb.from('baby_food_orders').update(patch).eq('id', id).select('*').single();
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, row });
   }
 
   // 아기 이름 고치기 — 조리표에 찍히는 이름은 카카오 채널에 저장해 둔 이름과 같아야 한다.

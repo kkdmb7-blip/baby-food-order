@@ -15,7 +15,7 @@ import CookingTable from './CookingTable';
 import { buildCookingSheet } from '@/lib/cookingSheet';
 import { isSplit, partsOf, balanceFor, shortKind } from '@/lib/prepaidSplit';
 import { SHIP_CHARGE } from '@/lib/prepaidShipRules';
-import { AddMissing } from './InlineAdd';
+import { AddMissing, LaterInfo } from './InlineAdd';
 import { defaultArrivalNote } from '@/lib/arrival';
 import { sortBanchanNames } from '@/lib/banchanOrder';
 import { parseKakaoPrepaid } from '@/lib/kakaoPrepaid';
@@ -585,7 +585,8 @@ export default function AdminShell({
               onDateChange={d => router.push(`/admin?date=${d}`)} />
             <CookingSheet orders={orders} today={selectedDate} customers={customers}
               onChanged={() => router.refresh()}
-              onAdded={row => setOrders(prev => [row as Order, ...prev])} />
+              onAdded={row => setOrders(prev => [row as Order, ...prev])}
+              onReplace={row => setOrders(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))} />
           </>
         )}
 
@@ -618,12 +619,16 @@ type PrintInfo = {
   newOrders?: number; newPacks?: number;
 };
 
-function CookingSheet({ orders, today, customers, onChanged, onAdded }: {
+function CookingSheet({ orders, today, customers, onChanged, onAdded, onReplace }: {
   orders: Order[]; today: string; customers: Customer[]; onChanged: () => void;
   onAdded: (row: any) => void; // 단계 아래 추가 줄로 넣은 주문 — 입금 탭과 같은 주문 목록에 꽂는다
+  onReplace: (row: any) => void; // 정보 넣은 주문으로 바꿔 끼운다
 }) {
   // 고치고 있는 사람(연락처). 한 사람이 중기·후기를 같이 시키기도 하니 줄이 아니라 사람 단위로 연다.
   const [editPhone, setEditPhone] = useState<string | null>(null);
+  // 이름·팩수만 먼저 넣은 아이(연락처·주소 빈 칸)를 누르면 '정보 넣기' 칸
+  const [infoId, setInfoId] = useState<string | null>(null);
+  const infoOrder = infoId ? orders.find(o => o.id === infoId) : undefined;
   /*
     조리표를 언제 뽑았는지 기억해 둔다. 오전 7시에 뽑으신 뒤 들어오는 주문을
     지금까지는 종이에 손으로 적으셨다. 뽑은 시각을 알면 그 뒤에 들어온 줄만
@@ -715,7 +720,11 @@ function CookingSheet({ orders, today, customers, onChanged, onAdded }: {
         {sheet.people === 0 && sheet.banchan.length === 0
           ? <div className="text-center text-stone-400 text-sm py-6">이 날짜에 조리할 주문이 없어요</div>
           : <CookingTable sheet={sheet}
-                          onPick={ph => setEditPhone(p => (p === ph ? null : ph))}
+                          onPick={(ph, oid) => {
+                            const o = orders.find(x => x.id === oid);
+                            if (o && !String(o.address || '').trim() && (o as any).receive_method !== '픽업') { setInfoId(oid); setEditPhone(null); return; }
+                            setInfoId(null); setEditPhone(p => (p === ph ? null : ph));
+                          }}
                           onSaved={onChanged}
                           add={{ date: today, onAdded }}
                           printedAt={printInfo?.printedAt ?? null} />}
@@ -723,6 +732,12 @@ function CookingSheet({ orders, today, customers, onChanged, onAdded }: {
         <AddMissing sheet={sheet} date={today} onAdded={onAdded} />
 
         {/* 고치는 중인 사람 — 표 아래에 펼친다 */}
+        {infoOrder && (
+          <div className="mt-3">
+            <LaterInfo order={infoOrder} onClose={() => setInfoId(null)}
+              onSaved={row => { onReplace(row); setInfoId(null); }} />
+          </div>
+        )}
         {editPhone && (
           <SheetEditor
             date={today}

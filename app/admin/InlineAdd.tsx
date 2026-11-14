@@ -68,15 +68,23 @@ export function AddRow({ stage, date, onAdded, cols }: {
 
   async function save() {
     if (busy) return;
+    const typed = name.trim();
+    if (!typed) { setMsg({ ok: false, t: '이름을 넣어 주세요' }); return; }
+    if (total < 1) { setMsg({ ok: false, t: '팩 수를 넣어 주세요' }); return; }
     let h = hit;
     if (!h) {
-      const exact = hits.filter(x => x.babyName.replace(/\s/g, '') === name.trim().replace(/\s/g, ''));
+      // 목록이 늦게 와서(빨리 치고 Enter) 있는 손님을 새 아이로 넣지 않게 — 넣기 직전에 한 번 더 찾는다
+      let list = hits;
+      try {
+        const d = await fetch(`/api/admin/order-lookup?q=${encodeURIComponent(typed)}`).then(r => r.json());
+        if (d.ok) list = d.hits || [];
+      } catch { /* 못 찾으면 지금 목록으로 */ }
+      const exact = list.filter(x => x.babyName.replace(/\s/g, '') === typed.replace(/\s/g, ''));
       if (exact.length === 1) h = exact[0];
-      else { setMsg({ ok: false, t: hits.length ? '아래 목록에서 아이를 골라 주세요' : '지난 주문이 없는 손님은 주문 탭에서 넣어 주세요' }); return; }
+      else if (exact.length > 1) { setHits(list.slice(0, 6)); setMsg({ ok: false, t: '같은 이름이 여럿이에요 — 목록에서 골라 주세요' }); return; }
+      // 같은 이름이 없으면 새 아이 — 이름·팩수만 먼저 넣고 연락처·주소는 나중에 (사장님 2026-11-14)
     }
-    if (total < 1) { setMsg({ ok: false, t: '팩 수를 넣어 주세요' }); return; }
-    const months = h.guessMonths || h.lastMonths;
-    if (!months) { setMsg({ ok: false, t: '개월수를 몰라요 — 주문 탭에서 넣어 주세요' }); return; }
+    const months = h ? (h.guessMonths || h.lastMonths) : 0;
     const volume = banchan ? null : (big ? BIG_VOLUME[stage] : SMALL_VOLUME[stage]);
     const sets = banchan
       ? [{ stage: '반찬세트', volume: null, simple: true, menus: [], qty: total }]
@@ -86,20 +94,28 @@ export function AddRow({ stage, date, onAdded, cols }: {
     try {
       const res = await fetch('/api/orders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(h ? {
           admin_manual: true, baby_name: h.babyName, months, customer_phone: h.phone,
           address: h.address, address_detail: h.addressDetail, door_password: h.doorPassword,
           stage: banchan ? null : stage, volume, delivery_date: date, order_type: '일반',
           receive_method: h.receiveMethod === '픽업' ? '픽업' : '배송',
           delivery_method: h.receiveMethod === '픽업' ? '직배송' : (h.deliveryMethod || (/강서구|양천구/.test(h.address) ? '직배송' : '당일배송')),
           postal_code: h.postalCode, total_qty: total,
+          // 개월수를 모르는 손님(옛 기록에 없음)도 일단 넣는다 — 정보 넣을 때 고친다
+          ...(months ? {} : { later_info: true }),
+          items: [{ delivery_date: date, sets, date_qty: total }],
+        } : {
+          admin_manual: true, later_info: true, baby_name: typed, months: 0, customer_phone: '', address: '',
+          stage: banchan ? null : stage, volume, delivery_date: date, order_type: '일반',
+          receive_method: '배송', delivery_method: '직배송', total_qty: total,
           items: [{ delivery_date: date, sets, date_qty: total }],
         }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || j.ok === false) { setMsg({ ok: false, t: j.error || `못 넣었어요 (${res.status})` }); return; }
       if (j.row) onAdded(j.row);
-      setMsg({ ok: true, t: `${h.babyName} ${total}${banchan ? '세트' : '팩'} 넣었어요` });
+      setMsg({ ok: true, t: h ? `${h.babyName} ${total}${banchan ? '세트' : '팩'} 넣었어요`
+        : `${typed} ${total}${banchan ? '세트' : '팩'} 넣었어요 — 새 아이라 연락처·주소는 나중에 (이름 눌러 넣기)` });
       setName(''); setHit(null); setHits([]); setQty({}); setBig(false);
       setTimeout(() => nameRef.current?.focus(), 0);
     } catch (e: any) {
@@ -156,7 +172,69 @@ export function AddRow({ stage, date, onAdded, cols }: {
   );
 }
 
-/** 그날 주문이 하나도 없는 단계 — 단추를 누르면 그 단계의 빈 표(추가 줄만)가 열린다. 넣으면 진짜 블록이 생기고 이건 닫힌다 */
+/** 정보 나중에 넣기 — 이름·팩수만 먼저 넣은 아이의 연락처·주소·개월수·배송 방법.
+    저장하면 그 연락처의 손님 카드에 이어지고(없으면 새로), 배송 방법에 맞춰 값이 다시 계산된다. */
+export function LaterInfo({ order, onSaved, onClose }: {
+  order: { id: string; baby_name: string; customer_phone?: string | null; address?: string | null; months?: number | null };
+  onSaved: (row: any) => void; onClose?: () => void;
+}) {
+  const [phone, setPhone] = useState(order.customer_phone || '');
+  const [address, setAddress] = useState(order.address || '');
+  const [detail, setDetail] = useState('');
+  const [door, setDoor] = useState('');
+  const [months, setMonths] = useState('');
+  const [receive, setReceive] = useState<'배송' | '픽업'>('배송');
+  const [zone, setZone] = useState<'직배송' | '당일배송' | '택배익일배송'>('직배송');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { if (/강서구|양천구/.test(address)) setZone('직배송'); }, [address]);
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(`/api/orders/${order.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ info: { customer_phone: phone, address, address_detail: detail, door_password: door, months, receive_method: receive, delivery_method: zone } }),
+      }).then(x => x.json()).catch(e => ({ ok: false, error: e?.message }));
+      if (!r.ok) { setMsg(r.error || '못 넣었어요'); return; }
+      onSaved(r.row);
+    } finally { setBusy(false); }
+  }
+  const inp = 'px-2 py-1 border border-stone-300 rounded text-[13px] outline-none focus:border-amber-400';
+  return (
+    <div className="mb-3 border-2 border-yellow-300 bg-yellow-50 rounded-xl p-3 text-[12px] space-y-2 no-print">
+      <div className="flex items-center gap-2">
+        <b className="text-[14px] text-stone-900">{order.baby_name}</b>
+        <span className="text-stone-600">정보 넣기 — 이름·팩수만 먼저 넣은 아이예요</span>
+        {onClose && <button onClick={onClose} className="ml-auto text-stone-500 underline">닫기</button>}
+      </div>
+      <div className="flex gap-1.5 flex-wrap">
+        <input value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="연락처" className={`${inp} w-32`} />
+        <input value={months} onChange={e => setMonths(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="개월" className={`${inp} w-14`} />
+        <select value={receive} onChange={e => setReceive(e.target.value as any)} className={inp}><option>배송</option><option>픽업</option></select>
+        {receive === '배송' && (
+          <select value={zone} onChange={e => setZone(e.target.value as any)} className={inp}>
+            <option value="직배송">직배송 (강서·양천)</option><option value="당일배송">당일배송 (그 외)</option><option value="택배익일배송">택배</option>
+          </select>
+        )}
+      </div>
+      {receive === '배송' && (
+        <div className="flex gap-1.5 flex-wrap">
+          <input value={address} onChange={e => setAddress(e.target.value)} placeholder="주소" className={`${inp} flex-1 min-w-[200px]`} />
+          <input value={detail} onChange={e => setDetail(e.target.value)} placeholder="동·호수" className={`${inp} w-28`} />
+          <input value={door} onChange={e => setDoor(e.target.value)} placeholder="현관 비번" className={`${inp} w-24`} />
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={busy} className="px-4 py-1.5 rounded-lg border-2 border-yellow-400 bg-yellow-200 text-stone-900 text-[13px] font-black disabled:opacity-40">
+          {busy ? '넣는 중…' : '정보 넣기'}
+        </button>
+        {msg && <span className="text-rose-700 font-bold">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** 그날 주문이 하나도 없는 단계 —단추를 누르면 그 단계의 빈 표(추가 줄만)가 열린다. 넣으면 진짜 블록이 생기고 이건 닫힌다 */
 export function AddMissing({ sheet, date, onAdded }: { sheet: { sections: { stage: string }[]; banchan: unknown[] }; date: string; onAdded: (row: any) => void }) {
   const [open, setOpen] = useState<string[]>([]);
   const missing = [...STAGES.filter(s => !sheet.sections.some(sec => sec.stage === s)), ...(sheet.banchan.length ? [] : ['반찬'])];

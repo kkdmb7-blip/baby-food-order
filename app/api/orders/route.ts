@@ -58,11 +58,18 @@ export async function POST(req: NextRequest) {
     const referrer_code = String(b.referrer_code || '').trim().slice(0, 20) || null;
     const acquisition_source = String(b.acquisition_source || '').trim().slice(0, 40) || null;
 
+    // 정보 나중에 — 사장님이 조리표·입금 표 아래 줄에서 처음 오는 아이를 이름·팩수만으로 먼저 넣을 때.
+    // 2026-11-14 사장님: "전에 주문이 없었어도 우선 추가하고 나중에 정보 입력하면 되지"
+    // 연락처·주소는 빈 채로(조리표에 '정보?' 표시), 개월수는 칸 제약(>0) 때문에 1 로 두고 정보 넣을 때 고친다.
+    // 연락처가 없으니 포인트·손님 카드는 만들지 않는다 — 정보를 넣을 때 카드를 잇는다(PATCH /api/orders/[id] info).
+    const laterInfo = adminManual && b.later_info === true;
     // 검증
     if (!baby_name) return bad('아기 이름이 필요합니다');
-    if (!months || months <= 0) return bad('개월수를 확인해주세요');
-    if (!/^\d{10,11}$/.test(customer_phone)) return bad('연락처를 확인해주세요');
-    if (!address) return bad('주소가 필요합니다');
+    if (!laterInfo) {
+      if (!months || months <= 0) return bad('개월수를 확인해주세요');
+      if (!/^\d{10,11}$/.test(customer_phone)) return bad('연락처를 확인해주세요');
+      if (!address) return bad('주소가 필요합니다');
+    }
     if (total_qty < 1) return bad('수량 오류');
 
     // ⚠️ items가 비어 있으면 isMulti가 false가 되어 옛 단일주문 경로로 빠지고,
@@ -296,7 +303,7 @@ export async function POST(req: NextRequest) {
     const usePointsReq = Math.max(0, Math.floor(Number(b.use_points) || 0));
     let pointsUsed = 0;
     let custRow: { id: string; points: number } | null = null;
-    if (order_type !== '선결제') {
+    if (order_type !== '선결제' && customer_phone) {
       const { data: existing } = await sb
         .from('baby_food_customers').select('id, points').eq('phone', customer_phone).maybeSingle();
       custRow = existing ? { id: existing.id, points: existing.points || 0 } : null;
@@ -319,7 +326,7 @@ export async function POST(req: NextRequest) {
     let welcomeBonus = 0;
     let referralBonus = 0;
     let referredByStored: string | null = null;
-    if (order_type !== '선결제') {
+    if (order_type !== '선결제' && customer_phone) {
       const { data: priorOrder } = await sb
         .from('baby_food_orders').select('id').eq('customer_phone', customer_phone).limit(1).maybeSingle();
       const isFirstOrder = !priorOrder;
@@ -345,7 +352,7 @@ export async function POST(req: NextRequest) {
       .from('baby_food_orders')
       .insert({
         ...(openworldNote ? { paid_note: openworldNote } : {}),
-        baby_name, months, customer_phone, address, address_detail, door_password,
+        baby_name, months: laterInfo && !(months > 0) ? 1 : months, customer_phone, address, address_detail, door_password,
         stage, volume, items, total_qty, total_price: net_price, delivery_date, customer_request,
         order_type, status: '접수', customer_id, allergies, points_used: pointsUsed,
         postal_code, zone_group, delivery_method: savedDeliveryMethod, receive_method,
@@ -389,7 +396,7 @@ export async function POST(req: NextRequest) {
 
     // 고객 포인트 갱신 (차감 + 적립) — 실패 무시
     try {
-      if (order_type !== '선결제') {
+      if (order_type !== '선결제' && customer_phone) {
         if (custRow) {
           await applyPointsDelta(sb, custRow.id, custRow.points, pointsEarned - pointsUsed);
         } else {

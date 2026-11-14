@@ -73,6 +73,7 @@ export type PersonRow = {
   color?: number;
   isNew: boolean;      // 프린트한 뒤에 들어온 줄
   createdAt?: string;  // 추가 줄끼리 들어온 순서로 놓으려고
+  needInfo?: boolean;  // 연락처·주소를 아직 안 넣은 아이(이름·팩수만 먼저 넣음) — '정보?'
 };
 
 export type Section = {
@@ -93,7 +94,7 @@ export type CookingSheet = {
   unspecTotal: number;
   sections: Section[];
   /** single=true 는 낱개(1~5개·픽업). qty 가 세트 수가 아니라 개수다 */
-  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string; isNew?: boolean; createdAt?: string }[];
+  banchan: { orderId: string; name: string; qty: number; phone: string; others: string[]; color?: number; menus: Record<string, number>; single?: boolean; ship: string; isNew?: boolean; createdAt?: string; needInfo?: boolean }[];
   /** 반찬 종류별 합계 — 엑셀 '수반찬 주문내역' 맨 아랫줄과 같은 숫자다 */
   banchanByItem: { name: string; qty: number }[];
   /** 세트 수 합 (낱개는 안 섞는다 — 단위가 다르다) */
@@ -111,6 +112,8 @@ type OrderLike = {
   allergies?: string[] | null; memo?: string | null; receive_method?: string | null;
   delivery_method?: string | null;
   created_at?: string;
+  address?: string | null;
+  source?: string | null;
 };
 
 /** 받는 방법을 종이에 적을 한 글자로 — 픽(픽업) · 택(택배) · 당(두발 당일배송).
@@ -146,6 +149,12 @@ export function buildCookingSheet(
   orders: OrderLike[], date: string, printedAt?: string | null,
 ): CookingSheet {
   const dispName = disambiguateNames(orders as any);
+  /* '추가' = 조리표를 뽑은 뒤 들어온 줄. 뽑은 기록이 없는 날(엑셀 시절·안 뽑은 날)은 그날 오전 7시 뒤에 넣은 줄.
+     2026-11-14 사장님: 11/2 에 나중에 넣은 고윤서가 맨 위에 있었다 — 그날은 뽑은 기록이 없어서 ㄱㄴ순에 섞였다.
+     엑셀에서 옮긴 주문은 created_at 이 그날 0시(UTC)로 찍혀 있어 '추가'가 아니다. */
+  const cutoff = Date.parse(printedAt || `${date}T07:00:00+09:00`);
+  const isNewOrder = (o: OrderLike) => !!o.created_at && !String(o.source || '').startsWith('엑셀') && Date.parse(o.created_at) > cutoff;
+  const needInfo = (o: OrderLike) => !String(o.address || '').trim() && o.receive_method !== '픽업';
   const byStage = new Map<string, PersonRow[]>();
   const banchan: CookingSheet['banchan'] = [];
 
@@ -156,7 +165,7 @@ export function buildCookingSheet(
         banchan.push({
           orderId: o.id, name: o.baby_name, qty: s.qty, phone: o.customer_phone, others: [],
           menus: s.menus || {}, single: isBanchanSingle(s.stage), ship: shipTag(o),
-          isNew: !!(printedAt && o.created_at && o.created_at > printedAt), createdAt: o.created_at,
+          isNew: isNewOrder(o), createdAt: o.created_at, needInfo: needInfo(o),
         });
         continue;
       }
@@ -180,8 +189,9 @@ export function buildCookingSheet(
         menus,
         multi: false,
         others: [],
-        isNew: !!(printedAt && o.created_at && o.created_at > printedAt),
+        isNew: isNewOrder(o),
         createdAt: o.created_at,
+        needInfo: needInfo(o),
       });
     }
   }
