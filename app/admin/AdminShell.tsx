@@ -984,8 +984,11 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
     c.is_regular || c.prepaid_balance > 0 || (c.prepaid_banchan || 0) > 0 || touched.has(c.id)
     || (!!c.last_order && c.last_order >= cutoff)
     || (allLoaded === 'ok' && c.last_order === undefined); // 방금 새로 생긴 손님(목록 받은 뒤 추가됨)
-  const prepaid = [...customers].filter(isActive).sort(byName);
-  const dormant = [...customers].filter(c => !isActive(c)).sort(byName);
+  // 선결제가 남은(또는 받을 팩이 있는) 손님은 맨 위에 따로 — 사장님: "선결제한 사람들은 위로 모으자"
+  const hasPrepaid = (c: Customer) => c.prepaid_balance !== 0 || (c.prepaid_banchan || 0) > 0;
+  const prepaidList = customers.filter(hasPrepaid).sort(byName);
+  const activeList = customers.filter(c => !hasPrepaid(c) && isActive(c)).sort(byName);
+  const dormant = customers.filter(c => !hasPrepaid(c) && !isActive(c)).sort(byName);
   const [showDormant, setShowDormant] = useState(true);
 
   // 손님은 계속 쌓이므로 화면에 다 들고 있지 않는다 — 찾는 건 서버가 한다.
@@ -1045,7 +1048,7 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
       onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       maxLength={20}
       title="눌러서 고칠 수 있어요 (카톡에 저장한 이름과 같게)"
-      className="font-bold text-stone-900 bg-transparent border border-transparent rounded px-1 -ml-1
+      className="text-[14px] font-bold text-stone-900 bg-transparent border border-transparent rounded px-1 -ml-1
                  hover:border-stone-200 focus:border-amber-400 focus:bg-white outline-none disabled:opacity-50"
       style={{ width: `calc(${Math.max(2, (c.baby_name || '').length)}em + 1.2rem)` }}
     />
@@ -1178,87 +1181,152 @@ function CustomerManager({ customers, onUpdate }: { customers: Customer[]; onUpd
         )}
       </div>
 
-      <h3 className="text-sm font-bold text-stone-700 mb-0.5">손님 {prepaid.length}명 <span className="font-normal text-stone-400">ㄱㄴ순</span></h3>
+      {/* 한 줄 목록 (2026-11-14 사장님: "알아보기 쉽지 않아 — 한 줄로, 글씨 줄여서 한 화면에 많이,
+          선결제한 사람은 위로, 남은 팩·반찬·보호자 이름은 화면에서 바로 수정")
+          묶음: ① 선결제 남은 손님 ② 손님(3개월 안 주문·정기) ③ 쉬는 손님 — 각각 ㄱㄴ순.
+          칸을 고치고 다른 데를 누르거나 Enter 를 치면 바로 저장된다. 팩·회수는 한 번 묻는다(장부에 남는 돈이라). */}
       <p className="text-[11px] text-stone-400 mb-2">
-        {allLoaded === 'loading' ? '손님 전부 불러오는 중…' : allLoaded !== 'ok' ? `전부 불러오지 못했어요: ${allLoaded}` : '3개월 안에 주문한 손님 · 정기 · 선결제 남은 손님'}
+        {allLoaded === 'loading' ? '손님 전부 불러오는 중…' : allLoaded !== 'ok' ? `전부 불러오지 못했어요: ${allLoaded}` :
+          '남은 팩·반찬·보호자 이름 칸은 바로 고쳐져요 (고치고 Enter). 충전(+20·30·50팩)과 기록은 「기록」에서.'}
       </p>
-      {prepaid.length === 0 && allLoaded !== 'loading' && <Empty text="손님이 없어요" />}
-      <div className="space-y-3">
-        {prepaid.map(c => customerCard(c))}
-      </div>
-
+      {rowGroup(`선결제 남은 손님 ${prepaidList.length}명`, prepaidList, 'text-amber-800')}
+      {rowGroup(`손님 ${activeList.length}명`, activeList, 'text-stone-700')}
       {dormant.length > 0 && (
         <>
           <button onClick={() => setShowDormant(v => !v)}
-            className="mt-6 mb-2 w-full flex justify-between items-center text-sm font-bold text-stone-500 border-t-2 border-stone-200 pt-3">
+            className="mt-4 mb-1 w-full flex justify-between items-center text-[13px] font-bold text-stone-500">
             <span>쉬는 손님 {dormant.length}명 <span className="font-normal text-stone-400">3개월 넘게 주문 없음 · 주문하면 위로 돌아가요</span></span>
             <span>{showDormant ? '∧' : '∨'}</span>
           </button>
-          {showDormant && <div className="space-y-3 opacity-90">{dormant.map(c => customerCard(c))}</div>}
+          {showDormant && rowGroup('', dormant, 'text-stone-500')}
         </>
       )}
     </div>
   );
 
-  function customerCard(c: Customer) {
+  function rowGroup(title: string, list: Customer[], cls: string) {
+    if (!list.length) return null;
     return (
-          <div key={c.id} className="bg-white rounded-xl border border-stone-200 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                {nameInput(c)}
-                <span className="ml-2 text-xs text-stone-500">{c.phone ? formatPhone(c.phone) : "연락처 없음"}</span>
-                {c.is_regular && <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">정기</span>}
-                <button onClick={() => toggleOpenworld(c)} disabled={savingId === c.id}
-                  title="나라 후원사업 아이 — 입금 대조에서 빼고, 나중에 한꺼번에 정산"
-                  className={`ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold border ${c.openworld ? 'bg-sky-100 text-sky-800 border-sky-300' : 'border-stone-200 text-stone-400'}`}>
-                  {c.openworld ? '오픈월드' : '오픈월드 아님'}
-                </button>
-              </div>
-              <div className="text-right">
-                {/* 손님 전부를 띄우므로 선결제 없는 손님의 '잔여 0팩' 은 숨긴다 */}
-                {(c.prepaid_balance !== 0 || !!c.prepaid_label) && (
-                  <div className={`font-bold ${c.prepaid_balance <= 5 ? 'text-red-600' : 'text-amber-700'}`}>
-                    잔여 {c.prepaid_balance}팩{c.prepaid_balance < 0 ? <span className="ml-1 text-xs">(받을 팩)</span> : null}
-                    {c.prepaid_label ? <span className="ml-1 text-xs font-normal text-stone-500">{c.prepaid_label}</span> : null}
-                  </div>
-                )}
-                {/* 카톡 메모에 용량이 다른 묶음이 따로 있으면 그것도 보인다 (마지막 묶음이 위의 잔여) */}
-                {(c.prepaid_tracks || []).slice(0, -1).map((t, i) => (
-                  <div key={i} className={`text-xs ${t.balance < 0 ? 'text-red-600' : 'text-stone-500'}`}>{t.label || '다른 묶음'} {t.balance}팩</div>
-                ))}
-                {(c.prepaid_banchan || 0) > 0 && <div className="font-bold text-lime-700 text-sm">반찬 {c.prepaid_banchan}회 남음</div>}
-                {c.last_order !== undefined && (
-                  <div className="text-[11px] text-stone-400">
-                    {c.last_order ? `마지막 주문 ${Number(c.last_order.slice(5, 7))}/${Number(c.last_order.slice(8, 10))}` : '주문 기록 없음'}
-                  </div>
-                )}
-              </div>
-            </div>
-            {/* regular_schedule은 배열이 아니라 { stage, volume, slots:[{day,qty}] } 객체 —
-                예전엔 배열로 다뤄서(.length/.map) 정기배송 스케줄이 화면에 전혀 안 나왔음 */}
-            {c.is_regular && (c.regular_schedule?.slots?.length ?? 0) > 0 && (
-              <div className="text-xs text-stone-500 mb-2">
-                정기: {(c.regular_schedule?.slots || []).map(s =>
-                  `${s.day} ${shortStage(s.stage || c.regular_schedule?.stage)} ${s.volume || c.regular_schedule?.volume || ''} ${s.qty}팩`).join(' · ')}
-              </div>
-            )}
-            <div className="flex gap-2">
+      <div className="mb-4">
+        {title && <h3 className={`text-[13px] font-bold mb-1 ${cls}`}>{title} <span className="font-normal text-stone-400">ㄱㄴ순</span></h3>}
+        <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100">
+          {list.map(c => customerRow(c))}
+        </div>
+      </div>
+    );
+  }
+
+  // 팩·회수 칸 저장 — 장부(선결제 기록)에 '목록에서 바로 고침' 으로 남는다
+  async function saveCount(c: Customer, kind: '팩' | '반찬', raw: string, el: HTMLInputElement) {
+    const cur = kind === '팩' ? c.prepaid_balance : (c.prepaid_banchan || 0);
+    const t = raw.trim();
+    const n = t === '' ? 0 : Number(t);
+    if (n === cur) { el.value = cur ? String(cur) : ''; return; }
+    if (!Number.isInteger(n) || (kind === '반찬' && n < 0)) { setMsg('숫자로 적어주세요'); el.value = cur ? String(cur) : ''; return; }
+    if (!confirm(`${c.baby_name} — ${kind === '팩' ? `남은 팩 ${cur} → ${n}팩` : `반찬 선결제 ${cur} → ${n}회`}\n이대로 고칠까요?`)) { el.value = cur ? String(cur) : ''; return; }
+    setSavingId(c.id);
+    const d = await fetch(`/api/customers/${c.id}/prepaid`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(kind === '팩' ? { set: n, memo: '목록에서 바로 고침' } : { item: '반찬', set: n, memo: '목록에서 바로 고침' }),
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setSavingId(null);
+    if (!d.ok) { setMsg(`못 고쳤어요: ${d.error || ''}`); el.value = cur ? String(cur) : ''; return; }
+    patchCustomer(c.id, kind === '팩' ? { prepaid_balance: d.new_balance } : { prepaid_banchan: d.new_balance });
+    setMsg(`${c.baby_name} — ${kind === '팩' ? `남은 팩 ${d.new_balance}팩` : `반찬 ${d.new_balance}회`}로 고쳤어요`);
+  }
+
+  async function savePayersInline(c: Customer, raw: string, el: HTMLInputElement) {
+    const before = (c.payer_names || []).join(', ');
+    if (raw.trim() === before.trim()) return;
+    const list = raw.split(/[,\s·]+/).map(s => s.trim()).filter(Boolean);
+    setSavingId(c.id);
+    const r = await fetch('/api/customers', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: c.id, payer_names: list }),
+    }).then(x => x.json()).catch(() => ({}));
+    setSavingId(null);
+    if (!r.ok) { setMsg(`못 고쳤어요: ${r.error || ''}`); el.value = before; return; }
+    patchCustomer(c.id, { payer_names: r.payer_names || [] });
+    setMsg(`${c.baby_name} — 보호자 이름 저장 (입금 대조가 이 이름으로도 찾아요)`);
+  }
+
+  function customerRow(c: Customer) {
+    const enter = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); };
+    const busy = savingId === c.id;
+    const bal = c.prepaid_balance;
+    return (
+      <div key={c.id} className="px-2 py-1 text-[12px]">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="w-[80px] shrink-0 overflow-hidden">{nameInput(c)}</span>
+          <span className="text-[11px] text-stone-400 w-[88px] whitespace-nowrap">{c.phone ? formatPhone(c.phone) : '연락처 없음'}</span>
+          {c.is_regular && <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 rounded-full">정기</span>}
+          <button onClick={() => toggleOpenworld(c)} disabled={busy}
+            title="나라 후원사업 아이 — 입금 대조에서 빼고, 나중에 한꺼번에 정산"
+            className={`text-[10px] px-1.5 rounded-full border ${c.openworld ? 'bg-sky-100 text-sky-800 border-sky-300 font-bold' : 'border-stone-200 text-stone-300'}`}>
+            오픈월드
+          </button>
+
+          <label className="flex items-center gap-0.5 text-stone-500" title="남은 이유식 선결제 팩 (마이너스 = 받을 팩)">
+            남은
+            <input key={`b${c.id}:${bal}`} defaultValue={bal ? String(bal) : ''} placeholder="0" inputMode="numeric" disabled={busy}
+              onBlur={e => saveCount(c, '팩', e.target.value.replace(/[^\d-]/g, ''), e.target)} onKeyDown={enter}
+              className={`w-10 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-amber-400 ${bal < 0 ? 'text-red-600 border-red-200' : bal > 0 ? (bal <= 5 ? 'text-red-600 border-amber-200' : 'text-amber-700 border-amber-200') : 'border-stone-200'}`} />
+            팩<span className="inline-block w-[58px] text-[10px] text-stone-400 whitespace-nowrap">{c.prepaid_label || ''}</span>
+          </label>
+
+          <label className="flex items-center gap-0.5 text-stone-500" title="반찬 선결제 남은 회수">
+            반찬
+            <input key={`k${c.id}:${c.prepaid_banchan || 0}`} defaultValue={c.prepaid_banchan ? String(c.prepaid_banchan) : ''} placeholder="0" inputMode="numeric" disabled={busy}
+              onBlur={e => saveCount(c, '반찬', e.target.value.replace(/\D/g, ''), e.target)} onKeyDown={enter}
+              className={`w-8 px-1 py-0 border rounded text-right text-[12px] font-bold outline-none focus:border-lime-400 ${(c.prepaid_banchan || 0) > 0 ? 'text-lime-700 border-lime-300' : 'border-stone-200'}`} />
+            회
+          </label>
+
+          <label className="flex items-center gap-0.5 text-stone-500" title="엄마·아빠 이름으로 입금하실 때 — 입금 대조가 이 이름으로도 찾는다">
+            보호자
+            <input key={`p${c.id}:${(c.payer_names || []).join(',')}`} defaultValue={(c.payer_names || []).join(', ')} placeholder="입금자 이름" disabled={busy}
+              onBlur={e => savePayersInline(c, e.target.value, e.target)} onKeyDown={enter}
+              className="w-24 px-1 py-0 border border-stone-200 rounded text-[12px] outline-none focus:border-amber-400" />
+          </label>
+
+          <span className="text-[10px] text-stone-400 whitespace-nowrap">
+            {c.last_order === undefined ? '' : c.last_order ? `최근 ${Number(c.last_order.slice(5, 7))}/${Number(c.last_order.slice(8, 10))}` : '주문 없음'}
+          </span>
+          <button onClick={() => setOpenLedger(openLedger === c.id ? null : c.id)}
+            className="ml-auto px-2 py-0.5 border border-stone-200 text-stone-600 rounded text-[11px] font-bold hover:bg-stone-50">
+            {openLedger === c.id ? '닫기' : '기록'}
+          </button>
+        </div>
+
+        {/* 카톡 메모에 용량이 다른 묶음이 따로 있으면(마지막 묶음이 위의 남은 팩) */}
+        {(c.prepaid_tracks || []).length > 1 && (
+          <div className="pl-1 text-[10px] text-stone-400">
+            {(c.prepaid_tracks || []).slice(0, -1).map((t, i) => <span key={i} className={`mr-2 ${t.balance < 0 ? 'text-red-600' : ''}`}>{t.label || '다른 묶음'} {t.balance}팩</span>)}
+          </div>
+        )}
+        {c.is_regular && (c.regular_schedule?.slots?.length ?? 0) > 0 && (
+          <div className="pl-1 text-[10px] text-violet-600">
+            정기: {(c.regular_schedule?.slots || []).map(s =>
+              `${s.day} ${shortStage(s.stage || c.regular_schedule?.stage)} ${s.volume || c.regular_schedule?.volume || ''} ${s.qty}팩`).join(' · ')}
+          </div>
+        )}
+
+        {openLedger === c.id && (
+          <div className="pb-2">
+            {/* 충전 단추는 줄에서 빼고 여기로 — 간판 할인표 금액이 같이 뜬다 */}
+            <div className="flex gap-1.5 mt-1.5 flex-wrap">
               {PREPAID_UNITS.map(u => (
                 <button key={u} onClick={() => charge(c.id, u, c.prepaid_label)} disabled={chargingId === c.id}
-                  className="px-3 py-1.5 border border-amber-200 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-50 disabled:opacity-40">
+                  className="px-2.5 py-1 border border-amber-200 text-amber-700 rounded-lg text-[11px] font-bold hover:bg-amber-50 disabled:opacity-40">
                   +{u}팩{prepaidPrice(c.prepaid_label, u) ? <span className="ml-1 font-normal text-stone-500">{prepaidPrice(c.prepaid_label, u)!.toLocaleString()}원</span> : null}
                 </button>
               ))}
-              <button onClick={() => setOpenLedger(openLedger === c.id ? null : c.id)}
-                className="ml-auto px-3 py-1.5 border border-stone-200 text-stone-600 rounded-lg text-xs font-bold hover:bg-stone-50">
-                {openLedger === c.id ? '기록 닫기' : '기록 보기'}
-              </button>
             </div>
-            {openLedger === c.id && <>
-              <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
-              <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
-            </>}
+            <RegularEditor customer={c} onSaved={p => patchCustomer(c.id, p)} />
+            <PrepaidLedger customerId={c.id} balance={c.prepaid_balance} onBalance={n => setBalance(c.id, n)} onPatch={p => patchCustomer(c.id, p)} />
           </div>
+        )}
+      </div>
     );
   }
 }

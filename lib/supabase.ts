@@ -77,7 +77,8 @@ export type Customer = {
   memo: string | null;
   prepaid_label?: string | null;  // 어떤 단계·용량으로 산 선결제인지 ('완료기 300g')
   prepaid_banchan?: number;       // 반찬 선결제 남은 회수 (이유식 팩과 따로 센다)
-  last_order?: string | null;     // 화면용 — /api/customers?all=1 이 계산해 준 마지막 주문일(취소 빼고). DB 열 아님
+  payer_names?: string[];         // 보호자(입금자) 이름 — 엄마·아빠 이름으로 입금할 때 입금 대조가 이 이름으로도 찾는다
+  last_order?: string | null;    // 화면용 — /api/customers?all=1 이 계산해 준 마지막 주문일(취소 빼고). DB 열 아님
   openworld?: boolean;           // 오픈월드(나라 후원사업) — 돈을 손님이 안 보내고 나중에 한꺼번에 정산 (lib/openworld)
   prepaid_tracks?: { label: string | null; balance: number; charged: number; used: number }[] | null; // 카톡 메모의 묶음별 잔여
 };
