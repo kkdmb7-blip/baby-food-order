@@ -232,6 +232,58 @@ function PostpaidBox({ onSettled }: { onSettled: (ids: string[], note: string) =
 /* 단계 변경 — 중기·후기 선결제를 완료기로 (차액 팩당 500원). 사장님 2026-11-14 안시은:
    "완료기로 바꾸고 싶으면 차액 추가 입금하면 해 줘. 표기가 필요하고 입금 받았는지 확인, 입금했다면 진행"
    차액과 같은 금액의 은행 입금이 있으면 골라서 바로, 현금 등은 '따로 받았어요'. 서버: app/api/admin/prepaid-convert */
+/* 엄마·아빠 이름 넣고 입금 찾기 — 2026-11-14 사장님: "김유건 화살표 누르면 엄마 이름도 추가 가능하게, 입금내역에 있으면 빼 줘"
+   이름을 카드에 넣고 입금을 다시 맞춘다(금액이 맞으면 자동 입금확인). 안 맞으면 그 이름 입금을 보여 주고 골라서 확인. */
+function PayerBox({ o, cust, onRow, onCust }: { o: SheetOrder; cust: Customer; onRow: (row: any) => void; onCust: (c: Partial<Customer>) => void }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [cands, setCands] = useState<any[] | null>(null);
+  const [want, setWant] = useState(0);
+  const names = cust.payer_names || [];
+  async function find() {
+    const n = name.trim();
+    if (!n) return;
+    setBusy(true); setMsg(null); setCands(null);
+    const d = await fetch('/api/admin/payer-match', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: o.id, name: n }) })
+      .then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setMsg(`못 했어요: ${d.error || ''}`); return; }
+    onCust({ payer_names: d.payer_names });
+    setName(''); setWant(d.want);
+    if (d.row?.paid && !o.paid) { onRow(d.row); setMsg(`'${n}' 넣었어요 — 입금이 맞아서 입금확인했어요 (${d.row.paid_note || ''})`); return; }
+    setCands(d.candidates || []);
+    setMsg(`'${n}' 넣었어요${d.auto ? ` · 다른 주문 ${d.auto}건 자동 입금확인` : ''}${(d.candidates || []).length ? ' — 아래 입금 중 맞는 걸 고르세요' : ` — '${n}' 이름 입금은 아직 없어요`}`);
+  }
+  async function take(dep: any) {
+    if (!confirm(`${o.baby_name} — ${dep.depositor} ${Number(dep.amount).toLocaleString()}원 입금으로 이 주문을 입금확인할까요?${Number(dep.amount) !== want ? `\n(주문 금액 ${want.toLocaleString()}원과 달라요)` : ''}`)) return;
+    setBusy(true);
+    const d = await fetch('/api/admin/payer-match', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_id: o.id, deposit_id: dep.id }) })
+      .then(r => r.json()).catch(e => ({ ok: false, error: e?.message }));
+    setBusy(false);
+    if (!d.ok) { setMsg(`못 했어요: ${d.error || ''}`); return; }
+    onRow(d.row); setCands(null); setMsg(`입금확인했어요 — ${d.row.paid_note}`);
+  }
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-stone-600">엄마·아빠 이름</span>
+        {names.map(x => <span key={x} className="px-1.5 rounded bg-stone-100 text-stone-700 font-bold">{x}</span>)}
+        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') find(); }} disabled={busy}
+          placeholder="입금한 이름" className="w-24 px-1.5 py-0.5 border border-stone-300 rounded text-[12px] outline-none focus:border-violet-400" />
+        <button disabled={busy || !name.trim()} onClick={find} className="px-2.5 py-1 rounded-lg border border-stone-300 bg-white text-stone-700 text-[12px] font-bold disabled:opacity-40">넣고 입금 찾기</button>
+      </div>
+      {cands && cands.map(dep => (
+        <div key={dep.id} className="flex items-center gap-2 text-[12px]">
+          <span className={dep.same ? 'font-bold text-emerald-800' : 'text-stone-600'}>{md(kstDay(dep.deposited_at))} {dep.depositor} {Number(dep.amount).toLocaleString()}원{dep.same ? ' (금액 맞음)' : ''}</span>
+          <button disabled={busy || o.paid} onClick={() => take(dep)} className="ml-auto px-2.5 py-1 rounded-lg border border-emerald-400 bg-emerald-100 text-emerald-900 text-[12px] font-bold disabled:opacity-40">이 입금으로 확인</button>
+        </div>
+      ))}
+      {msg && <p className="text-[12px] font-bold text-stone-700">{msg}</p>}
+    </div>
+  );
+}
+
 /* 손님 카드 없는 아이(정보 없이 먼저 넣은 아이) — 이름이 같은 카드에 잇거나, 이름만으로 새 카드를 만들어 바로 선결제를 쓴다.
    2026-11-14 사장님: "택배는 정보 없어도, 정보 넣기 안 넣어도 선결제한 거 넣을 수 있게"
    연락처는 나중에 정보 넣기에서 넣으면 이 카드에 붙는다(app/api/orders/[id] info). */
@@ -534,6 +586,11 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
           className={`w-full py-2 rounded-lg border-2 text-[14px] font-black disabled:opacity-40 ${o.paid ? 'border-stone-300 bg-white text-stone-600' : 'border-emerald-400 bg-emerald-100 text-emerald-900'}`}>
           {o.paid ? '입금확인 끄기' : '✓ 입금확인 (돈으로 받음)'}
         </button>
+      )}
+
+      {/* 엄마·아빠 이름으로 들어온 입금 — 이름 넣고 찾기 */}
+      {cust && !used && o.order_type !== '선결제' && (
+        <PayerBox o={o} cust={cust} onRow={row => patch({ order: row })} onCust={c => patch({ customerId: cust.id, customer: c as any })} />
       )}
 
       {/* ② 선결제 — 새로 시작하면 충전 → 이 주문 빼기 순서로 */}
