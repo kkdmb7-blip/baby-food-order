@@ -15,6 +15,8 @@ import table from './routeCodes.json';
 // 같은 키에 번호가 여러 개면 가장 많이 쓰인 번호를 채택했다. 세부 조정은 사장님이 하면 됨.
 // ────────────────────────────────────────────────────────────────
 const byAddr = (table as any).byAddr as Record<string, number>;
+// 이름+주소 → 번호 (사장님 번호는 손님마다라 같은 아파트에도 번호가 여럿이다 — build-route-codes.ts 참고)
+const byNameAddr = ((table as any).byNameAddr || {}) as Record<string, number>;
 
 // 손님이 "강서구화곡동"처럼 구와 동을 붙여 쓰는 경우가 있어, 앞의 시/군/구를 떼어
 // 엑셀에 적힌 "화곡동" 형태로 맞춰준다.
@@ -22,7 +24,44 @@ function normDong(d: string): string {
   return d.replace(/^.*?[시군구](?=.)/, '');
 }
 
+/*
+  주소 → 키 (2026-11-14 다시 씀). 사장님: "저장해 둔 거랑 상당히 달라, 동네 번호가"
+  옛 규칙이 잘못 읽던 것:
+    "화곡로 68길 33"         → '화곡로 68'   (길 앞 띄어쓰기 — 화곡로 68번지로 봄)
+    "강서로 45다길 30-27"     → '강서로 45'
+    "목동동로430 목동6단지"   → '목동 6'      (6단지를 목동 6번지로 봄 → 35번, 같은 아파트 박도겸은 31번)
+  새 규칙: ① 띄어쓴 '○○로 68길' 을 붙이고 ② 도로명+건물번호를 먼저 ③ 동+번지는 번지 뒤에 단지·차·동이 오면 번지로 안 본다
+  ④ 그래도 없으면 '목동 6단지' 같은 단지 키 ⑤ 동 이름만.
+  순번표(routeCodes.json)도 이 규칙으로 엑셀 '전체주소록'에서 다시 만든다(scripts/build-route-codes.ts).
+*/
+function normAddr(address: string): string {
+  return String(address || '')
+    .replace(/\s+/g, ' ')
+    .replace(/(대로|로)\s+([0-9]+[가-힣]?길)/g, '$1$2')       // 화곡로 68길 → 화곡로68길
+    .replace(/([0-9]+)\s*-\s*([0-9]+)/g, '$1-$2')
+    .trim();
+}
+const stripGu = (s: string) => s.replace(/^(서울특별시|서울시|서울)?(강서구|양천구)/, '');
+
 export function addrKey(address: string): string {
+  const a = normAddr(address);
+  // ② 도로명 + 건물번호 (번호 뒤에 단지·차가 오면 건물번호가 아니다)
+  let m = a.match(/([가-힣]+[0-9]*(?:가)?(?:대로|로)(?:[0-9]+[가-힣]?길)?)\s*,?\s*([0-9]+(?:-[0-9]+)?)(?![0-9]|\s*(?:단지|차(?![가-힣])))/);
+  if (m) return stripGu(m[1]) + ' ' + m[2];
+  // ③ 동 + 번지 (번지 뒤에 단지·차·동이 오면 아파트 이름이라 번지가 아니다)
+  m = a.match(/([가-힣]+[0-9]*동)\s*([0-9]+(?:-[0-9]+)?)(?![0-9]|\s*(?:단지|차(?![가-힣])|동(?![가-힣])))/);
+  if (m) return normDong(m[1]) + ' ' + m[2];
+  // ④ 단지 ("목동6단지", "목동 신시가지 6단지", "신정7단지")
+  m = a.match(/([가-힣]+[0-9]*동)?[가-힣\s]*?([0-9]+)\s*단지/);
+  if (m) return `${m[1] ? normDong(m[1]) + ' ' : ''}${m[2]}단지`;
+  // ⑤ 동 이름만
+  m = a.match(/([가-힣]+[0-9]*동)(?![로길])/);
+  if (m) return normDong(m[1]);
+  return '';
+}
+
+/** 옛 규칙 — 2026-11-14 전에 사장님이 주소록 화면에서 저장한 순번(baby_food_route_codes)이 이 키로 들어 있다 */
+export function legacyAddrKey(address: string): string {
   const a = String(address || '').replace(/\s+/g, ' ').trim();
   let m = a.match(/([가-힣]+[0-9]*동)\s*([0-9]+(?:-[0-9]+)?)/);
   if (m) return normDong(m[1]) + ' ' + m[2];
@@ -125,10 +164,18 @@ function pickNear(list: NearRow[] | undefined, full: string, num: number): numbe
   return best.code;
 }
 
+/** 그 손님(이름+주소)이 엑셀에 있으면 사장님이 매긴 그 번호, 없으면 주소만으로 */
+export function routeCodeFor(name: string | null | undefined, address: string): number | null {
+  const k = addrKey(address);
+  const n = String(name || '').replace(/\s+/g, ' ').trim();
+  if (k && n && byNameAddr[`${n}|${k}`] !== undefined) return byNameAddr[`${n}|${k}`];
+  return routeCodeOf(address);
+}
+
 /** 순번이 없으면 같은 길·같은 동의 가까운 번지 순번으로 짐작 (줄 세우기용). 짐작도 못 하면 null */
-export function nearRouteCodeOf(address: string): { code: number | null; guessed: boolean } {
+export function nearRouteCodeOf(address: string, name?: string | null): { code: number | null; guessed: boolean } {
   const a = String(address || '').replace(/\s+/g, ' ').trim();
-  const exact = routeCodeOf(a);
+  const exact = routeCodeFor(name, a);
   if (exact !== null) return { code: exact, guessed: false };
   const rm = a.match(/([가-힣]+(?:[0-9]+)?(?:가)?(?:대로|로)(?:[0-9]+[가-힣]?길)?)\s*,?\s*([0-9]+)?/);
   if (rm) {

@@ -6,7 +6,7 @@ import { MENU_TYPES, STAGES, STAGE_OPTIONS, PREPAID_UNITS, prepaidPrice, menuLab
 import { formatPhone, fmtDateTime } from '@/lib/dates';
 import { withSubject } from '@/lib/korean';
 import { slicesOn, qtyOn, orderDates } from '@/lib/orderItems';
-import { routeCodeOf, addrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
+import { routeCodeOf, routeCodeFor, addrKey, legacyAddrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
 import GridEntry from './GridEntry';
 import DepositTab from './DepositTab';
 import ChargeBar from './ChargeBar';
@@ -825,10 +825,11 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
     }).catch(() => {});
   }, []);
 
+  // 저장한 순번(새 키·옛 키) → 엑셀에서 그 손님(이름+주소)에게 매긴 번호 → 주소만으로 — 인쇄물과 같은 순서
   const codeOf = (o: Order): number | null => {
-    const k = addrKey(String(o.address || ''));
-    if (k && overrides[k] !== undefined) return overrides[k];
-    return routeCodeOf(String(o.address || ''));
+    const addr = String(o.address || '');
+    for (const k of [addrKey(addr), legacyAddrKey(addr)]) if (k && overrides[k] !== undefined) return overrides[k];
+    return routeCodeFor(o.baby_name, addr);
   };
 
   async function saveCode(o: Order, raw: string) {
@@ -852,7 +853,7 @@ function AddressBook({ orders: allOrders, today }: { orders: Order[]; today: str
   }
 
   // 순번대로 정렬 — 인쇄물과 같은 순서로 보이게. 순번이 없는 주소는 같은 길·동의 가까운 번지 순번으로 근처에 둔다
-  const sortCode = (o: Order) => codeOf(o) ?? nearRouteCodeOf(String(o.address || '')).code;
+  const sortCode = (o: Order) => codeOf(o) ?? nearRouteCodeOf(String(o.address || ''), o.baby_name).code;
   const sorted = [...orders].sort((a, b) => {
     const ca = sortCode(a), cb = sortCode(b);
     if (ca === null && cb === null) return 0;

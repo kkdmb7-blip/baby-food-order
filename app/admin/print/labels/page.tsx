@@ -3,7 +3,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { supabaseService, type Order } from '@/lib/supabase';
 import { kstToday, formatPhone } from '@/lib/dates';
 import { orderDates, qtyOn, shiftDate, disambiguateNames } from '@/lib/orderItems';
-import { addrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
+import { addrKey, legacyAddrKey, looksDirectDelivery, nearRouteCodeOf } from '@/lib/routeCode';
 import PrintAuto from '../PrintAuto';
 import PrintBar from '../PrintBar';
 
@@ -82,9 +82,11 @@ export default async function LabelsPage({ searchParams }: { searchParams: { dat
   // 순번표에 없는 주소는 같은 길·같은 동의 가까운 번지 순번을 빌려 그 근처에 끼운다
   // (2026-11-14 사장님: "미지정일 경우는 비슷한 동네 근처로 배치")
   const codeOf = (o: Order): { code: number | null; guessed: boolean } => {
-    const k = addrKey(String(o.address || ''));
-    if (k && overrides.has(k)) return { code: overrides.get(k)!, guessed: false };
-    return nearRouteCodeOf(String(o.address || ''));
+    const addr = String(o.address || '');
+    // 화면에서 저장한 순번 — 새 키, 없으면 2026-11-14 전 규칙의 키로도 찾는다
+    for (const k of [addrKey(addr), legacyAddrKey(addr)]) if (k && overrides.has(k)) return { code: overrides.get(k)!, guessed: false };
+    // 그다음 엑셀에서 그 손님(이름+주소)에게 매긴 번호 → 주소 → 근처 짐작
+    return nearRouteCodeOf(addr, o.baby_name);
   };
 
   // 배송 순번으로 한 줄 세우기 — 도는 순서 그대로. 구역 제목 줄('11 화곡동 1건')은 뺐다(사장님: 다 지워 달라)
