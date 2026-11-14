@@ -15,6 +15,7 @@ import { internalToken, INTERNAL_HEADER } from '@/lib/internalAuth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { OPENWORLD_NOTE, openworldApplies } from '@/lib/openworld';
 import { movePrepaid, kindOf } from '@/lib/prepaidSplit';
+import { deductShip } from '@/lib/prepaidShip';
 
 // POST — 신규 주문 (클라이언트 → service_role 경유)
 export async function POST(req: NextRequest) {
@@ -377,6 +378,13 @@ export async function POST(req: NextRequest) {
         kind: '사용', packs: -total_qty, balanceAfter: prepaidAfter, orderId: data.id,
         memo: `${prepaidKind ? `[${prepaidKind}] ` : ''}조리일 ${delivery_date}`,
       });
+      // 택배비 선결제 손님의 택배 주문이면 회수도 (5팩까지 1회) — lib/prepaidShip
+      const tail = await deductShip(sb, customer_id, data.id);
+      if (tail) {
+        const pn = (String(data.paid_note || '') + tail).trim();
+        await sb.from('baby_food_orders').update({ paid_note: pn }).eq('id', data.id);
+        (data as any).paid_note = pn;
+      }
     }
 
     // 고객 포인트 갱신 (차감 + 적립) — 실패 무시

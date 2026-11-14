@@ -4,6 +4,7 @@ import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { isOpenworld } from '@/lib/openworld';
 import { movePrepaid, kindOf, isSplit, balanceFor } from '@/lib/prepaidSplit';
+import { deductShip } from '@/lib/prepaidShip';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,6 +121,11 @@ export async function POST(req: NextRequest) {
     run -= l.qty;
     await recordPrepaid(sb, { customerId: c.id, phone: c.phone, babyName: c.baby_name, kind: '사용', packs: -l.qty, balanceAfter: run, orderId: l.id, item,
       memo: `${tag}입금 탭에서 선결제로 처리 (뒤 주문 한꺼번에)` });
+  }
+  // 택배비 선결제 손님이면 날짜순으로 택배 회수도 (5팩까지 1회, 같은 날 상자는 합쳐서) — lib/prepaidShip
+  for (const d of done) {
+    const tail = await deductShip(sb, c.id, d.id);
+    if (tail) { d.paid_note += tail; await sb.from('baby_food_orders').update({ paid_note: d.paid_note }).eq('id', d.id); }
   }
   return NextResponse.json({ ...out, done, total: totAfter, split: newSplit });
 }

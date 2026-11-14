@@ -63,15 +63,24 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
   }
 
   // 이유식은 팩(prepaid_balance), 반찬은 회(prepaid_banchan) — 서로 섞이지 않게 칸이 따로다
+  // 택배비(prepaid_ship)도 회로 — 택배 주문이 선결제로 빠질 때 5팩까지 1회 (lib/prepaidShip)
   const isBanchan = body.item === '반찬';
-  const col = isBanchan ? 'prepaid_banchan' : 'prepaid_balance';
-  const unit = isBanchan ? '회' : '팩';
-  const item = isBanchan ? '반찬' as const : '이유식' as const;
+  const isShip = body.item === '택배';
+  const col = isBanchan ? 'prepaid_banchan' : isShip ? 'prepaid_ship' : 'prepaid_balance';
+  const unit = isBanchan || isShip ? '회' : '팩';
+  const item = isBanchan ? '반찬' as const : isShip ? '택배' as const : '이유식' as const;
+
+  // 택배비 선결제 그만 — { item:'택배', set: null } → 칸을 비운다(앞으로 택배 회수 안 뺌)
+  if (isShip && body.set === null) {
+    const { error } = await supabaseService().from('baby_food_customers').update({ prepaid_ship: null }).eq('id', ctx.params.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, new_balance: null, item });
+  }
 
   // 사장님이 잔여를 직접 고치는 경우 — { set: 새 잔여, memo: 사유, item? }
   // 카톡으로 받은 선결제를 처음 옮기거나, 손님과 맞춰보다 틀린 걸 고칠 때. 장부에 '수정' 으로 남긴다.
   // 반찬 회수 충전 — { item:'반찬', times: 4, amount_won } 도 같은 길로 (더하기만 다르다)
-  if (body.set !== undefined || (isBanchan && body.times !== undefined)) {
+  if (body.set !== undefined || ((isBanchan || isShip) && body.times !== undefined)) {
     const adding = body.set === undefined;
     const delta = Number(body.times);
     const target0 = Number(body.set);
@@ -83,7 +92,7 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
     const amountWon = Number(body.amount_won) > 0 ? Math.floor(Number(body.amount_won)) : null;
     const sb = supabaseService();
     // 이유식 잔여 고치기 — 여러 단계 손님은 어느 묶음인지(kind) 같이 온다 (lib/prepaidSplit)
-    if (!isBanchan) {
+    if (!isBanchan && !isShip) {
       const kind = body.kind ? kindOfLabel(String(body.kind)) : null;
       const { data: c0 } = await sb.from('baby_food_customers').select('prepaid_balance, prepaid_label, prepaid_split').eq('id', ctx.params.id).maybeSingle();
       if (!c0) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
@@ -103,17 +112,19 @@ export async function POST(req: NextRequest, ctx: { params: { id: string } }) {
       const { data: c } = await sb.from('baby_food_customers')
         .select(`${col}, phone, baby_name`).eq('id', ctx.params.id).single();
       if (!c) return NextResponse.json({ error: '고객 없음' }, { status: 404 });
-      const base = Number((c as any)[col]) || 0;
+      const raw = (c as any)[col];
+      const base = Number(raw) || 0;
       const target = adding ? base + delta : target0;
-      if (base === target) return NextResponse.json({ ok: true, new_balance: base, unchanged: true });
-      const { data: upd, error } = await sb.from('baby_food_customers')
-        .update({ [col]: target }).eq('id', ctx.params.id).eq(col, base).select('id');
+      if (base === target && raw !== null) return NextResponse.json({ ok: true, new_balance: base, unchanged: true });
+      // 택배비 칸이 비어 있던(null) 손님은 is null 로 맞춰 본다 — eq(0) 은 null 과 안 맞는다
+      const q0 = sb.from('baby_food_customers').update({ [col]: target }).eq('id', ctx.params.id);
+      const { data: upd, error } = await (raw === null ? q0.is(col, null) : q0.eq(col, base)).select('id');
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       if (upd && upd.length) {
         await recordPrepaid(sb, {
           customerId: ctx.params.id, phone: (c as any).phone, babyName: (c as any).baby_name,
           kind: adding ? '충전' : '수정', packs: target - base, balanceAfter: target, amountWon, item,
-          memo: adding ? `반찬 ${delta}회 충전${memo ? ` · ${memo}` : ''}`
+          memo: adding ? `${isShip ? '택배비' : '반찬'} ${delta}회 충전${memo ? ` · ${memo}` : ''}`
                        : `사장님이 직접 고침 ${base}→${target}${unit}${memo ? ` · ${memo}` : ''}`,
         });
         return NextResponse.json({ ok: true, new_balance: target, item });

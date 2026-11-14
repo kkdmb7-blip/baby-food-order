@@ -27,7 +27,7 @@ export async function recordPrepaid(sb: SupabaseClient, e: {
   amountWon?: number | null;
   orderId?: string | null;
   memo?: string | null;
-  item?: '이유식' | '반찬'; // 반찬 선결제는 팩이 아니라 '회'로 센다 (기본 이유식)
+  item?: '이유식' | '반찬' | '택배'; // 반찬·택배비 선결제는 팩이 아니라 '회'로 센다 (기본 이유식)
 }): Promise<void> {
   if (!e.packs) return;
   try {

@@ -3,6 +3,7 @@ import { supabaseService } from '@/lib/supabase';
 import { isAdminAuthed } from '@/lib/auth';
 import { recordPrepaid } from '@/lib/prepaidLedger';
 import { movePrepaid, kindOf, kindTag } from '@/lib/prepaidSplit';
+import { deductShip, refundShip } from '@/lib/prepaidShip';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,8 +80,8 @@ export async function POST(req: NextRequest) {
 
   const k = new Date(Date.now() + 9 * 3600e3).toISOString();
   const stamp = `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`;
-  const patch = b.use
-    ? { paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${partNext}${unit})` }
+  const patch: { paid: boolean; paid_at: string | null; paid_note: string | null } = b.use
+    ?{ paid: true, paid_at: new Date().toISOString(), paid_note: `${PREFIX} ${qty}${unit} (입금 탭 ${stamp}, 남은 ${partNext}${unit})` }
     : { paid: false, paid_at: null, paid_note: null };
   const { error } = await sb.from('baby_food_orders').update(patch).eq('id', id);
   if (error) {
@@ -95,5 +96,12 @@ export async function POST(req: NextRequest) {
     memo: `${tag}${b.use ? '입금 탭에서 선결제로 처리' : '입금 탭에서 선결제 처리 되돌림'}`,
     item: banchan ? '반찬' : '이유식',
   });
+  // 택배비 선결제 손님이면 택배 회수도 같이 (5팩까지 1회, 같은 날 상자는 합쳐서) — lib/prepaidShip
+  if (b.use) {
+    const tail = await deductShip(sb, c.id, id);
+    if (tail) { patch.paid_note = patch.paid_note + tail; await sb.from('baby_food_orders').update({ paid_note: patch.paid_note }).eq('id', id); }
+  } else {
+    await refundShip(sb, c.id, id, o.paid_note, '입금 탭에서 되돌림');
+  }
   return NextResponse.json({ ok: true, customer_id: c.id, field, balance: next, part: partNext, kind, split: split ?? null, paid: patch.paid, paid_note: patch.paid_note });
 }

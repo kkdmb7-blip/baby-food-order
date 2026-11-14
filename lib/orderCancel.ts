@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordPrepaid } from './prepaidLedger';
 import { movePrepaid, kindOf, kindTag } from './prepaidSplit';
+import { deductShip, refundShip, shipUnitsIn, stripShip } from './prepaidShip';
 
 type CancelableOrder = {
   id?: string;
@@ -49,6 +50,16 @@ export async function applyCancelReversal(sb: SupabaseClient, order: CancelableO
             orderId: order.id ?? null, memo: `${kindTag(r)}${sign > 0 ? '주문 취소' : '취소한 주문을 되살림'}`,
           });
         }
+        // 택배비 선결제 — 취소면 그 주문에서 뺀 회수를 돌려주고 표시를 지운다, 되살리면 다시 뺀다 (lib/prepaidShip)
+        if (order.id) {
+          if (sign > 0 && shipUnitsIn(order.paid_note)) {
+            await refundShip(sb, cid, order.id, order.paid_note, '주문 취소');
+            await sb.from('baby_food_orders').update({ paid_note: stripShip(String(order.paid_note)) || null }).eq('id', order.id);
+          } else if (sign < 0) {
+            const tail = await deductShip(sb, cid, order.id);
+            if (tail) await sb.from('baby_food_orders').update({ paid_note: (stripShip(String(order.paid_note || '')) + tail).trim() }).eq('id', order.id);
+          }
+        }
       }
     } else if (panel && sign > 0 && order.id) {
       // 입금 탭에서 선결제로 뺀 주문(paid_note '선결제 차감 N팩 (입금 탭 …') 을 취소 → 그 팩·회를 돌려주고 표시를 지운다.
@@ -70,6 +81,7 @@ export async function applyCancelReversal(sb: SupabaseClient, order: CancelableO
           if (r.ok) { after = r.after; tag = kindTag(r); }
         }
         if (after !== null) {
+          await refundShip(sb, cid, order.id, order.paid_note, '주문 취소');
           await sb.from('baby_food_orders').update({ paid: false, paid_at: null, paid_note: `선결제 돌려놓음 ${qty}${banchan ? '회' : '팩'} (주문 취소)` }).eq('id', order.id);
           await recordPrepaid(sb, {
             customerId: cid, phone: order.customer_phone, babyName: order.baby_name,

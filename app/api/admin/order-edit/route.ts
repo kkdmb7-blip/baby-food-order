@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
 
   // ── 1) 선결제 잔여 맞추기 (CAS, 모자라면 중단)
   // 입금 탭에서 선결제로 뺀 주문도 팩이 걸려 있다 — 팩수가 바뀌면 같이 맞추고 표시 문구의 팩수도 고친다
-  const panel = String(o.paid_note || '').match(/^선결제 차감 (\d+)팩 \(입금 탭 ([^,]+), 남은 (-?\d+)팩\)/);
+  const panel = String(o.paid_note || '').match(/^선결제 차감 (\d+)팩 \(입금 탭 ([^,]+), 남은 (-?\d+)팩\)(.*)$/);
   const kind = kindOf(stage, volume);
   let prepaidMoved = 0;
   let prepaidCust: { id: string; after: number; tag: string } | null = null;
@@ -116,7 +116,8 @@ export async function POST(req: NextRequest) {
     if (!mv.ok) return bad(mv.status === 400 ? `${mv.error} — 충전 후 고쳐주세요` : mv.error, mv.status);
     prepaidMoved = qtyDelta;
     prepaidCust = { id: cid, after: mv.after, tag: kindTag(mv) };
-    if (panel) newPaidNote = `선결제 차감 ${newQty}팩 (입금 탭 ${panel[2]}, 남은 ${mv.partAfter}팩)`;
+    // 뒤에 붙은 ' · 택배 N회' 꼬리는 그대로 둔다(택배 회수는 팩수가 바뀌어도 다시 계산하지 않음)
+    if (panel) newPaidNote = `선결제 차감 ${newQty}팩 (입금 탭 ${panel[2]}, 남은 ${mv.partAfter}팩)${panel[4] || ''}`;
   }
 
   // ── 2) 주문 줄 고치기. items 안쪽 팩수·메뉴도 같이 고쳐야 조리표가 바뀐다.

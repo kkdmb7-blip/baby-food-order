@@ -220,6 +220,15 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
   // 손님 카드를 늦게 불러오면 그때의 남은 팩으로 칸을 맞춘다
   useEffect(() => { setEdit(String(left)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cust?.id]);
 
+  // 택배비 선결제 회수는 서버가 주문과 같이 뺀다(lib/prepaidShip) — 뺀 뒤 손님 카드에서 다시 읽어 맞춘다
+  async function reloadShip() {
+    if (!cust || cust.prepaid_ship === null || cust.prepaid_ship === undefined) return;
+    try {
+      const d = await fetch(`/api/customers?id=${cust.id}`).then(r => r.json());
+      if (d.customer) patch({ customerId: cust.id, customer: { prepaid_ship: d.customer.prepaid_ship } });
+    } catch { /* 못 읽으면 새로고침 때 맞는다 */ }
+  }
+
   async function use(on: boolean) {
     if (!confirm(on
       ? `${o.baby_name} — 이 주문 ${qty}${unit}을 선결제에서 뺄까요?\n남은 ${left}${unit} → ${left - qty}${unit}`
@@ -232,6 +241,7 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
     if (!d.ok) { setInfo(`못 했어요: ${d.error || ''}`); return; }
     patch({ order: { paid: d.paid, paid_note: d.paid_note }, customerId: d.customer_id, customer: (banchan ? { prepaid_banchan: d.balance } : { prepaid_balance: d.balance, prepaid_split: d.split ?? null }) as any });
     setEdit(String(d.part ?? d.balance));
+    void reloadShip();
     setInfo(on ? `선결제에서 뺐어요 — 남은 ${d.part ?? d.balance}${unit}` : `돌려놓았어요 — 남은 ${d.part ?? d.balance}${unit}`);
   }
 
@@ -290,6 +300,7 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
       if (x.id === o.id) patch(p); else onPatchOrder(x.id, p);
     }
     setEdit(String(d.final)); setPreview(null); setStartN('');
+    void reloadShip();
     setInfo(`${(d.done || []).length}건 뺐어요 — 남은 ${d.final}${unit}`);
   }
 
@@ -330,6 +341,12 @@ function PrepaidPanel({ o, cust: custProp, onClose, onToggle, onPatch, onPatchOr
               onBlur={setLeft} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} inputMode="numeric"
               className={`w-14 px-1.5 py-0.5 border rounded text-right text-[13px] font-black outline-none focus:border-violet-400 ${left < 0 ? 'text-red-600' : 'text-violet-800'} border-violet-300`} />
             <span>{unit}{!banchan && label ? <span className="ml-1 text-stone-400">{label}</span> : null}</span>
+            {!banchan && cust.prepaid_ship !== null && cust.prepaid_ship !== undefined && (
+              <span className={`text-[11px] font-bold ${cust.prepaid_ship < 0 ? 'text-red-600' : 'text-sky-700'}`}
+                title="택배 주문이 선결제로 빠질 때 5팩까지 1회씩 같이 빠집니다">
+                · 택배비 {cust.prepaid_ship}회
+              </span>
+            )}
             {split && (
               <span className="text-[11px] text-stone-500">
                 · 다른 묶음 {partsOf(cust).filter(p => p.kind !== okind).map(p => (
@@ -461,7 +478,8 @@ export default function DepositTab({ dayOrders = [], date, customers = [], onTog
   const need = (groups['확인필요'] || []).length + (groups['모름'] || []).length;
   // 선결제보다 더 먹은 손님 — 입금 요청 톡 보낼 명단 (사장님 2026-11-14)
   // 여러 단계 선결제 손님은 묶음 하나만 마이너스여도 (예: 완료기 230 −3, 후기 230 +12)
-  const minus = customers.map(c => ({ c, neg: partsOf(c).filter(p => p.balance < 0) })).filter(x => x.neg.length > 0)
+  // 택배비 선결제(prepaid_ship)가 마이너스여도 — '택배비' 묶음으로 같이 보인다
+  const minus = customers.map(c => ({ c, neg: [...partsOf(c).filter(p => p.balance < 0), ...((c.prepaid_ship || 0) < 0 ? [{ kind: '택배비(회)', balance: c.prepaid_ship as number }] : [])] })).filter(x => x.neg.length > 0)
     .sort((a, b) => Math.min(...a.neg.map(p => p.balance)) - Math.min(...b.neg.map(p => p.balance)) || String(a.c.baby_name).localeCompare(String(b.c.baby_name), 'ko'));
 
   return (

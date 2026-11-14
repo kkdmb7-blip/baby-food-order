@@ -81,6 +81,7 @@ export type Customer = {
   last_order?: string | null;    // 화면용 — /api/customers?all=1 이 계산해 준 마지막 주문일(취소 빼고). DB 열 아님
   openworld?: boolean;           // 오픈월드(나라 후원사업) — 돈을 손님이 안 보내고 나중에 한꺼번에 정산 (lib/openworld)
   prepaid_tracks?: { label: string | null; balance: number; charged: number; used: number }[] | null; // 카톡 메모의 묶음별 잔여
+  prepaid_ship?: number | null;  // 택배비 선결제 남은 회수 (null = 택배비 선결제 안 함). lib/prepaidShip
   prepaid_split?: { kind: string; balance: number }[] | null; // 여러 단계 선결제 묶음별 잔여 — 있으면 prepaid_balance 는 합 (lib/prepaidSplit)
 };
 
